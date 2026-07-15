@@ -1,0 +1,13 @@
+API
+http://localhost:8000/docs
+
+MiniIO
+S3_PUBLIC_URL=http://localhost:9000 
+login nivaad / nivaad_dev_secret
+
+# http://localhost:5173/developer-login
+DEVELOPER_EMAIL=nivadeveloper@nivatier.com
+DEVELOPER_PASSWORD=Subin@3311
+
+
+Mailpit at localhost:8025

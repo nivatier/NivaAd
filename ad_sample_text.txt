@@ -1,0 +1,52 @@
+AquaGlow Smart Bottle
+
+Fitness focussed professionals, 25-45, urban
+
+Smart water bottle that tracks hydration and glows to remnd you to drink. keeps drinks cold /hot 24h. App-connected
+
+palce the bottle upright on a wooden gym bench, morning sunlight from the left, a folded towel and dumbell softly blurred in the background
+
+Full view of the bottle on clouds
+
+The view of the bottle on tip of a mountain with valley view in the background
+
+A lady holding the bottle in gym cloths. background is gym.
+
+
+
+The Bottle appears on a cloud, the camera orbits around the bottle and the bottle suddently falls down
+the bottle lands in the hands of a lady in a gym and she throws the bottle onto the screen with a smile
+the bottle then lands on a mountain top with valley in the background and camera zooms out
+
+
+X Smart Sun Glass
+
+A special smart su glass the glass colur can be changed by a small button on its handle. Alos a google gemini enabled smart glass with near ear speaker and expandable ic for talking and sync with phone. this glasss can be used while driving a bycycle and usefull to make calls or listen to music
+
+
+i need the guide tohave the following main sections
+
+Setion A
+the full architecture with diagram for the test phase
+
+Section B
+all teh features of this software explained step by step and if psosible with screenshot. if screenshot is not possible leave a blank and prvide instrauction from where to take the screenshot iw ill manually take and insert
+
+Section C
+specific instructiosn like dcoker compose down, docker compose up -d --build. docker composer logs api, etc also instrauction of where to use each insteauctiona nd for what
+
+
+
+cd "F:\MY WORKS\00-NIVATIER\00-PRODUCTS\02-NivaAd"
+docker compose up -d --build
+
+docker compose logs api --tail 60
+
+docker compose logs worker --tail 150
+
+docker compose logs -f worker
+
+
+
+⚠ Your reference photo was rejected by the AI provider: resolution 480P is not supported, available ones are ['720P', '1080P']
+Nothing was generated yet — no credits were spent for this attempt. Want to try again without the reference photo (fully AI-imagined instead)? This will cost 3 credits.

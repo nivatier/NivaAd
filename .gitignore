@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.env
+Git-key.txt
+_Zip Downloads

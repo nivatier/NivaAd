@@ -1,0 +1,117 @@
+# NivaAd — local development stack (Docker Desktop)
+# Usage:  docker compose up --build
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nivaad
+      POSTGRES_PASSWORD: nivaad_dev
+      POSTGRES_DB: nivaad
+    ports: ["5433:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nivaad"]
+      interval: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: nivaad
+      MINIO_ROOT_PASSWORD: nivaad_dev_secret
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [miniodata:/data]
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on: [minio]
+    entrypoint: >
+      /bin/sh -c "
+      sleep 3 &&
+      mc alias set local http://minio:9000 nivaad nivaad_dev_secret &&
+      mc mb --ignore-existing local/nivaad-media &&
+      mc anonymous set download local/nivaad-media"
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["8025:8025", "1025:1025"]
+
+  api:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://nivaad:nivaad_dev@postgres:5432/nivaad
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: nivaad-media
+      S3_ACCESS_KEY: nivaad
+      S3_SECRET_KEY: nivaad_dev_secret
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      MOCK_POSTING: "true"
+      ENV: development
+    volumes: ["./backend:/app"]
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    dns:
+        - 8.8.8.8
+        - 1.1.1.1
+
+  stripe-cli:
+    image: stripe/stripe-cli:latest
+    command: listen --forward-to http://api:8000/webhooks/stripe --api-key ${STRIPE_SECRET_KEY}
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  worker:
+    build: ./backend
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=2
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://nivaad:nivaad_dev@postgres:5432/nivaad
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: nivaad-media
+      S3_ACCESS_KEY: nivaad
+      S3_SECRET_KEY: nivaad_dev_secret
+      MOCK_POSTING: "true"
+      ENV: development
+    volumes: ["./backend:/app"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    dns:
+        - 8.8.8.8
+        - 1.1.1.1
+
+  beat:
+    build: ./backend
+    command: celery -A app.worker.celery_app beat --loglevel=info
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://nivaad:nivaad_dev@postgres:5432/nivaad
+      REDIS_URL: redis://redis:6379/0
+      ENV: development
+    volumes: ["./backend:/app"]
+    depends_on:
+      redis: { condition: service_healthy }
+    dns:
+        - 8.8.8.8
+        - 1.1.1.1
+
+volumes:
+  pgdata:
+  miniodata:

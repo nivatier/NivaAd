@@ -1,0 +1,726 @@
+import uuid
+from datetime import date, datetime
+
+from pydantic import BaseModel, EmailStr, Field
+
+
+class RegisterIn(BaseModel):
+    company_name: str = Field(min_length=2, max_length=200)
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    full_name: str = ""
+    accept_aup: bool
+
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class RefreshIn(BaseModel):
+    refresh_token: str
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+class UpdateProfileIn(BaseModel):
+    full_name: str = Field(min_length=1, max_length=200)
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class UserOut(BaseModel):
+    id: uuid.UUID
+    email: EmailStr
+    full_name: str
+    role: str
+    status: str
+    email_verified: bool
+
+    class Config:
+        from_attributes = True
+
+
+# ---------- Team / users ----------
+
+VALID_ROLES = ("admin", "editor", "poster")
+
+
+class InviteUserIn(BaseModel):
+    email: EmailStr
+    full_name: str = ""
+    role: str = Field(pattern="^(admin|editor|poster)$")
+
+
+class UpdateUserIn(BaseModel):
+    role: str | None = Field(default=None, pattern="^(admin|editor|poster)$")
+    status: str | None = Field(default=None, pattern="^(active|disabled)$")
+
+
+class AcceptInviteIn(BaseModel):
+    token: str
+    password: str = Field(min_length=8, max_length=128)
+    full_name: str | None = None  # lets the invitee correct/fill in their name if left blank
+
+
+class TeamUserOut(BaseModel):
+    id: uuid.UUID
+    email: EmailStr
+    full_name: str
+    role: str
+    status: str
+    invited_at: datetime | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class InviteCheckOut(BaseModel):
+    """Used by the public accept-invite page to show who/what the invite
+    is for, before the person sets a password."""
+    email: EmailStr
+    full_name: str
+    company_name: str
+    inviter_name: str
+
+
+class RoleCapabilitiesOut(BaseModel):
+    editor: dict[str, bool]
+    poster: dict[str, bool]
+
+
+class RoleCapabilitiesIn(BaseModel):
+    editor: dict[str, bool]
+    poster: dict[str, bool]
+
+
+class AdminOverviewOut(BaseModel):
+    """Real, company-scoped stats only — never platform-wide numbers.
+    A company's admin should never see other companies' data, even
+    aggregated."""
+    tier: str
+    credits_remaining: int
+    credits_used_this_month: int
+    team_members: int
+    ads_created_total: int
+    ads_created_this_month: int
+    campaigns_total: int
+    scheduled_pending: int
+    flagged_unresolved: int
+
+
+class DayCountOut(BaseModel):
+    date: str  # "YYYY-MM-DD"
+    count: int
+
+
+class AnalyticsOut(BaseModel):
+    """Real, company-scoped activity data — deliberately does NOT include
+    reach/clicks/engagement, since those require actually posting to a
+    real platform (still MOCK_POSTING), and showing fake numbers there
+    would be actively misleading rather than just incomplete. Available
+    to any role with the view_analytics capability, not just admins —
+    so nothing here should be as sensitive as e.g. flagged-content
+    details (that stays admin-only, in Moderation)."""
+    ads_created_total: int
+    ads_created_this_month: int
+    credits_used_this_month: int
+    scheduled_pending: int
+    campaigns_total: int
+    ads_by_day: list[DayCountOut]  # last 30 days, zero-filled for days with no activity
+    platform_breakdown: dict[str, int]  # ad counts per platform — an ad targeting 2 platforms counts once for each
+    status_breakdown: dict[str, int]  # "created" | "scheduled" | "posted" — matches My Ads' own filter categories exactly
+
+
+class AvailableModelOut(BaseModel):
+    """One selectable option in Create Ad's model dropdown — deliberately
+    has NO model slug field at all (not just stripped at the endpoint
+    level like the old tier system did) — company users were never
+    meant to see which AI model powers a choice, only its label/cost/
+    duration, so the shape itself enforces that rather than relying on
+    every call site to remember to strip it. Never includes the
+    "pricing" formula either, for the same reason — see POST
+    /ads/preview-cost for how the frontend gets a live, accurate credit
+    total without the raw $ structure ever reaching the browser."""
+    id: str
+    label: str
+    credits: int  # a representative/reference number — for models with dynamic pricing this is the cost of a common combination, not necessarily what any specific selection will actually cost; always call /ads/preview-cost for the real total
+    min_duration: int | None = None  # video only — ignored if duration_options is set
+    max_duration: int | None = None  # video only — ignored if duration_options is set
+    duration_options: list[int] | None = None  # video only — set means DISCRETE choices only (e.g. [4, 6, 8]); Create Ad shows a picker instead of a free-entry duration field
+    resolutions: list[str] | None = None  # video only — lets the customer pick a resolution in Create Ad; real cost differs by resolution once dynamic pricing is set on this model
+    supports_audio: bool = False  # video only — whether to show an audio on/off toggle at all; only meaningful for models with dynamic pricing that actually vary by audio
+    has_dynamic_pricing: bool = False  # true if this model's cost genuinely varies by the customer's resolution/audio/duration choice; false means `credits` above is the fixed cost regardless of selection
+
+
+class AvailableModelsOut(BaseModel):
+    text: list[AvailableModelOut]
+    image: list[AvailableModelOut]
+    video: list[AvailableModelOut]
+
+
+class PreviewCostIn(BaseModel):
+    kind: str = Field(pattern="^(text|image|video)$")
+    model_id: str
+    resolution: str | None = None
+    audio: bool = False
+    duration_seconds: int | None = None  # required for video, ignored for image
+    has_reference_image: bool = False  # video only — whether a reference/frame image is currently attached; affects price for models with a mode-based rate split or a per-input reference cost (see services/pricing.py)
+
+
+class PreviewCostOut(BaseModel):
+    credits: int
+
+
+class MarkupMultiplierOut(BaseModel):
+    markup_multiplier: float
+
+
+class MarkupMultiplierIn(BaseModel):
+    markup_multiplier: float = Field(ge=1.0, le=10.0)
+
+
+class MaxExtraUsersOut(BaseModel):
+    max_extra_users: int
+
+
+class MaxExtraUsersIn(BaseModel):
+    max_extra_users: int = Field(ge=0, le=1000)
+
+
+class TeamLimitOut(BaseModel):
+    """Company-facing view of the team size limit — used to show 'X of
+    Y used' and disable the invite form proactively before it fails."""
+    max_extra_users: int
+    current_extra_users: int
+
+
+class RetentionMonthsOut(BaseModel):
+    retention_months: int
+
+
+class RetentionMonthsIn(BaseModel):
+    retention_months: int = Field(ge=1, le=120)
+
+
+class VideoPrepSettingsOut(BaseModel):
+    """Developer-managed models for two background video-quality steps
+    (see services/video_prep.py) — neither ever exposed to a company
+    user, both optional (null = that step is skipped entirely)."""
+    prompt_review_model_id: str | None = None
+    image_model_id: str | None = None
+
+
+class VideoPrepSettingsIn(BaseModel):
+    prompt_review_model_id: str | None = None
+    image_model_id: str | None = None
+
+
+# ---------- Developer (platform operator) — fully separate from the
+# per-company user/admin system above; never references a User or
+# Company row ----------
+
+class DeveloperLoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class DeveloperTokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class CompanyAdminOut(BaseModel):
+    """One row in the developer's company list — deliberately does not
+    include anything about the company's own ad/campaign CONTENT, only
+    account/billing-shape facts a platform operator legitimately needs."""
+    id: uuid.UUID
+    name: str
+    tier: str
+    subscription_status: str
+    cancel_at_period_end: bool
+    credits_balance: int
+    user_count: int
+    ads_total: int
+    created_at: datetime
+
+
+class PlatformConnectionOut(BaseModel):
+    platform: str
+    status: str  # "connected" | "not_connected" | "broken" (decrypt/refresh failure)
+    connected_at: datetime | None = None
+
+
+class PlatformOverviewOut(BaseModel):
+    total_companies: int
+    companies_by_tier: dict[str, int]
+    active_paid_subscriptions: int
+    estimated_mrr_usd: float  # rounded estimate from each company's TIER base price — not exact Stripe-reported revenue (term discounts aren't factored in)
+    total_users: int
+    total_ads: int
+    total_campaigns: int
+    flagged_unresolved_total: int
+
+
+class OpenRouterCreditsOut(BaseModel):
+    """Your actual OpenRouter account balance — the same account every
+    company's image/video generation draws from. A separate endpoint
+    from the rest of the platform overview (not folded into it) since
+    this is a live external API call to OpenRouter itself, and
+    shouldn't be able to break the rest of the Overview page if
+    OpenRouter is slow or briefly unreachable."""
+    total_credits: float
+    total_usage: float
+    remaining: float
+
+
+class DeveloperModelOut(BaseModel):
+    """The developer's own view of one model entry — WITH the real model
+    slug, unlike AvailableModelOut. This is the only place a model slug
+    is ever exposed to the frontend."""
+    id: str
+    label: str
+    model: str
+    credits: int  # LEGACY flat cost — still used as a fallback whenever "pricing" is absent, and shown as a reference number even when it isn't the live source of truth
+    min_duration: int | None = None
+    max_duration: int | None = None
+    duration_options: list[int] | None = None  # video only — DISCRETE allowed durations (e.g. [5, 10] for Kling O1, [4, 6, 8] for the Veo family) — when set, this replaces the min/max range entirely; Create Ad shows a picker instead of a free slider
+    resolutions: list[str] | None = None  # video only — which resolutions this entry offers (e.g. ["480p","720p","1080p"]); provider cost differs per resolution, so exposing the choice lets ads be generated cheaper at lower res
+    supports_audio: bool = False  # video only — whether this model can generate with/without audio at all, INDEPENDENT of whether dynamic pricing is configured (a model can support audio before the developer has gotten around to setting up its full pricing formula)
+    price_per_second_usd: float | None = None  # video only — the provider's own per-second cost, shown for the developer's reference when setting credits; informational only for now (token-to-cost mapping deliberately deferred)
+    enabled: bool = True  # disabled entries stay configured (editable, re-enableable) but are hidden from Create Ad's dropdown — different from deleting, which discards the entry entirely
+    pricing: dict | None = None  # opts this model into DYNAMIC per-combination pricing (see services/pricing.py). Video shape: {"rates_usd_per_second": {"720p": {"audio": 0.10, "no_audio": 0.08}, ...}, "supports_audio": true}. Image shape: {"cost_usd": 0.03}. Absent = falls back to the flat "credits" value above, unchanged from before this feature existed.
+
+
+class DeveloperModelsOut(BaseModel):
+    text: list[DeveloperModelOut]
+    image: list[DeveloperModelOut]
+    video: list[DeveloperModelOut]
+
+
+class AddModelIn(BaseModel):
+    """Developer-only — adds a new model to the open-ended list for a
+    kind (no fixed count anymore, replacing the old low/medium/best/
+    super tier system — add as many as you want)."""
+    kind: str = Field(pattern="^(text|image|video)$")
+    label: str = Field(min_length=1, max_length=60)
+    model: str = Field(min_length=1, max_length=200)
+    credits: int = Field(ge=1, le=50)
+    min_duration: int | None = Field(default=None, ge=1, le=60)  # video only; ignored for image
+    max_duration: int | None = Field(default=None, ge=1, le=60)  # video only; ignored for image
+    duration_options: list[int] | None = None  # video only — set for models with fixed/discrete durations only (not a range)
+    resolutions: list[str] | None = None  # video only; e.g. ["480p","720p"] — which of the provider's supported resolutions to offer in Create Ad
+    supports_audio: bool = False  # video only — whether this model can generate with/without audio at all
+    price_per_second_usd: float | None = Field(default=None, ge=0)  # video only; informational (from OpenRouter's catalog)
+    pricing: dict | None = None  # see DeveloperModelOut.pricing — omit to keep this model on flat legacy credits
+
+
+class UpdateModelIn(BaseModel):
+    """Developer-only — edits an existing model entry by id. All fields
+    optional except what's actually changing; omitted fields keep their
+    current value (a real bug in the old tier-edit endpoint used to wipe
+    fields that weren't included — this mirrors the fix for that: only
+    overwrite what's explicitly provided)."""
+    label: str | None = Field(default=None, min_length=1, max_length=60)
+    model: str | None = Field(default=None, min_length=1, max_length=200)
+    credits: int | None = Field(default=None, ge=1, le=50)
+    min_duration: int | None = Field(default=None, ge=1, le=60)
+    max_duration: int | None = Field(default=None, ge=1, le=60)
+    duration_options: list[int] | None = None
+    resolutions: list[str] | None = None
+    supports_audio: bool | None = None
+    price_per_second_usd: float | None = Field(default=None, ge=0)
+    enabled: bool | None = None
+    pricing: dict | None = None
+
+
+class ReorderModelsIn(BaseModel):
+    """Developer-only — sets the display order for a kind's model list
+    (both here and in Create Ad's dropdown, which shows them in this
+    exact order) by supplying every current id in the desired sequence."""
+    kind: str = Field(pattern="^(text|image|video)$")
+    ordered_ids: list[str] = Field(min_length=1)
+
+
+class PlatformIntegrationOut(BaseModel):
+    """Developer's own view of one platform's posting credentials —
+    client_secret is NEVER returned, even to the developer, once saved
+    (masked as a fixed placeholder so the UI can show "a secret is set"
+    without ever re-exposing the real value over the wire again)."""
+    id: str
+    label: str
+    client_id: str
+    has_secret: bool
+    scope: str | None = None
+    redirect_uri: str | None = None
+    enabled: bool = True
+    built: bool = False  # whether real integration code exists for this platform yet (currently only linkedin) — informational, so the developer isn't surprised nothing happens when they enable an unbuilt one
+
+
+class AddPlatformIntegrationIn(BaseModel):
+    id: str = Field(pattern="^[a-z0-9_-]{2,30}$")
+    label: str = Field(min_length=1, max_length=60)
+    client_id: str = Field(min_length=1, max_length=300)
+    client_secret: str = Field(min_length=1, max_length=500)
+    scope: str | None = None
+    redirect_uri: str | None = None
+
+
+class UpdatePlatformIntegrationIn(BaseModel):
+    label: str | None = Field(default=None, min_length=1, max_length=60)
+    client_id: str | None = Field(default=None, min_length=1, max_length=300)
+    client_secret: str | None = Field(default=None, min_length=1, max_length=500)  # omit to keep the current secret unchanged
+    scope: str | None = None
+    redirect_uri: str | None = None
+    enabled: bool | None = None
+
+
+class CompanyPlatformOut(BaseModel):
+    """What a company admin sees — deliberately just enough to show a
+    Connect button and status. No client_id, no secret, ever."""
+    id: str
+    label: str
+    built: bool = False  # whether real integration code exists yet (currently only linkedin) — lets the UI show "Coming soon" honestly instead of a Connect button that would just 404
+
+
+class OpenRouterCatalogModelOut(BaseModel):
+    """One model from OpenRouter's own live catalog — what the developer
+    browses in the 'Fetch from OpenRouter' popup before clicking Add.
+    Everything here comes straight from OpenRouter's API, filtered to
+    the requested kind."""
+    slug: str
+    name: str
+    description: str | None = None
+    price_per_second_usd: float | None = None  # video models — provider's per-second generation cost
+    price_per_image_usd: float | None = None   # image models — provider's per-image cost
+    resolutions: list[str] | None = None       # supported output resolutions where the catalog exposes them
+    max_duration: int | None = None            # documented max clip seconds where exposed
+
+
+class MeOut(BaseModel):
+    user: UserOut
+    company_id: uuid.UUID
+    company_name: str
+    tier: str
+    credits: int
+    current_period_end: datetime | None = None
+    cancel_at_period_end: bool = False
+    capabilities: dict[str, bool] = Field(default_factory=dict)  # resolved for THIS user's role — admin gets everything True
+
+
+# ---------- Ads / generation ----------
+
+class VideoShotIn(BaseModel):
+    prompt: str = Field(min_length=1, max_length=2000)
+    duration: int = Field(ge=1, le=60)  # outer sanity bound only — REAL enforcement is against the company's active video tier's min_duration/max_duration, done in the endpoint (services/credits.py: DEFAULT_MODEL_CFG), not here
+
+
+class AdCreateIn(BaseModel):
+    product_name: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=10, max_length=3000)
+    audience: str = ""
+    offer: str = ""
+    goal: str = "Drive sales"
+    tone: str = "Professional"
+    env: str | None = None
+    image_scene: str | None = None
+    product_image: str | None = None
+    product_image_url: str | None = None
+    tagline: str | None = None
+    use_brand_logo: bool = False
+    product_id: uuid.UUID | None = None
+    platforms: list[str] = Field(min_length=1)
+    outputs: dict = Field(default_factory=lambda: {"text": True, "image": True, "video": False})
+    format: str = "single"
+    variations: int = 1
+    text_prompt_override: str | None = None
+    image_prompt_override: str | None = None
+    carousel_slides: list[str] | None = None  # per-slide image descriptions, in order — length determines carousel image count (server enforces CAROUSEL_MAX_IMAGES)
+    video_shots: list[VideoShotIn] | None = None  # one or more {prompt, duration} shots — if more than one, combined into a single timing-marked prompt sent as ONE generation call (server enforces MAX_VIDEO_SHOTS and validates the TOTAL duration against the company's active tier)
+    video_prompt_override: str | None = None  # only meaningful when video_shots has exactly one shot — mirrors image_prompt_override's single-item-only behavior; multi-shot prompts are set per-shot in video_shots itself, same asymmetry as carousel_slides vs image_prompt_override
+    video_frame_image: str | None = None  # raw base64 data URL, freshly uploaded — a DEDICATED image for the video's starting frame, deliberately separate from product_image (used for image generation), so it's always unambiguous whether an image is actually being sent to the video API
+    video_frame_image_url: str | None = None  # already-stored URL, e.g. reusing a previously uploaded photo
+    image_reference_image: str | None = None  # raw base64 data URL — a DEDICATED reference for IMAGE generation, set in Step 2's AI image section; when present it takes priority over the Step 1 product photo as the generation reference (same explicit-over-implicit principle as video's frame image)
+    image_reference_image_url: str | None = None  # already-stored URL variant of the above
+    image_model_id: str | None = None  # which entry from GET /ads/available-models the user picked in Step 2's dropdown — replaces the old company-wide "active tier" concept; required if outputs.image is true
+    video_model_id: str | None = None  # same, for video; required if outputs.video is true
+    text_model_id: str | None = None  # same, for text — text generation is no longer free/bundled; if outputs.text is true this is required, resolved to a real credit cost like image/video
+    video_resolution: str | None = None  # which of the chosen video model's offered resolutions to generate at (validated against that model's own list); defaults server-side to the model's first offered resolution if omitted
+    video_audio: bool = False  # whether to generate with native audio, for models that support the choice (see AvailableModelOut.supports_audio) — genuinely affects both the output AND the price for dynamically-priced models; ignored for models without an audio toggle
+
+
+class RefineIn(BaseModel):
+    feedback: str = Field(min_length=2, max_length=1000)
+    variant: int = 0
+
+
+class AdPatchIn(BaseModel):
+    status: str | None = None
+    favorite: bool | None = None
+    results: dict | None = None
+
+
+class PostAdIn(BaseModel):
+    platforms: list[str] = Field(min_length=1)
+
+
+class AdScheduledPostOut(BaseModel):
+    """One platform's pending schedule for an ad — lets My Ads show and
+    manage each platform's schedule individually (cancel one without
+    affecting others), not just a single aggregated "next" time."""
+    id: uuid.UUID
+    platform: str
+    scheduled_at: datetime
+
+
+class AdOut(BaseModel):
+    id: uuid.UUID
+    status: str
+    brief: dict
+    platforms: list
+    outputs: dict
+    results: dict | None
+    favorite: bool
+    product_id: uuid.UUID | None = None
+    campaign_id: uuid.UUID | None = None
+    campaign_phase: str | None = None
+    campaign_name: str | None = None
+    posted_at: datetime | None = None
+    posted_platforms: list = Field(default_factory=list)
+    # FIXED 2026-07-12: this field was silently missing from AdOut
+    # entirely — the backend logic that computed it, and the frontend
+    # code that read it, were both correct, but Pydantic drops any
+    # value passed to a model constructor that isn't a declared field,
+    # so it was NEVER actually reaching the response despite everything
+    # around it looking right. This is the real reason My Ads never
+    # showed a scheduled time no matter how the display logic was fixed.
+    next_scheduled_at: datetime | None = None
+    scheduled_posts: list[AdScheduledPostOut] = Field(default_factory=list)  # every platform's pending schedule for this ad, not just the earliest
+    created_at: datetime
+    error: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class AdListOut(BaseModel):
+    items: list[AdOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class AdCreatedOut(BaseModel):
+    ad_id: uuid.UUID
+    job_id: uuid.UUID | None = None
+    credits_cost: int
+
+
+class PromptPreviewIn(BaseModel):
+    product_name: str = ""
+    description: str = ""
+    audience: str = ""
+    offer: str = ""
+    goal: str = "Drive sales"
+    tone: str = "Professional"
+    env: str | None = None
+    image_scene: str | None = None
+    has_photo: bool = False
+    tagline: str | None = None
+    platforms: list[str] = Field(min_length=1)
+    outputs: dict = Field(default_factory=dict)
+    format: str = "single"
+    variations: int = 1
+    carousel_slides: list[str] | None = None
+    video_shots: list[VideoShotIn] | None = None
+
+
+class PromptPreviewOut(BaseModel):
+    text_prompt: str
+    image_prompt: str | None
+    video_prompt: str | None = None  # only populated when exactly one video shot was requested — matches the single-shot-only editability of video_prompt_override
+
+
+
+# ---------- Products ----------
+
+class ProductCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+    audience: str = ""
+    offer: str = ""
+    image: str | None = None
+
+
+class ProductOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    description: str
+    audience: str
+    offer: str
+    image_url: str | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ---------- Brand kit ----------
+
+class BrandKitUpdateIn(BaseModel):
+    logo: str | None = None
+    primary_color: str | None = None
+    tagline: str | None = None
+    logo_placement: str | None = None
+
+
+class BrandKitOut(BaseModel):
+    logo_url: str | None
+    primary_color: str
+    tagline: str
+    logo_placement: str
+
+    class Config:
+        from_attributes = True
+
+
+# ---------- Campaigns ----------
+
+class PhaseScheduleIn(BaseModel):
+    date: str  # "YYYY-MM-DD"
+    time: str = "10:00"  # "HH:MM"
+    platforms: list[str] = Field(min_length=1)
+    generate_image: bool = False  # per-phase choice — e.g. no image for a teaser, one for the launch
+    env: str | None = None  # placement/surroundings, used when product_image is provided
+    image_scene: str | None = None  # scene description, used when no product_image
+    product_image: str | None = None  # base64 data URL — your own product photo for this phase; also serves as this phase's image reference, same role as Create Ad's image_reference_image
+    use_brand_logo: bool = False
+    image_model_id: str | None = None  # which entry from GET /ads/available-models to use for this phase's image — same per-ad model choice as Create Ad, not a fixed default
+    # Video — same capability set as Create Ad, mutually exclusive with
+    # the image fields above at the UI level (a phase generates an image
+    # OR a video, not both), enforced client-side; the backend doesn't
+    # need to re-enforce this since generate_image/generate_video are
+    # independent booleans and nothing breaks if both were somehow true.
+    generate_video: bool = False
+    video_model_id: str | None = None
+    video_shots: list[VideoShotIn] | None = None
+    video_frame_image: str | None = None
+    video_frame_image_url: str | None = None
+    video_resolution: str | None = None
+    video_prompt_override: str | None = None  # only meaningful for a single shot, same asymmetry as Create Ad
+
+
+class CampaignCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    brief: str = Field(min_length=1, max_length=1000)
+    teaser: PhaseScheduleIn
+    launch: PhaseScheduleIn
+    followup: PhaseScheduleIn
+
+
+class CampaignOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    brief: str
+    phases: dict | None  # per phase: caption, date, time, platforms, ad_id
+    phase_status: dict = Field(default_factory=dict)  # per phase: "posted" | "partially_posted" | "scheduled" | "no_ad" — computed live, not stored
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CampaignImageIn(BaseModel):
+    """Adds/regenerates the image on a phase's ALREADY-CREATED ad (ads are
+    now created automatically at campaign creation time, along with their
+    schedule) — this does not create a new ad."""
+    phase: str = Field(pattern="^(teaser|launch|followup)$")
+    env: str | None = None
+    image_scene: str | None = None
+    product_image: str | None = None
+    use_brand_logo: bool = False
+
+
+class CampaignListOut(BaseModel):
+    items: list[CampaignOut]
+    total: int
+    page: int
+    page_size: int
+
+
+# ---------- Scheduling ----------
+
+class SchedulePostIn(BaseModel):
+    ad_id: uuid.UUID
+    platforms: list[str] = Field(min_length=1)
+    scheduled_at: datetime  # naive UTC datetime from the browser's <input type="datetime-local">
+
+
+class RescheduleIn(BaseModel):
+    scheduled_at: datetime  # naive UTC — same convention as SchedulePostIn
+
+
+class ScheduledPostOut(BaseModel):
+    id: uuid.UUID
+    ad_id: uuid.UUID
+    platform: str
+    scheduled_at: datetime
+    status: str
+    posted_at: datetime | None
+    ad_title: str | None = None       # the linked ad's product name, for display
+    campaign_id: uuid.UUID | None = None
+    campaign_name: str | None = None
+    campaign_phase: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class ScheduleListOut(BaseModel):
+    """Paginated by GROUP (distinct ad + exact scheduled_at), not by raw
+    row — a post scheduled to 3 platforms is 3 rows but ONE group, and
+    should never be split across two pages of results. items still
+    contains every row belonging to the groups on the current page, so
+    the frontend's existing per-group platform display works unchanged."""
+    items: list[ScheduledPostOut]
+    total_groups: int
+    page: int
+    page_size: int
+
+# ---------- Moderation ----------
+
+class GuardrailRuleCreateIn(BaseModel):
+    phrase: str = Field(min_length=1, max_length=200)
+
+
+class GuardrailRuleOut(BaseModel):
+    id: uuid.UUID
+    phrase: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class FlaggedContentOut(BaseModel):
+    id: uuid.UUID
+    text: str
+    matched_term: str
+    resolved: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ModerationOverviewOut(BaseModel):
+    default_rules: list[str]
+    strikes: int
