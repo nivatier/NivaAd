@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.deps import get_current_user, require_capability
 from app.models import BrandKit, User
-from app.schemas import BrandKitOut, BrandKitUpdateIn
+from app.schemas import BrandKitOut, BrandKitUpdateIn, PlatformRatioOverrideIn
+from app.services import video_ratios as video_ratios_svc
 from app.services.storage import upload_data_url
 
 router = APIRouter(prefix="/brand-kit", tags=["brand-kit"])
@@ -60,6 +61,29 @@ async def update_brand_kit(data: BrandKitUpdateIn, user: User = Depends(require_
         kit.vertical_pad_color = data.vertical_pad_color or None
     if data.horizontal_pad_color is not None:
         kit.horizontal_pad_color = data.horizontal_pad_color or None
+    await db.commit()
+    await db.refresh(kit)
+    return kit
+
+
+@router.put("/platform-ratio", response_model=BrandKitOut)
+async def set_platform_ratio_override(data: PlatformRatioOverrideIn, user: User = Depends(require_capability("manage_brand_kit")), db: AsyncSession = Depends(get_db)):
+    """Set (ratio given) or clear (ratio=null) this company's own
+    override of one platform's video ratio — the reframe pipeline reads
+    this before falling back to the developer's platform-wide default.
+    Reassigns the whole dict (not an in-place mutation) so SQLAlchemy's
+    change tracking on the JSON column actually detects the update."""
+    if data.ratio is not None:
+        valid_ratios = await video_ratios_svc.get_video_ratios(db)
+        if data.ratio not in valid_ratios:
+            raise HTTPException(422, f"\"{data.ratio}\" isn't one of the platform's available ratios ({', '.join(valid_ratios)}).")
+    kit = await _get_or_create(db, user.company_id)
+    overrides = dict(kit.platform_ratio_overrides or {})
+    if data.ratio is None:
+        overrides.pop(data.platform_id, None)
+    else:
+        overrides[data.platform_id] = data.ratio
+    kit.platform_ratio_overrides = overrides
     await db.commit()
     await db.refresh(kit)
     return kit

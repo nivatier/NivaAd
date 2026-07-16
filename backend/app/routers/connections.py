@@ -21,9 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user, require_role
-from app.models import PlatformConnection, User
-from app.schemas import CompanyPlatformOut, PlatformConnectionOut
+from app.models import BrandKit, PlatformConnection, User
+from app.schemas import CompanyPlatformOut, PlatformConnectionOut, VideoRatiosOut
 from app.services import linkedin, platform_config
+from app.services import video_ratios as video_ratios_svc
 from app.services.token_crypto import decrypt_token, encrypt_token
 
 router = APIRouter(prefix="/connections", tags=["connections"])
@@ -51,19 +52,29 @@ def _verify_state(state: str) -> str:
 
 
 @router.get("/available", response_model=list[CompanyPlatformOut])
-async def list_available_platforms(_: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def list_available_platforms(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """What a company admin sees as OPTIONS to connect — only platforms
     the developer has actually configured AND enabled. Never includes
     client_id/secret."""
     platforms = await platform_config.get_platform_integrations(db)
+    kit = await db.scalar(select(BrandKit).where(BrandKit.company_id == user.company_id))
+    overrides = kit.platform_ratio_overrides if kit else {}
     return [
         CompanyPlatformOut(
             id=p["id"], label=p["label"],
             built=p["id"] in ("linkedin_personal",),  # FIXED — was still checking the old pre-rename "linkedin" id, meaning this always showed "Coming soon" for the one platform that actually has real integration code
-            video_ratio=p.get("video_ratio", "1:1"),
+            video_ratio=overrides.get(p["id"], p.get("video_ratio", "1:1")),  # company's own override wins over the developer default, same precedence as the reframe pipeline itself
         )
         for p in platforms if p.get("enabled", True)
     ]
+
+
+@router.get("/video-ratios", response_model=VideoRatiosOut)
+async def list_video_ratios(_: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Company-facing — the same developer-managed ratio list, so the
+    Connections page's ratio dropdown offers exactly what's actually
+    available, not a hardcoded set that could drift out of sync."""
+    return VideoRatiosOut(ratios=await video_ratios_svc.get_video_ratios(db))
 
 
 @router.get("", response_model=list[PlatformConnectionOut])

@@ -18,12 +18,13 @@ from app.database import get_db
 from app.deps import require_developer
 from app.models import Ad, Campaign, Company, CreditLedger, FlaggedContent, GuardrailRule, ModelConfig, Subscription, User
 from app.schemas import (
-    AddModelIn, AddPlatformIntegrationIn, CompanyAdminOut, DeveloperLoginIn, DeveloperModelOut,
-    DeveloperModelsOut, DeveloperTokenOut, GuardrailRuleCreateIn, GuardrailRuleOut, MarkupMultiplierIn,
-    MarkupMultiplierOut, MaxExtraUsersIn, MaxExtraUsersOut, OpenRouterCatalogModelOut, OpenRouterCreditsOut,
-    PlatformIntegrationOut, PlatformOverviewOut, PostRetentionMonthsIn, PostRetentionMonthsOut, RawModelsIn,
-    RawModelsOut, ReorderModelsIn, RetentionMonthsIn, RetentionMonthsOut, UpdateModelIn,
-    UpdatePlatformIntegrationIn, VideoPrepSettingsIn, VideoPrepSettingsOut,
+    AddModelIn, AddPlatformIntegrationIn, AddVideoRatioIn, CompanyAdminOut, DeveloperLoginIn,
+    DeveloperModelOut, DeveloperModelsOut, DeveloperTokenOut, GuardrailRuleCreateIn, GuardrailRuleOut,
+    MarkupMultiplierIn, MarkupMultiplierOut, MaxExtraUsersIn, MaxExtraUsersOut, OpenRouterCatalogModelOut,
+    OpenRouterCreditsOut, PlatformIntegrationOut, PlatformOverviewOut, PostRetentionMonthsIn,
+    PostRetentionMonthsOut, RatioUsageOut, RawModelsIn, RawModelsOut, ReorderModelsIn, RetentionMonthsIn,
+    RetentionMonthsOut, UpdateModelIn, UpdatePlatformIntegrationIn, VideoPrepSettingsIn, VideoPrepSettingsOut,
+    VideoRatiosOut,
 )
 from app.security import create_developer_token
 from app.services import credits as credit_svc
@@ -32,6 +33,7 @@ from app.services import pricing as pricing_svc
 from app.services import retention as retention_svc
 from app.services import team_limits as team_limits_svc
 from app.services import video_prep as video_prep_svc
+from app.services import video_ratios as video_ratios_svc
 from app.services.guardrails import get_or_seed_global_rules
 from app.services.token_crypto import encrypt_token
 
@@ -482,6 +484,9 @@ async def add_platform_integration(data: AddPlatformIntegrationIn, _: str = Depe
     platforms = await platform_config.get_platform_integrations(db)
     if any(p["id"] == data.id for p in platforms):
         raise HTTPException(409, f"A platform with id \"{data.id}\" already exists — edit it instead of adding a duplicate.")
+    valid_ratios = await video_ratios_svc.get_video_ratios(db)
+    if data.video_ratio not in valid_ratios:
+        raise HTTPException(422, f"\"{data.video_ratio}\" isn't one of your configured ratios ({', '.join(valid_ratios)}) — add it under Developer > Video Ratios first, or pick an existing one.")
     platforms.append({
         "id": data.id, "label": data.label, "client_id": data.client_id,
         "client_secret_encrypted": encrypt_token(data.client_secret),
@@ -495,6 +500,10 @@ async def add_platform_integration(data: AddPlatformIntegrationIn, _: str = Depe
 @router.put("/platforms/{platform_id}", response_model=list[PlatformIntegrationOut])
 async def update_platform_integration(platform_id: str, data: UpdatePlatformIntegrationIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
     platforms = await platform_config.get_platform_integrations(db)
+    if data.video_ratio is not None:
+        valid_ratios = await video_ratios_svc.get_video_ratios(db)
+        if data.video_ratio not in valid_ratios:
+            raise HTTPException(422, f"\"{data.video_ratio}\" isn't one of your configured ratios ({', '.join(valid_ratios)}) — add it under Developer > Video Ratios first, or pick an existing one.")
     found = False
     for p in platforms:
         if p["id"] == platform_id:
@@ -600,3 +609,38 @@ async def get_video_prep(_: str = Depends(require_developer), db: AsyncSession =
 async def update_video_prep(data: VideoPrepSettingsIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
     await video_prep_svc.set_video_prep_settings(db, data.prompt_review_model_id, data.image_model_id)
     return VideoPrepSettingsOut(prompt_review_model_id=data.prompt_review_model_id, image_model_id=data.image_model_id)
+
+
+@router.get("/video-ratios", response_model=VideoRatiosOut)
+async def get_video_ratios(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """The developer-managed list of available aspect ratios — just the
+    ratio strings, not fixed pixel sizes (see services/video_ratios.py
+    and services/reframe.py, which computes real dimensions from each
+    source video's own resolution)."""
+    return VideoRatiosOut(ratios=await video_ratios_svc.get_video_ratios(db))
+
+
+@router.post("/video-ratios", response_model=VideoRatiosOut, status_code=201)
+async def add_video_ratio(data: AddVideoRatioIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    ratios = await video_ratios_svc.add_video_ratio(db, data.ratio)
+    return VideoRatiosOut(ratios=ratios)
+
+
+@router.get("/video-ratios/{ratio}/usage", response_model=RatioUsageOut)
+async def get_ratio_usage(ratio: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Called before a delete is confirmed — shows what's currently
+    referencing this ratio, so the developer can make an informed
+    choice. Deletion itself is never blocked, only warned about."""
+    usage = await video_ratios_svc.check_ratio_usage(db, ratio)
+    return RatioUsageOut(**usage)
+
+
+@router.delete("/video-ratios/{ratio}", response_model=VideoRatiosOut)
+async def delete_video_ratio(ratio: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Not blocked even if still in use — per the agreed design, the
+    frontend shows a warning (via the usage endpoint above) and lets
+    the developer confirm anyway. Anything still referencing this ratio
+    afterward silently falls back to a default the next time it's read
+    (services/video_ratios.py's resolve_ratio), rather than breaking."""
+    ratios = await video_ratios_svc.remove_video_ratio(db, ratio)
+    return VideoRatiosOut(ratios=ratios)

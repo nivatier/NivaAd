@@ -94,6 +94,12 @@ class BrandKit(Base):
     pad_right_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     vertical_pad_color: Mapped[str | None] = mapped_column(String(9), nullable=True)
     horizontal_pad_color: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    # {"platform_id": "ratio"} — a company's own override of the
+    # developer's platform-wide default ratio (see
+    # services/platform_config.py's DEFAULT_PLATFORMS / video_ratio
+    # field). Only platforms this company has explicitly overridden
+    # appear here; anything absent falls back to the developer default.
+    platform_ratio_overrides: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class Product(Base):

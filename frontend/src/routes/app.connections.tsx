@@ -33,15 +33,30 @@ function Connections() {
 
   const [connections, setConnections] = useState<{ platform: string; status: string; connected_at: string | null }[] | null>(null);
   const [available, setAvailable] = useState<Record<string, { label: string; built: boolean; video_ratio: string }>>({});
+  const [ratios, setRatios] = useState<string[]>(["1:1"]);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [ratioSaving, setRatioSaving] = useState<string | null>(null);
+
+  async function saveRatio(platformId: string, ratio: string) {
+    setAvailable((cur) => ({ ...cur, [platformId]: { ...cur[platformId], video_ratio: ratio } }));
+    setRatioSaving(platformId);
+    try {
+      await api("/brand-kit/platform-ratio", { method: "PUT", body: { platform_id: platformId, ratio } });
+    } catch (e: any) {
+      setErr(e.message || "Could not save your posting size preference");
+      load(); // revert the optimistic update on failure
+    }
+    setRatioSaving(null);
+  }
 
   async function load() {
     try {
-      const [conns, avail] = await Promise.all([api("/connections"), api("/connections/available")]);
+      const [conns, avail, ratiosRes] = await Promise.all([api("/connections"), api("/connections/available"), api("/connections/video-ratios")]);
       setConnections(conns);
       setAvailable(Object.fromEntries(avail.map((p: { id: string; label: string; built: boolean; video_ratio: string }) => [p.id, { label: p.label, built: p.built, video_ratio: p.video_ratio }])));
+      setRatios(ratiosRes.ratios);
     } catch (e: any) {
       setErr(e.message || "Could not load connections");
     }
@@ -116,7 +131,17 @@ function Connections() {
                         <div className="flex items-center gap-2">
                           <span className="text-sm text-foreground">{available[c.platform]?.label || c.platform}</span>
                           {available[c.platform]?.video_ratio && (
-                            <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">Posts at {available[c.platform].video_ratio}</span>
+                            <div className="flex items-center gap-1">
+                              <select
+                                value={available[c.platform].video_ratio}
+                                onChange={(e) => saveRatio(c.platform, e.target.value)}
+                                disabled={ratioSaving === c.platform}
+                                className="rounded-full border border-border bg-background/60 px-2 py-0.5 text-[10px] text-muted-foreground focus:border-primary focus:outline-none disabled:opacity-50"
+                                title="Choose the format your videos post at for this platform"
+                              >
+                                {ratios.map((r) => <option key={r} value={r}>Posts at {r}</option>)}
+                              </select>
+                            </div>
                           )}
                         </div>
                         {isConnected && <div className="text-[11px] text-emerald-400">✓ Connected{c.connected_at ? ` ${new Date(c.connected_at).toLocaleDateString()}` : ""}</div>}

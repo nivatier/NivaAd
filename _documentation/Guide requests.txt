@@ -1,0 +1,12 @@
+i need the guide tohave the following main sections
+
+Setion A
+the full architecture with diagram for the test phase
+
+Section B
+all teh features of this software explained step by step and if psosible with screenshot. if screenshot is not possible leave a blank and prvide instrauction from where to take the screenshot iw ill manually take and insert
+
+Section C
+specific instructiosn like dcoker compose down, docker compose up -d --build. docker composer logs api, etc also instrauction of where to use each insteauctiona nd for what
+
+redis features and its explanation. how it satisfies the job of a queing service

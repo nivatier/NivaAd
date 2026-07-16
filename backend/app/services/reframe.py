@@ -20,17 +20,12 @@ from app.services import storage
 
 logger = logging.getLogger("nivaad.reframe")
 
-# Base sizes per ratio, matching common social export standards — long
-# edge is 1080px for anything not already covered by a well-known
-# preset. Keyed by the exact ratio strings used in the platform
-# settings (see services/platform_ratios.py).
-_RATIO_DIMENSIONS = {
-    "1:1": (1080, 1080),
-    "9:16": (1080, 1920),
-    "16:9": (1920, 1080),
-    "1.91:1": (1080, 565),
-    "4:5": (1080, 1350),
-}
+# Ratios are now developer-managed (see services/video_ratios.py) — just
+# the ratio strings themselves ("1:1", "9:16", etc.), not fixed pixel
+# sizes. Target dimensions are computed FROM the source video's own
+# resolution instead, so a 720p source stays roughly 720p-scale after
+# reframing rather than always being forced up to a fixed 1080p target
+# regardless of its real quality.
 
 
 class ReframeError(Exception):
@@ -57,8 +52,40 @@ def _probe_dimensions(path: Path) -> tuple[int, int]:
     return int(width_str), int(height_str)
 
 
-def target_dimensions_for_ratio(ratio: str) -> tuple[int, int] | None:
-    return _RATIO_DIMENSIONS.get(ratio)
+def parse_ratio(ratio: str) -> tuple[float, float]:
+    """"9:16" -> (9.0, 16.0). Raises ReframeError on anything malformed
+    rather than a bare ValueError, so callers get a consistent
+    exception type to handle."""
+    try:
+        w_str, h_str = ratio.split(":")
+        return float(w_str), float(h_str)
+    except (ValueError, AttributeError) as exc:
+        raise ReframeError(f"Malformed ratio string: {ratio!r}") from exc
+
+
+def target_dimensions_for_ratio(ratio: str, source_dims: tuple[int, int]) -> tuple[int, int] | None:
+    """Computes real target pixel dimensions for the given ratio,
+    scaled to match the SOURCE's own resolution — preserves the
+    source's long-edge pixel count rather than forcing a fixed size.
+    Both dimensions are rounded to even numbers, since H.264 (and most
+    codecs) require it."""
+    try:
+        ratio_w, ratio_h = parse_ratio(ratio)
+    except ReframeError:
+        return None
+    sw, sh = source_dims
+    long_edge = max(sw, sh)
+    if ratio_h > ratio_w:
+        # Target is portrait-leaning (or square) — height is the long edge.
+        target_h = long_edge
+        target_w = long_edge * (ratio_w / ratio_h)
+    else:
+        target_w = long_edge
+        target_h = long_edge * (ratio_h / ratio_w)
+    # Round to even — odd dimensions break yuv420p encoding.
+    tw = int(round(target_w / 2) * 2)
+    th = int(round(target_h / 2) * 2)
+    return max(tw, 2), max(th, 2)
 
 
 def needs_reframe(source_dims: tuple[int, int], target_dims: tuple[int, int], tolerance: float = 0.03) -> bool:
@@ -87,11 +114,6 @@ def reframe_video(source_video_url: str, target_ratio: str, brand_kit) -> bytes:
     has horizontal_pad_mode consulted if this specific conversion only
     needs vertical padding.
     """
-    target_dims = target_dimensions_for_ratio(target_ratio)
-    if target_dims is None:
-        raise ReframeError(f"Unknown target ratio: {target_ratio}")
-    tw, th = target_dims
-
     with tempfile.TemporaryDirectory(prefix="reframe-") as tmp:
         tmp_path = Path(tmp)
         source_path = tmp_path / "source.mp4"
@@ -99,6 +121,11 @@ def reframe_video(source_video_url: str, target_ratio: str, brand_kit) -> bytes:
         source_path.write_bytes(source_bytes)
 
         sw, sh = _probe_dimensions(source_path)
+        target_dims = target_dimensions_for_ratio(target_ratio, (sw, sh))
+        if target_dims is None:
+            raise ReframeError(f"Unknown or malformed target ratio: {target_ratio}")
+        tw, th = target_dims
+
         if not needs_reframe((sw, sh), target_dims):
             logger.info("[reframe] source %dx%d already close enough to target %s — skipping, using source as-is", sw, sh, target_ratio)
             return source_bytes
@@ -237,3 +264,115 @@ def _reframe_with_images(source_path: Path, output_path: Path, tw: int, th: int,
 
     filter_complex = ";".join(filter_parts)
     _run(["ffmpeg", "-y", *inputs, "-filter_complex", filter_complex, "-map", "[outv]", "-map", "0:a?", "-c:a", "copy", "-shortest", str(output_path)])
+
+
+# ---------------------------------------------------------------------------
+# Image reframing — same design as video (scale-to-fit, pad, never crop),
+# same Brand Kit settings (vertical_pad_mode/horizontal_pad_mode, the four
+# bar images, the two colors) — reused as-is rather than a separate config
+# surface, since the actual need here is narrower than video's (mainly
+# Instagram's Graph API hard-rejecting images outside a 4:5-1.91:1 range,
+# not every platform). Uses Pillow instead of ffmpeg, since a single frame
+# doesn't need a video-processing tool.
+#
+# "blurred_video" mode is intentionally NOT renamed in storage — reusing
+# the exact same stored value avoids a migration and keeps one Brand Kit
+# setting driving both media types. Only the UI LABEL differs by context
+# (shown as "Blurred background" in the image section, "Blurred video" in
+# the video section) — the underlying behavior for this mode is the same
+# concept either way: blur the source itself to fill the padding.
+# ---------------------------------------------------------------------------
+from io import BytesIO
+
+from PIL import Image, ImageFilter
+
+
+def reframe_image(source_image_url: str, target_ratio: str, brand_kit) -> bytes:
+    """Downloads the source image, scales it to fit entirely within the
+    target dimensions (no cropping), and pads the leftover space using
+    the company's Brand Kit preference for whichever direction actually
+    needs padding. Returns the reframed image's raw bytes (PNG)."""
+    source_bytes, _ = storage.fetch_bytes(source_image_url)
+    img = Image.open(BytesIO(source_bytes)).convert("RGBA")
+    sw, sh = img.size
+
+    target_dims = target_dimensions_for_ratio(target_ratio, (sw, sh))
+    if target_dims is None:
+        raise ReframeError(f"Unknown or malformed target ratio: {target_ratio}")
+    tw, th = target_dims
+
+    if not needs_reframe((sw, sh), target_dims):
+        logger.info("[reframe] image source %dx%d already close enough to target %s — skipping, using source as-is", sw, sh, target_ratio)
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    source_ratio = sw / sh
+    target_ratio_value = tw / th
+    vertical_padding_needed = source_ratio > target_ratio_value
+
+    if vertical_padding_needed:
+        mode = brand_kit.vertical_pad_mode
+        fill_image_urls = (brand_kit.pad_top_image_url, brand_kit.pad_bottom_image_url)
+        fill_color = brand_kit.vertical_pad_color
+    else:
+        mode = brand_kit.horizontal_pad_mode
+        fill_image_urls = (brand_kit.pad_left_image_url, brand_kit.pad_right_image_url)
+        fill_color = brand_kit.horizontal_pad_color
+
+    if mode == "image" and not any(fill_image_urls):
+        mode = "blurred_video"
+    if mode == "color" and not fill_color:
+        mode = "blurred_video"
+
+    # Scale the source to fit within the target on the constrained
+    # dimension.
+    scale = min(tw / sw, th / sh)
+    fg_w, fg_h = max(1, round(sw * scale)), max(1, round(sh * scale))
+    fg = img.resize((fg_w, fg_h), Image.LANCZOS)
+    paste_x = (tw - fg_w) // 2
+    paste_y = (th - fg_h) // 2
+
+    if mode == "color":
+        color_hex = (fill_color or "#000000").lstrip("#")
+        rgb = tuple(int(color_hex[i:i + 2], 16) for i in (0, 2, 4)) if len(color_hex) == 6 else (0, 0, 0)
+        canvas = Image.new("RGBA", (tw, th), rgb + (255,))
+    elif mode == "image":
+        canvas = Image.new("RGBA", (tw, th), (0, 0, 0, 255))
+        img_a_url, img_b_url = fill_image_urls
+        if vertical_padding_needed:
+            if img_a_url and paste_y > 0:
+                data, _ = storage.fetch_bytes(img_a_url)
+                bar = Image.open(BytesIO(data)).convert("RGBA").resize((tw, paste_y), Image.LANCZOS)
+                canvas.paste(bar, (0, 0))
+            if img_b_url and (th - (paste_y + fg_h)) > 0:
+                bottom_h = th - (paste_y + fg_h)
+                data, _ = storage.fetch_bytes(img_b_url)
+                bar = Image.open(BytesIO(data)).convert("RGBA").resize((tw, bottom_h), Image.LANCZOS)
+                canvas.paste(bar, (0, paste_y + fg_h))
+        else:
+            if img_a_url and paste_x > 0:
+                data, _ = storage.fetch_bytes(img_a_url)
+                bar = Image.open(BytesIO(data)).convert("RGBA").resize((paste_x, th), Image.LANCZOS)
+                canvas.paste(bar, (0, 0))
+            if img_b_url and (tw - (paste_x + fg_w)) > 0:
+                right_w = tw - (paste_x + fg_w)
+                data, _ = storage.fetch_bytes(img_b_url)
+                bar = Image.open(BytesIO(data)).convert("RGBA").resize((right_w, th), Image.LANCZOS)
+                canvas.paste(bar, (paste_x + fg_w, 0))
+    else:
+        # Blurred background — the source itself, scaled to fill and
+        # cropped to the target's shape, then blurred, same visual
+        # effect as the video version's split+crop+gblur chain.
+        bg_scale = max(tw / sw, th / sh)
+        bg_w, bg_h = max(1, round(sw * bg_scale)), max(1, round(sh * bg_scale))
+        bg = img.resize((bg_w, bg_h), Image.LANCZOS)
+        crop_x = (bg_w - tw) // 2
+        crop_y = (bg_h - th) // 2
+        bg = bg.crop((crop_x, crop_y, crop_x + tw, crop_y + th))
+        canvas = bg.filter(ImageFilter.GaussianBlur(radius=30)).convert("RGBA")
+
+    canvas.paste(fg, (paste_x, paste_y), fg)
+    buf = BytesIO()
+    canvas.convert("RGB").save(buf, format="PNG")
+    return buf.getvalue()

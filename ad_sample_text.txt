@@ -24,29 +24,7 @@ X Smart Sun Glass
 A special smart su glass the glass colur can be changed by a small button on its handle. Alos a google gemini enabled smart glass with near ear speaker and expandable ic for talking and sync with phone. this glasss can be used while driving a bycycle and usefull to make calls or listen to music
 
 
-i need the guide tohave the following main sections
-
-Setion A
-the full architecture with diagram for the test phase
-
-Section B
-all teh features of this software explained step by step and if psosible with screenshot. if screenshot is not possible leave a blank and prvide instrauction from where to take the screenshot iw ill manually take and insert
-
-Section C
-specific instructiosn like dcoker compose down, docker compose up -d --build. docker composer logs api, etc also instrauction of where to use each insteauctiona nd for what
+Professional advertising video for a product called "Smart Home Blues". We provide smart homes for your family with all the modern facilities. You are always connected with your home while you are away via your mobile. We provide complete support from design to completion of your home. contact us today at +1 456 3456 3456 Setting: clean studio background, soft professional lighting. Include smooth, natural camera movement (e.g. a slow push-in, gentle orbit, or subtle pan) and any product-appropriate motion (e.g. light catching a surface, gentle rotation, ambient movement in the background). Keep pacing calm and premium, not frantic. High-end commercial advertising style, no text overlay, no watermark.
 
 
-
-cd "F:\MY WORKS\00-NIVATIER\00-PRODUCTS\02-NivaAd"
-docker compose up -d --build
-
-docker compose logs api --tail 60
-
-docker compose logs worker --tail 150
-
-docker compose logs -f worker
-
-
-
-⚠ Your reference photo was rejected by the AI provider: resolution 480P is not supported, available ones are ['720P', '1080P']
-Nothing was generated yet — no credits were spent for this attempt. Want to try again without the reference photo (fully AI-imagined instead)? This will cost 3 credits.
+A slow push-in from a blueprint on a table, then a match-cut dissolve into a time-lapse of a house rising from foundation to completion under warm golden-hour light, with dust motes floating and scaffolders moving, ending on a fully finished home with warm interior window glow.

@@ -9,10 +9,11 @@ export const Route = createFileRoute("/developer/platforms")({
   head: () => ({ meta: [{ title: "Platforms — NivaAd Developer" }] }),
 });
 
-function PlatformRow({ entry, onSave, onDelete }: {
+function PlatformRow({ entry, onSave, onDelete, ratios }: {
   entry: PlatformIntegration;
   onSave: (id: string, body: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  ratios: string[];
 }) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(entry.label);
@@ -60,7 +61,7 @@ function PlatformRow({ entry, onSave, onDelete }: {
           <div>
             <div className="mb-1 text-[10px] text-muted-foreground">Video posting ratio — what the reframe pipeline treats as this platform's required format</div>
             <select value={videoRatio} onChange={(e) => setVideoRatio(e.target.value)} className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
-              {["1:1", "9:16", "16:9", "1.91:1", "4:5"].map((r) => <option key={r} value={r}>{r}</option>)}
+              {ratios.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
           <div className="flex items-center gap-2">
@@ -93,7 +94,7 @@ function PlatformRow({ entry, onSave, onDelete }: {
   );
 }
 
-function AddPlatformForm({ onAdd }: { onAdd: (body: Record<string, unknown>) => Promise<void> }) {
+function AddPlatformForm({ onAdd, ratios }: { onAdd: (body: Record<string, unknown>) => Promise<void>; ratios: string[] }) {
   const [open, setOpen] = useState(false);
   const [id, setId] = useState("");
   const [label, setLabel] = useState("");
@@ -129,7 +130,7 @@ function AddPlatformForm({ onAdd }: { onAdd: (body: Record<string, unknown>) => 
       <div>
         <div className="mb-1 text-[10px] text-muted-foreground">Video posting ratio</div>
         <select value={videoRatio} onChange={(e) => setVideoRatio(e.target.value)} className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
-          {["1:1", "9:16", "16:9", "1.91:1", "4:5"].map((r) => <option key={r} value={r}>{r}</option>)}
+          {ratios.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
       </div>
       <div className="flex items-center gap-2">
@@ -145,11 +146,14 @@ function DeveloperPlatforms() {
   const handleAuthError = useDevAuthErrorHandler();
 
   const [platforms, setPlatforms] = useState<PlatformIntegration[] | null>(null);
+  const [ratios, setRatios] = useState<string[]>(["1:1"]);
   const [err, setErr] = useState("");
 
   async function load() {
     try {
       setPlatforms(await devApi("/developer/platforms"));
+      const r = await devApi("/developer/video-ratios");
+      setRatios(r.ratios);
     } catch (e: any) {
       if (!handleAuthError(e)) setErr(e.message || "Could not load platforms");
     }
@@ -195,8 +199,8 @@ function DeveloperPlatforms() {
         <div className="text-sm text-muted-foreground">Loading…</div>
       ) : (
         <div className="max-w-2xl space-y-2">
-          {platforms.map((p) => <PlatformRow key={p.id} entry={p} onSave={handleSave} onDelete={handleDelete} />)}
-          <AddPlatformForm onAdd={handleAdd} />
+          {platforms.map((p) => <PlatformRow key={p.id} entry={p} onSave={handleSave} onDelete={handleDelete} ratios={ratios} />)}
+          <AddPlatformForm onAdd={handleAdd} ratios={ratios} />
         </div>
       )}
     </DeveloperShell>

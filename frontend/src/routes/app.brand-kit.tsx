@@ -231,16 +231,16 @@ function BrandKit() {
         </div>
 
         <div className="mt-8 border-t border-border pt-6">
-          <div className="text-sm font-medium text-foreground">Video padding</div>
+          <div className="text-sm font-medium text-foreground">Media padding</div>
           <p className="mt-1 text-xs text-muted-foreground">
-            When a generated video's shape doesn't match a platform's required ratio, it's scaled to fit and the leftover space is padded — never cropped, so nothing in the video is ever cut off. Choose what fills that space, separately for each direction.
+            When a generated image or video's shape doesn't match a platform's required ratio, it's scaled to fit and the leftover space is padded — never cropped, so nothing is ever cut off. Choose what fills that space, separately for each direction. Applies to both images and video — the same setup, since the leftover space works the same way for either.
           </p>
 
           <div className="mt-5 grid gap-6 md:grid-cols-2">
             <div>
               <div className="text-xs font-semibold text-foreground">Top / bottom padding <span className="font-normal text-muted-foreground">(when a wide video fits into a taller space)</span></div>
               <div className="mt-2 flex gap-1.5">
-                {[["blurred_video", "Blurred video"], ["image", "Image"], ["color", "Color"]].map(([k, l]) => (
+                {[["blurred_video", "Blurred background"], ["image", "Image"], ["color", "Color"]].map(([k, l]) => (
                   <button key={k} onClick={() => saveVerticalPadMode(k)} className={`rounded-full border px-2.5 py-1 text-[11px] ${verticalPadMode === k ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>{l}</button>
                 ))}
               </div>
@@ -276,7 +276,7 @@ function BrandKit() {
             <div>
               <div className="text-xs font-semibold text-foreground">Left / right padding <span className="font-normal text-muted-foreground">(when a tall video fits into a wider space)</span></div>
               <div className="mt-2 flex gap-1.5">
-                {[["blurred_video", "Blurred video"], ["image", "Image"], ["color", "Color"]].map(([k, l]) => (
+                {[["blurred_video", "Blurred background"], ["image", "Image"], ["color", "Color"]].map(([k, l]) => (
                   <button key={k} onClick={() => saveHorizontalPadMode(k)} className={`rounded-full border px-2.5 py-1 text-[11px] ${horizontalPadMode === k ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>{l}</button>
                 ))}
               </div>

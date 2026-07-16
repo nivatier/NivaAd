@@ -406,7 +406,7 @@ class AddPlatformIntegrationIn(BaseModel):
     client_secret: str = Field(min_length=1, max_length=500)
     scope: str | None = None
     redirect_uri: str | None = None
-    video_ratio: str = Field(default="1:1", pattern="^(1:1|9:16|16:9|1\\.91:1|4:5)$")
+    video_ratio: str = "1:1"  # validated against the developer's current ratio list at the endpoint, not a fixed pattern here — see services/video_ratios.py
 
 
 class UpdatePlatformIntegrationIn(BaseModel):
@@ -416,7 +416,7 @@ class UpdatePlatformIntegrationIn(BaseModel):
     scope: str | None = None
     redirect_uri: str | None = None
     enabled: bool | None = None
-    video_ratio: str | None = Field(default=None, pattern="^(1:1|9:16|16:9|1\\.91:1|4:5)$")
+    video_ratio: str | None = None  # validated against the developer's current ratio list at the endpoint
 
 
 class CompanyPlatformOut(BaseModel):
@@ -647,9 +647,37 @@ class BrandKitOut(BaseModel):
     pad_right_image_url: str | None
     vertical_pad_color: str | None
     horizontal_pad_color: str | None
+    platform_ratio_overrides: dict[str, str] = Field(default_factory=dict)  # {platform_id: ratio} — only platforms this company has overridden; anything absent uses the developer's platform-wide default
 
     class Config:
         from_attributes = True
+
+
+class PlatformRatioOverrideIn(BaseModel):
+    """Set (or clear, with ratio=null) this company's own override for
+    one platform's video ratio — a dedicated endpoint rather than
+    cramming a dict-keyed update into the general brand kit PUT, since
+    this is a "set one entry" operation, not a whole-object partial
+    update like everything else there."""
+    platform_id: str = Field(min_length=1, max_length=40)
+    ratio: str | None = None  # null clears the override, reverting to the developer default; validated against the developer's current ratio list at the endpoint
+
+
+class VideoRatiosOut(BaseModel):
+    ratios: list[str]
+
+
+class AddVideoRatioIn(BaseModel):
+    ratio: str = Field(min_length=3, max_length=10, pattern=r"^\d+(\.\d+)?:\d+(\.\d+)?$")  # structural check only (e.g. "9:16", "1.91:1") — not a fixed allowed-values list, since the whole point is letting the developer define new ones
+
+
+class RatioUsageOut(BaseModel):
+    """What currently references a ratio — shown as a warning before
+    the developer confirms deletion. Deletion is never blocked, only
+    warned about; anything still referencing a deleted ratio silently
+    falls back to a default afterward (see services/video_ratios.py)."""
+    platforms: list[str]
+    company_override_count: int
 
 
 # ---------- Campaigns ----------

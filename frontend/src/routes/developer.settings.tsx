@@ -144,6 +144,82 @@ function PostRetentionCard() {
   );
 }
 
+function VideoRatiosCard() {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [ratios, setRatios] = useState<string[] | null>(null);
+  const [newRatio, setNewRatio] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function load() {
+    try {
+      const r = await devApi("/developer/video-ratios");
+      setRatios(r.ratios);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not load ratios");
+    }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function add() {
+    if (!newRatio.trim()) return;
+    setBusy("add"); setErr("");
+    try {
+      const r = await devApi("/developer/video-ratios", { method: "POST", body: { ratio: newRatio.trim() } });
+      setRatios(r.ratios);
+      setNewRatio("");
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not add that ratio — check the format (e.g. 21:9)");
+    }
+    setBusy(null);
+  }
+
+  async function remove(ratio: string) {
+    setBusy(ratio); setErr("");
+    try {
+      const usage = await devApi(`/developer/video-ratios/${encodeURIComponent(ratio)}/usage`);
+      const usedBy: string[] = [];
+      if (usage.platforms.length > 0) usedBy.push(`${usage.platforms.length} platform(s): ${usage.platforms.join(", ")}`);
+      if (usage.company_override_count > 0) usedBy.push(`${usage.company_override_count} company override(s)`);
+      const warning = usedBy.length > 0
+        ? `"${ratio}" is currently used by ${usedBy.join(" and ")}. Deleting it won't break anything — they'll silently fall back to a default ratio the next time they generate. Delete anyway?`
+        : `Delete "${ratio}"? Nothing currently references it.`;
+      if (!confirm(warning)) { setBusy(null); return; }
+      const r = await devApi(`/developer/video-ratios/${encodeURIComponent(ratio)}`, { method: "DELETE" });
+      setRatios(r.ratios);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not delete that ratio");
+    }
+    setBusy(null);
+  }
+
+  return (
+    <div className="mb-6 rounded-xl border border-slate-700/50 bg-card/60 p-5 max-w-md">
+      <div className="text-sm font-semibold text-foreground">Video ratios</div>
+      <p className="mt-1 text-xs text-muted-foreground">The aspect ratios available for platforms and company overrides to choose from. Just the ratio itself (e.g. "9:16") — actual pixel dimensions are computed per generation from each source video's own resolution, not a fixed size.</p>
+      {!ratios ? (
+        <div className="mt-3 text-xs text-muted-foreground">Loading…</div>
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {ratios.map((r) => (
+            <span key={r} className="flex items-center gap-1.5 rounded-full border border-border bg-background/60 px-2.5 py-1 text-[11px] text-foreground">
+              {r}
+              <button onClick={() => remove(r)} disabled={busy === r} className="text-muted-foreground hover:text-destructive disabled:opacity-50">✕</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="mt-3 flex gap-2">
+        <input value={newRatio} onChange={(e) => setNewRatio(e.target.value)} placeholder="e.g. 21:9" className="w-24 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+        <button onClick={add} disabled={busy === "add" || !newRatio.trim()} className="rounded-full bg-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+          {busy === "add" ? "Adding…" : "+ Add"}
+        </button>
+      </div>
+      {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
+    </div>
+  );
+}
+
 function DeveloperSettings() {
   const allowed = useRequireDeveloperAuth();
   if (!allowed) return null;
@@ -156,6 +232,7 @@ function DeveloperSettings() {
       <TeamLimitCard />
       <DataRetentionCard />
       <PostRetentionCard />
+      <VideoRatiosCard />
     </DeveloperShell>
   );
 }

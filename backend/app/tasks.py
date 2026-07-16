@@ -22,7 +22,8 @@ from app.services.credits import get_available_models_sync
 from app.services.retention import get_post_retention_months_sync, get_retention_months_sync
 from app.services import text_gen
 from app.services.platform_config import get_ad_targeting_ratios_sync
-from app.services.reframe import reframe_video, target_dimensions_for_ratio
+from app.services.reframe import reframe_image, reframe_video
+from app.services.video_ratios import get_video_ratios_sync, resolve_ratio
 from app.services.video_prep import get_video_prep_settings_sync
 from app.services.token_crypto import decrypt_token
 from app.services.videos import generate_video
@@ -398,6 +399,37 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                         url = storage.upload_bytes(img_bytes, f"image/{ext}", ext)
                         for v in new_results["variants"]:
                             v["image_url"] = url
+
+                        # Same reframe pass as video, same reasoning —
+                        # one AI generation, however many platform-ready
+                        # versions are needed, via local Pillow compute
+                        # instead of paying for another AI generation.
+                        # Scoped to the single/primary image for now, not
+                        # carousel slides — carousels are a bigger,
+                        # separate piece (each slide would need its own
+                        # reframe set) not built in this round.
+                        try:
+                            brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == ad.company_id))
+                            platform_ratios = get_ad_targeting_ratios_sync(db)
+                            if brand_kit is not None and brand_kit.platform_ratio_overrides:
+                                platform_ratios = {**platform_ratios, **brand_kit.platform_ratio_overrides}
+                            available_ratios = get_video_ratios_sync(db)
+                            needed_ratios = {resolve_ratio(platform_ratios[p], available_ratios) for p in (ad.platforms or []) if p in platform_ratios}
+                            if needed_ratios and brand_kit is not None:
+                                reframed_img_by_ratio: dict[str, str] = {}
+                                for ratio in needed_ratios:
+                                    try:
+                                        reframed_img_bytes = reframe_image(url, ratio, brand_kit)
+                                        reframed_img_by_ratio[ratio] = storage.upload_bytes(reframed_img_bytes, "image/png", "png")
+                                        logger.info("[reframe] job=%s produced %s image version, url=%s", job_id, ratio, reframed_img_by_ratio[ratio])
+                                    except Exception as exc:  # noqa: BLE001
+                                        logger.warning("[reframe] job=%s failed to produce %s image version: %s", job_id, ratio, exc)
+                                if reframed_img_by_ratio:
+                                    platform_image_urls = {p: reframed_img_by_ratio[platform_ratios[p]] for p in (ad.platforms or []) if p in platform_ratios and platform_ratios[p] in reframed_img_by_ratio}
+                                    for v in new_results["variants"]:
+                                        v["platform_image_urls"] = platform_image_urls
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("[reframe] job=%s image reframe pass failed entirely, master image unaffected: %s", job_id, exc)
                     models_used.append(image_model_used)
                 except Exception as img_exc:  # noqa: BLE001
                     job.error = f"Copy OK, image generation failed: {img_exc}"[:1000]
@@ -535,16 +567,26 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                     # exactly what it was regardless of how many
                     # platforms are targeted. See services/reframe.py.
                     try:
+                        brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == ad.company_id))
                         platform_ratios = get_ad_targeting_ratios_sync(db)
-                        needed_ratios = {platform_ratios[p] for p in (ad.platforms or []) if p in platform_ratios}
+                        if brand_kit is not None and brand_kit.platform_ratio_overrides:
+                            # Company's own override wins over the
+                            # developer's platform-wide default —
+                            # merged in, not replacing the whole map, so
+                            # any platform the company HASN'T overridden
+                            # still falls back to the default correctly.
+                            platform_ratios = {**platform_ratios, **brand_kit.platform_ratio_overrides}
+                        # Silently falls back to a default for any ratio
+                        # that no longer exists in the developer's
+                        # current list (e.g. deleted after a platform or
+                        # company override was set to it) — never breaks
+                        # generation over a stale reference.
+                        available_ratios = get_video_ratios_sync(db)
+                        needed_ratios = {resolve_ratio(platform_ratios[p], available_ratios) for p in (ad.platforms or []) if p in platform_ratios}
                         if needed_ratios:
-                            brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == ad.company_id))
                             if brand_kit is not None:
                                 reframed_by_ratio: dict[str, str] = {}
                                 for ratio in needed_ratios:
-                                    target_dims = target_dimensions_for_ratio(ratio)
-                                    if target_dims is None:
-                                        continue
                                     try:
                                         reframed_bytes = reframe_video(video_url, ratio, brand_kit)
                                         reframed_by_ratio[ratio] = storage.upload_bytes(reframed_bytes, "video/mp4", "mp4")
@@ -732,6 +774,32 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
                 logger.info("[campaign_image] job=%s uploaded image, url=%s", job_id, url)
                 for v in variants:
                     v["image_url"] = url
+
+                # Same image reframe pass as generate_ad — see the
+                # detailed comment there.
+                try:
+                    brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == ad.company_id))
+                    platform_ratios = get_ad_targeting_ratios_sync(db)
+                    if brand_kit is not None and brand_kit.platform_ratio_overrides:
+                        platform_ratios = {**platform_ratios, **brand_kit.platform_ratio_overrides}
+                    available_ratios = get_video_ratios_sync(db)
+                    needed_ratios = {resolve_ratio(platform_ratios[p], available_ratios) for p in (ad.platforms or []) if p in platform_ratios}
+                    if needed_ratios and brand_kit is not None:
+                        reframed_img_by_ratio: dict[str, str] = {}
+                        for ratio in needed_ratios:
+                            try:
+                                reframed_img_bytes = reframe_image(url, ratio, brand_kit)
+                                reframed_img_by_ratio[ratio] = storage.upload_bytes(reframed_img_bytes, "image/png", "png")
+                                logger.info("[reframe] job=%s (campaign ad) produced %s image version", job_id, ratio)
+                            except Exception as exc:  # noqa: BLE001
+                                logger.warning("[reframe] job=%s (campaign ad) failed to produce %s image version: %s", job_id, ratio, exc)
+                        if reframed_img_by_ratio:
+                            platform_image_urls = {p: reframed_img_by_ratio[platform_ratios[p]] for p in (ad.platforms or []) if p in platform_ratios and platform_ratios[p] in reframed_img_by_ratio}
+                            for v in variants:
+                                v["platform_image_urls"] = platform_image_urls
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[reframe] job=%s (campaign ad) image reframe pass failed entirely, master image unaffected: %s", job_id, exc)
+
                 models_used.append(image_model)
             except Exception as exc:  # noqa: BLE001
                 job_error = f"image generation failed: {exc}"[:500]
@@ -811,15 +879,16 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
                 # Same reframe pass as generate_ad — see the detailed
                 # comment there.
                 try:
+                    brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == ad.company_id))
                     platform_ratios = get_ad_targeting_ratios_sync(db)
-                    needed_ratios = {platform_ratios[p] for p in (ad.platforms or []) if p in platform_ratios}
+                    if brand_kit is not None and brand_kit.platform_ratio_overrides:
+                        platform_ratios = {**platform_ratios, **brand_kit.platform_ratio_overrides}
+                    available_ratios = get_video_ratios_sync(db)
+                    needed_ratios = {resolve_ratio(platform_ratios[p], available_ratios) for p in (ad.platforms or []) if p in platform_ratios}
                     if needed_ratios:
-                        brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == ad.company_id))
                         if brand_kit is not None:
                             reframed_by_ratio: dict[str, str] = {}
                             for ratio in needed_ratios:
-                                if target_dimensions_for_ratio(ratio) is None:
-                                    continue
                                 try:
                                     reframed_bytes = reframe_video(video_url, ratio, brand_kit)
                                     reframed_by_ratio[ratio] = storage.upload_bytes(reframed_bytes, "video/mp4", "mp4")
