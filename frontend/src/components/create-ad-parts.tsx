@@ -13,6 +13,21 @@ export const PLATFORMS: Platform[] = [
 // Mirrors the backend's default model tiers (services/billing.py / services/credits.py)
 // purely to show an estimated cost before generating — the backend always computes
 // and enforces the REAL cost server-side, so a mismatch here can't cause overcharging.
+export function RetentionWarning({ retentionMonths, postRetentionMonths, className = "" }: { retentionMonths: number | null; postRetentionMonths: number | null; className?: string }) {
+  if (retentionMonths == null && postRetentionMonths == null) return null;
+  return (
+    <div className={`rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-[11px] text-destructive ${className}`}>
+      ⚠ {retentionMonths != null && (
+        <>This ad's media (image/video) is stored for {retentionMonths} month{retentionMonths !== 1 ? "s" : ""} from generation, then automatically removed as per platform policy. </>
+      )}
+      {postRetentionMonths != null && (
+        <>The full post record is kept for up to {postRetentionMonths} month{postRetentionMonths !== 1 ? "s" : ""} ({Math.round(postRetentionMonths / 12 * 10) / 10} year{postRetentionMonths === 12 ? "" : "s"}), after which it's permanently deleted. </>
+      )}
+      Download a copy if you want to keep it longer.
+    </div>
+  );
+}
+
 export function estimateCost(outputs: { text: boolean; image: boolean; video: boolean }, format: string, variations: number, carouselCount: number = 1, textCredits: number = 1, imageCredits: number = 2, videoCredits: number = 5) {
   // textCredits/imageCredits/videoCredits should be the ACTUALLY
   // SELECTED model's real cost (from the dropdown) — defaults here are
@@ -264,6 +279,8 @@ export function PromptConfirmModal({
   busy,
   onBack,
   onConfirm,
+  retentionMonths,
+  postRetentionMonths,
 }: {
   textPrompt: string;
   setTextPrompt: (v: string) => void;
@@ -279,6 +296,8 @@ export function PromptConfirmModal({
   busy: boolean;
   onBack: () => void;
   onConfirm: () => void;
+  retentionMonths?: number | null;
+  postRetentionMonths?: number | null;
 }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6">
@@ -313,21 +332,19 @@ export function PromptConfirmModal({
             )
           )}
           {hasVideo && (
-            isMultiShot ? (
-              <div className="rounded-lg border border-border/60 bg-background/40 p-3 text-xs text-muted-foreground">
-                🎬 This is a multi-shot video — each shot has its own prompt and duration, set in step 2, not a single editable prompt here. Go back to change them.
-              </div>
-            ) : (
-              <div>
-                <label className="text-xs font-semibold text-primary">🎬 Video generation prompt</label>
-                <textarea
-                  value={videoPrompt}
-                  onChange={(e) => setVideoPrompt?.(e.target.value)}
-                  className="mt-2 w-full h-40 rounded-lg border border-input bg-background/60 p-3 text-xs text-foreground font-mono resize-y focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                />
-              </div>
-            )
+            <div>
+              <label className="text-xs font-semibold text-primary">🎬 Video generation prompt{isMultiShot ? " (combined, after prompt review)" : ""}</label>
+              {isMultiShot && (
+                <p className="mt-1 text-[11px] text-muted-foreground">This already reflects your shots being reviewed and improved (if a review model is configured) — edit freely below; going back to Step 2 to change individual shots will re-run review and replace this.</p>
+              )}
+              <textarea
+                value={videoPrompt}
+                onChange={(e) => setVideoPrompt?.(e.target.value)}
+                className="mt-2 w-full h-40 rounded-lg border border-input bg-background/60 p-3 text-xs text-foreground font-mono resize-y focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
           )}
+          <RetentionWarning retentionMonths={retentionMonths ?? null} postRetentionMonths={postRetentionMonths ?? null} />
         </div>
         <div className="sticky bottom-0 bg-card/95 backdrop-blur-xl border-t border-border px-5 py-4 flex items-center gap-3">
           <button onClick={onBack} disabled={busy} className="rounded-full border border-border px-5 py-2.5 text-sm text-muted-foreground hover:border-primary/40 disabled:opacity-50">← Back to edit inputs</button>

@@ -56,7 +56,14 @@ async def list_available_platforms(_: User = Depends(get_current_user), db: Asyn
     the developer has actually configured AND enabled. Never includes
     client_id/secret."""
     platforms = await platform_config.get_platform_integrations(db)
-    return [CompanyPlatformOut(id=p["id"], label=p["label"], built=p["id"] in ("linkedin",)) for p in platforms if p.get("enabled", True)]
+    return [
+        CompanyPlatformOut(
+            id=p["id"], label=p["label"],
+            built=p["id"] in ("linkedin_personal",),  # FIXED — was still checking the old pre-rename "linkedin" id, meaning this always showed "Coming soon" for the one platform that actually has real integration code
+            video_ratio=p.get("video_ratio", "1:1"),
+        )
+        for p in platforms if p.get("enabled", True)
+    ]
 
 
 @router.get("", response_model=list[PlatformConnectionOut])

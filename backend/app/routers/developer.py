@@ -21,8 +21,9 @@ from app.schemas import (
     AddModelIn, AddPlatformIntegrationIn, CompanyAdminOut, DeveloperLoginIn, DeveloperModelOut,
     DeveloperModelsOut, DeveloperTokenOut, GuardrailRuleCreateIn, GuardrailRuleOut, MarkupMultiplierIn,
     MarkupMultiplierOut, MaxExtraUsersIn, MaxExtraUsersOut, OpenRouterCatalogModelOut, OpenRouterCreditsOut,
-    PlatformIntegrationOut, PlatformOverviewOut, ReorderModelsIn, RetentionMonthsIn, RetentionMonthsOut,
-    UpdateModelIn, UpdatePlatformIntegrationIn, VideoPrepSettingsIn, VideoPrepSettingsOut,
+    PlatformIntegrationOut, PlatformOverviewOut, PostRetentionMonthsIn, PostRetentionMonthsOut, RawModelsIn,
+    RawModelsOut, ReorderModelsIn, RetentionMonthsIn, RetentionMonthsOut, UpdateModelIn,
+    UpdatePlatformIntegrationIn, VideoPrepSettingsIn, VideoPrepSettingsOut,
 )
 from app.security import create_developer_token
 from app.services import credits as credit_svc
@@ -295,6 +296,7 @@ async def add_model(data: AddModelIn, _: str = Depends(require_developer), db: A
         if data.resolutions:
             entry["resolutions"] = data.resolutions
         entry["supports_audio"] = data.supports_audio
+        entry["supports_last_frame"] = data.supports_last_frame
         if data.price_per_second_usd is not None:
             entry["price_per_second_usd"] = data.price_per_second_usd
     models[data.kind] = [*models[data.kind], entry]
@@ -315,6 +317,47 @@ async def reorder_models(data: ReorderModelsIn, _: str = Depends(require_develop
     models[data.kind] = [by_id[i] for i in data.ordered_ids]
     await _save_models(db, models)
     return DeveloperModelsOut(text=[DeveloperModelOut(**m) for m in models["text"]], image=[DeveloperModelOut(**m) for m in models["image"]], video=[DeveloperModelOut(**m) for m in models["video"]])
+
+
+@router.get("/models/raw", response_model=RawModelsOut)
+async def get_models_raw(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """The entire text/image/video model list as one JSON blob, exactly
+    as stored — for bulk editing in one shot instead of one field at a
+    time through the form UI. Addresses the real pain of a pricing JSON
+    (or any other field) silently not sticking through the piecemeal
+    edit form: edit and save the WHOLE structure atomically here
+    instead, and there's nothing left to partially apply."""
+    models = await credit_svc.get_available_models(db)
+    return RawModelsOut(models=models)
+
+
+@router.put("/models/raw", response_model=DeveloperModelsOut)
+async def update_models_raw(data: RawModelsIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Replaces the ENTIRE model list at once. Validates structurally
+    (every entry must be a valid DeveloperModelOut shape, ids unique
+    within each kind) before saving anything — a malformed paste
+    rejects cleanly with a specific error rather than partially
+    corrupting the stored list."""
+    if set(data.models.keys()) != {"text", "image", "video"}:
+        raise HTTPException(422, "Must have exactly three top-level keys: text, image, video.")
+    validated: dict[str, list[dict]] = {}
+    for kind, entries in data.models.items():
+        if not isinstance(entries, list) or len(entries) == 0:
+            raise HTTPException(422, f'"{kind}" must be a non-empty list — Create Ad needs at least one option per kind to function.')
+        seen_ids = set()
+        clean_entries = []
+        for i, entry in enumerate(entries):
+            try:
+                validated_entry = DeveloperModelOut(**entry)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(422, f'"{kind}" entry #{i + 1} is malformed: {exc}')
+            if validated_entry.id in seen_ids:
+                raise HTTPException(422, f'"{kind}" has a duplicate id "{validated_entry.id}" — every entry needs a unique id within its kind.')
+            seen_ids.add(validated_entry.id)
+            clean_entries.append(validated_entry.model_dump(exclude_none=True))
+        validated[kind] = clean_entries
+    await _save_models(db, validated)
+    return DeveloperModelsOut(text=[DeveloperModelOut(**m) for m in validated["text"]], image=[DeveloperModelOut(**m) for m in validated["image"]], video=[DeveloperModelOut(**m) for m in validated["video"]])
 
 
 @router.put("/models/{model_id}", response_model=DeveloperModelsOut)
@@ -346,6 +389,8 @@ async def update_model(model_id: str, data: UpdateModelIn, _: str = Depends(requ
                         entry["resolutions"] = data.resolutions
                     if data.supports_audio is not None:
                         entry["supports_audio"] = data.supports_audio
+                    if data.supports_last_frame is not None:
+                        entry["supports_last_frame"] = data.supports_last_frame
                     if data.price_per_second_usd is not None:
                         entry["price_per_second_usd"] = data.price_per_second_usd
                 if data.pricing is not None:
@@ -423,6 +468,7 @@ def _to_out(p: dict) -> PlatformIntegrationOut:
         has_secret=bool(p.get("client_secret_encrypted")),
         scope=p.get("scope"), redirect_uri=p.get("redirect_uri"),
         enabled=p.get("enabled", True), built=p["id"] in ("linkedin_personal",),  # only LinkedIn personal-profile posting has real integration code so far — see services/linkedin.py; linkedin_company needs the Organization API work discussed but not yet built
+        video_ratio=p.get("video_ratio", "1:1"),
     )
 
 
@@ -440,6 +486,7 @@ async def add_platform_integration(data: AddPlatformIntegrationIn, _: str = Depe
         "id": data.id, "label": data.label, "client_id": data.client_id,
         "client_secret_encrypted": encrypt_token(data.client_secret),
         "scope": data.scope, "redirect_uri": data.redirect_uri, "enabled": True,
+        "video_ratio": data.video_ratio,
     })
     await platform_config.save_platform_integrations(db, platforms)
     return [_to_out(p) for p in platforms]
@@ -464,6 +511,8 @@ async def update_platform_integration(platform_id: str, data: UpdatePlatformInte
                 p["redirect_uri"] = data.redirect_uri
             if data.enabled is not None:
                 p["enabled"] = data.enabled
+            if data.video_ratio is not None:
+                p["video_ratio"] = data.video_ratio
     if not found:
         raise HTTPException(404, "That platform integration no longer exists.")
     await platform_config.save_platform_integrations(db, platforms)
@@ -525,6 +574,21 @@ async def get_retention(_: str = Depends(require_developer), db: AsyncSession = 
 async def update_retention(data: RetentionMonthsIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
     await retention_svc.set_retention_months(db, data.retention_months)
     return RetentionMonthsOut(retention_months=data.retention_months)
+
+
+@router.get("/post-retention", response_model=PostRetentionMonthsOut)
+async def get_post_retention(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """How many months an ad's ENTIRE RECORD (not just its media) stays
+    in the database before being permanently deleted — separate from
+    and much longer than media-only retention above. See
+    services/retention.py and tasks.cleanup_expired_posts."""
+    return PostRetentionMonthsOut(post_retention_months=await retention_svc.get_post_retention_months(db))
+
+
+@router.put("/post-retention", response_model=PostRetentionMonthsOut)
+async def update_post_retention(data: PostRetentionMonthsIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    await retention_svc.set_post_retention_months(db, data.post_retention_months)
+    return PostRetentionMonthsOut(post_retention_months=data.post_retention_months)
 
 
 @router.get("/video-prep", response_model=VideoPrepSettingsOut)

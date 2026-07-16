@@ -66,96 +66,6 @@ function OpenRouterBalanceCard() {
   );
 }
 
-function TeamLimitCard() {
-  const handleAuthError = useDevAuthErrorHandler();
-  const [value, setValue] = useState("");
-  const [saved, setSaved] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    devApi("/developer/team-limits")
-      .then((r) => setValue(String(r.max_extra_users)))
-      .catch((e: any) => { if (!handleAuthError(e)) setErr(e.message || "Could not load the team limit"); });
-  }, []);
-
-  async function save() {
-    const n = Number(value);
-    if (!Number.isInteger(n) || n < 0) return;
-    setSaving(true); setErr(""); setSaved(false);
-    try {
-      await devApi("/developer/team-limits", { method: "PUT", body: { max_extra_users: n } });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (e: any) {
-      if (!handleAuthError(e)) setErr(e.message || "Could not save");
-    }
-    setSaving(false);
-  }
-
-  return (
-    <div className="mb-6 rounded-xl border border-slate-700/50 bg-card/60 p-5 max-w-md">
-      <div className="text-sm font-semibold text-foreground">Team size limit</div>
-      <p className="mt-1 text-xs text-muted-foreground">How many non-admin members (editor/poster) a single company can add, on top of its admin(s). Applies to every company the same way. Pending invites count too, so this genuinely caps what's in the database, not just active accounts.</p>
-      <div className="mt-3 flex items-center gap-2">
-        <input type="number" min={0} step={1} value={value} onChange={(e) => setValue(e.target.value)}
-          className="w-20 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-slate-500 focus:outline-none" />
-        <span className="text-xs text-muted-foreground">extra users per company</span>
-        <button disabled={saving} onClick={save} className="rounded-full bg-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
-          {saving ? "Saving…" : "Save"}
-        </button>
-        {saved && <span className="text-xs text-emerald-400">✓ Saved</span>}
-      </div>
-      {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
-    </div>
-  );
-}
-
-function DataRetentionCard() {
-  const handleAuthError = useDevAuthErrorHandler();
-  const [value, setValue] = useState("");
-  const [saved, setSaved] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    devApi("/developer/retention")
-      .then((r) => setValue(String(r.retention_months)))
-      .catch((e: any) => { if (!handleAuthError(e)) setErr(e.message || "Could not load the retention period"); });
-  }, []);
-
-  async function save() {
-    const n = Number(value);
-    if (!Number.isInteger(n) || n < 1) return;
-    setSaving(true); setErr(""); setSaved(false);
-    try {
-      await devApi("/developer/retention", { method: "PUT", body: { retention_months: n } });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (e: any) {
-      if (!handleAuthError(e)) setErr(e.message || "Could not save");
-    }
-    setSaving(false);
-  }
-
-  return (
-    <div className="mb-6 rounded-xl border border-slate-700/50 bg-card/60 p-5 max-w-md">
-      <div className="text-sm font-semibold text-foreground">Media retention period</div>
-      <p className="mt-1 text-xs text-muted-foreground">How long a generated ad's image/video stays in storage before automatic cleanup. Only the media files are removed — the ad's caption, metadata, and analytics stay forever. Also caps how far out a post can be scheduled (measured from each ad's own creation date), so the two settings can never drift apart.</p>
-      <div className="mt-3 flex items-center gap-2">
-        <input type="number" min={1} step={1} value={value} onChange={(e) => setValue(e.target.value)}
-          className="w-20 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-slate-500 focus:outline-none" />
-        <span className="text-xs text-muted-foreground">months</span>
-        <button disabled={saving} onClick={save} className="rounded-full bg-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
-          {saving ? "Saving…" : "Save"}
-        </button>
-        {saved && <span className="text-xs text-emerald-400">✓ Saved</span>}
-      </div>
-      {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
-    </div>
-  );
-}
-
 function DeveloperOverview() {
   const allowed = useRequireDeveloperAuth();
   const handleAuthError = useDevAuthErrorHandler();
@@ -175,8 +85,6 @@ function DeveloperOverview() {
   return (
     <DeveloperShell title="Platform Overview">
       <OpenRouterBalanceCard />
-      <TeamLimitCard />
-      <DataRetentionCard />
       {err && <div className="mb-4 text-sm text-destructive">{err}</div>}
       {!data ? (
         <div className="text-sm text-muted-foreground">Loading…</div>

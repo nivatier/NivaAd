@@ -158,6 +158,7 @@ class AvailableModelOut(BaseModel):
     duration_options: list[int] | None = None  # video only — set means DISCRETE choices only (e.g. [4, 6, 8]); Create Ad shows a picker instead of a free-entry duration field
     resolutions: list[str] | None = None  # video only — lets the customer pick a resolution in Create Ad; real cost differs by resolution once dynamic pricing is set on this model
     supports_audio: bool = False  # video only — whether to show an audio on/off toggle at all; only meaningful for models with dynamic pricing that actually vary by audio
+    supports_last_frame: bool = False  # video only — whether this model accepts a separate end frame, enabling the "start + end frame" mode in Create Ad's video section
     has_dynamic_pricing: bool = False  # true if this model's cost genuinely varies by the customer's resolution/audio/duration choice; false means `credits` above is the fixed cost regardless of selection
 
 
@@ -211,6 +212,22 @@ class RetentionMonthsIn(BaseModel):
     retention_months: int = Field(ge=1, le=120)
 
 
+class PostRetentionMonthsOut(BaseModel):
+    post_retention_months: int
+
+
+class PostRetentionMonthsIn(BaseModel):
+    post_retention_months: int = Field(ge=1, le=240)  # up to 20 years — media retention caps lower (120 = 10 years) since posts genuinely need to outlive their media by design
+
+
+class RetentionInfoOut(BaseModel):
+    """Company-facing combined view — both numbers together, since the
+    generation-time notice and My Ads warning both need to mention
+    media AND post retention in one message."""
+    retention_months: int
+    post_retention_months: int
+
+
 class VideoPrepSettingsOut(BaseModel):
     """Developer-managed models for two background video-quality steps
     (see services/video_prep.py) — neither ever exposed to a company
@@ -222,6 +239,19 @@ class VideoPrepSettingsOut(BaseModel):
 class VideoPrepSettingsIn(BaseModel):
     prompt_review_model_id: str | None = None
     image_model_id: str | None = None
+
+
+class RawModelsOut(BaseModel):
+    """The full text/image/video model list, unvalidated shape (each
+    entry is whatever's actually stored) — for display in the bulk-edit
+    JSON view. Not DeveloperModelsOut, deliberately: that would silently
+    drop any field not in the schema, which defeats the point of a raw
+    view meant to show and let you edit EXACTLY what's stored."""
+    models: dict
+
+
+class RawModelsIn(BaseModel):
+    models: dict
 
 
 # ---------- Developer (platform operator) — fully separate from the
@@ -295,6 +325,7 @@ class DeveloperModelOut(BaseModel):
     duration_options: list[int] | None = None  # video only — DISCRETE allowed durations (e.g. [5, 10] for Kling O1, [4, 6, 8] for the Veo family) — when set, this replaces the min/max range entirely; Create Ad shows a picker instead of a free slider
     resolutions: list[str] | None = None  # video only — which resolutions this entry offers (e.g. ["480p","720p","1080p"]); provider cost differs per resolution, so exposing the choice lets ads be generated cheaper at lower res
     supports_audio: bool = False  # video only — whether this model can generate with/without audio at all, INDEPENDENT of whether dynamic pricing is configured (a model can support audio before the developer has gotten around to setting up its full pricing formula)
+    supports_last_frame: bool = False  # video only — whether this model accepts a SEPARATE end frame (frame_type: "last_frame") in addition to the starting frame, for a "move from composition A to composition B" video instead of just animating freely from one image
     price_per_second_usd: float | None = None  # video only — the provider's own per-second cost, shown for the developer's reference when setting credits; informational only for now (token-to-cost mapping deliberately deferred)
     enabled: bool = True  # disabled entries stay configured (editable, re-enableable) but are hidden from Create Ad's dropdown — different from deleting, which discards the entry entirely
     pricing: dict | None = None  # opts this model into DYNAMIC per-combination pricing (see services/pricing.py). Video shape: {"rates_usd_per_second": {"720p": {"audio": 0.10, "no_audio": 0.08}, ...}, "supports_audio": true}. Image shape: {"cost_usd": 0.03}. Absent = falls back to the flat "credits" value above, unchanged from before this feature existed.
@@ -319,6 +350,7 @@ class AddModelIn(BaseModel):
     duration_options: list[int] | None = None  # video only — set for models with fixed/discrete durations only (not a range)
     resolutions: list[str] | None = None  # video only; e.g. ["480p","720p"] — which of the provider's supported resolutions to offer in Create Ad
     supports_audio: bool = False  # video only — whether this model can generate with/without audio at all
+    supports_last_frame: bool = False  # video only — whether this model accepts a separate end frame alongside the starting frame
     price_per_second_usd: float | None = Field(default=None, ge=0)  # video only; informational (from OpenRouter's catalog)
     pricing: dict | None = None  # see DeveloperModelOut.pricing — omit to keep this model on flat legacy credits
 
@@ -337,6 +369,7 @@ class UpdateModelIn(BaseModel):
     duration_options: list[int] | None = None
     resolutions: list[str] | None = None
     supports_audio: bool | None = None
+    supports_last_frame: bool | None = None
     price_per_second_usd: float | None = Field(default=None, ge=0)
     enabled: bool | None = None
     pricing: dict | None = None
@@ -363,6 +396,7 @@ class PlatformIntegrationOut(BaseModel):
     redirect_uri: str | None = None
     enabled: bool = True
     built: bool = False  # whether real integration code exists for this platform yet (currently only linkedin) — informational, so the developer isn't surprised nothing happens when they enable an unbuilt one
+    video_ratio: str = "1:1"  # the aspect ratio the reframe pipeline treats as this platform's required format — set here, alongside everything else about the platform, so adding a platform and setting its ratio happen in one place
 
 
 class AddPlatformIntegrationIn(BaseModel):
@@ -372,6 +406,7 @@ class AddPlatformIntegrationIn(BaseModel):
     client_secret: str = Field(min_length=1, max_length=500)
     scope: str | None = None
     redirect_uri: str | None = None
+    video_ratio: str = Field(default="1:1", pattern="^(1:1|9:16|16:9|1\\.91:1|4:5)$")
 
 
 class UpdatePlatformIntegrationIn(BaseModel):
@@ -381,6 +416,7 @@ class UpdatePlatformIntegrationIn(BaseModel):
     scope: str | None = None
     redirect_uri: str | None = None
     enabled: bool | None = None
+    video_ratio: str | None = Field(default=None, pattern="^(1:1|9:16|16:9|1\\.91:1|4:5)$")
 
 
 class CompanyPlatformOut(BaseModel):
@@ -389,6 +425,7 @@ class CompanyPlatformOut(BaseModel):
     id: str
     label: str
     built: bool = False  # whether real integration code exists yet (currently only linkedin) — lets the UI show "Coming soon" honestly instead of a Connect button that would just 404
+    video_ratio: str = "1:1"  # informational — the aspect ratio a post to this platform will be sized to; read-only here, only the developer can change it
 
 
 class OpenRouterCatalogModelOut(BaseModel):
@@ -445,9 +482,14 @@ class AdCreateIn(BaseModel):
     image_prompt_override: str | None = None
     carousel_slides: list[str] | None = None  # per-slide image descriptions, in order — length determines carousel image count (server enforces CAROUSEL_MAX_IMAGES)
     video_shots: list[VideoShotIn] | None = None  # one or more {prompt, duration} shots — if more than one, combined into a single timing-marked prompt sent as ONE generation call (server enforces MAX_VIDEO_SHOTS and validates the TOTAL duration against the company's active tier)
-    video_prompt_override: str | None = None  # only meaningful when video_shots has exactly one shot — mirrors image_prompt_override's single-item-only behavior; multi-shot prompts are set per-shot in video_shots itself, same asymmetry as carousel_slides vs image_prompt_override
+    video_prompt_override: str | None = None  # the confirmed/edited prompt from the preview popup — now applies for ANY shot count (not just single-shot), since preview always runs shot review (if configured) before showing it; when present, used directly at generation time instead of rebuilding from video_shots, so review + edits aren't silently redone or lost
     video_frame_image: str | None = None  # raw base64 data URL, freshly uploaded — a DEDICATED image for the video's starting frame, deliberately separate from product_image (used for image generation), so it's always unambiguous whether an image is actually being sent to the video API
     video_frame_image_url: str | None = None  # already-stored URL, e.g. reusing a previously uploaded photo
+    video_end_frame_image: str | None = None  # raw base64 data URL — the video's ENDING frame, only meaningful when video_mode is "first_last_frame" and the selected model supports it (see AvailableModelOut.supports_last_frame)
+    video_end_frame_image_url: str | None = None  # already-stored URL variant of the above
+    video_mode: str = "single_reference"  # "single_reference" (default — animate from one starting image, or none for pure text-to-video) | "first_last_frame" (provide both a start and end composition; only valid for models where supports_last_frame is true)
+    refine_video_prompt: bool = False  # opt-in — the developer-configured review model (if any) only runs when this is explicitly checked; off by default since the raw customer wording isn't always worse
+    refine_video_frame: bool = False  # opt-in — ONLY meaningful in single_reference mode: whether to pre-render the reference photo's background to match shot 1's described scene (the video-prep fix). Never applies in first_last_frame mode — those two images are deliberately chosen compositions, not a photo to reinterpret; frame prep never runs there regardless of this flag.
     image_reference_image: str | None = None  # raw base64 data URL — a DEDICATED reference for IMAGE generation, set in Step 2's AI image section; when present it takes priority over the Step 1 product photo as the generation reference (same explicit-over-implicit principle as video's frame image)
     image_reference_image_url: str | None = None  # already-stored URL variant of the above
     image_model_id: str | None = None  # which entry from GET /ads/available-models the user picked in Step 2's dropdown — replaces the old company-wide "active tier" concept; required if outputs.image is true
@@ -541,12 +583,14 @@ class PromptPreviewIn(BaseModel):
     variations: int = 1
     carousel_slides: list[str] | None = None
     video_shots: list[VideoShotIn] | None = None
+    refine_video_prompt: bool = False  # opt-in — mirrors AdCreateIn's field; the preview only runs shot review when this is checked, so the preview matches what generation would actually do
 
 
 class PromptPreviewOut(BaseModel):
     text_prompt: str
     image_prompt: str | None
-    video_prompt: str | None = None  # only populated when exactly one video shot was requested — matches the single-shot-only editability of video_prompt_override
+    video_prompt: str | None = None  # populated for any shot count now — runs through shot review (if configured) before being built, so it's genuinely what generation would use, not just a single-shot preview
+    reviewed_shots: list[VideoShotIn] | None = None  # the per-shot prompts AFTER review (if a review model is configured) — lets the frontend update its own shot list to match what was actually reviewed, keeping Step 2 in sync with what's shown here
 
 
 
@@ -580,6 +624,14 @@ class BrandKitUpdateIn(BaseModel):
     primary_color: str | None = None
     tagline: str | None = None
     logo_placement: str | None = None
+    vertical_pad_mode: str | None = Field(default=None, pattern="^(blurred_video|image|color)$")
+    horizontal_pad_mode: str | None = Field(default=None, pattern="^(blurred_video|image|color)$")
+    pad_top_image: str | None = None  # raw base64 data URL, freshly uploaded
+    pad_bottom_image: str | None = None
+    pad_left_image: str | None = None
+    pad_right_image: str | None = None
+    vertical_pad_color: str | None = None
+    horizontal_pad_color: str | None = None
 
 
 class BrandKitOut(BaseModel):
@@ -587,6 +639,14 @@ class BrandKitOut(BaseModel):
     primary_color: str
     tagline: str
     logo_placement: str
+    vertical_pad_mode: str
+    horizontal_pad_mode: str
+    pad_top_image_url: str | None
+    pad_bottom_image_url: str | None
+    pad_left_image_url: str | None
+    pad_right_image_url: str | None
+    vertical_pad_color: str | None
+    horizontal_pad_color: str | None
 
     class Config:
         from_attributes = True
@@ -614,8 +674,13 @@ class PhaseScheduleIn(BaseModel):
     video_shots: list[VideoShotIn] | None = None
     video_frame_image: str | None = None
     video_frame_image_url: str | None = None
+    video_end_frame_image: str | None = None  # same "start + end frame" capability as Create Ad — only meaningful when video_mode is "first_last_frame" and the model supports it
+    video_end_frame_image_url: str | None = None
+    video_mode: str = "single_reference"  # "single_reference" | "first_last_frame" — same as Create Ad
     video_resolution: str | None = None
-    video_prompt_override: str | None = None  # only meaningful for a single shot, same asymmetry as Create Ad
+    video_prompt_override: str | None = None  # applies for any shot count now, same as Create Ad
+    refine_video_prompt: bool = False  # opt-in — the developer-configured review model (if any) only runs when this is explicitly checked; off by default since the raw customer wording isn't always worse
+    refine_video_frame: bool = False  # opt-in — same as Create Ad, only meaningful in single_reference mode
 
 
 class CampaignCreateIn(BaseModel):

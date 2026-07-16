@@ -34,14 +34,22 @@ from app.services.token_crypto import decrypt_token, encrypt_token
 # services/linkedin.py) — "linkedin_company" needs the Organization API
 # work (listing which pages a user manages, a page-picker step, posting
 # with the organization URN) discussed but not yet built.
+# video_ratio: the aspect ratio the reframe pipeline (services/reframe.py)
+# treats as this platform's required format — moved here (2026-07-16)
+# from a separate platform_ratios.py module specifically because that
+# module's platform list (5 generic ids) didn't match this one (7 real
+# integration ids, including the linkedin personal/company split and
+# threads) — keeping ratio as a field on the SAME entries developers
+# actually manage means adding a platform and setting its ratio happen
+# in one place, and the two lists can never drift out of sync again.
 DEFAULT_PLATFORMS = [
-    {"id": "linkedin_personal", "label": "LinkedIn (Personal)", "client_id": "", "client_secret_encrypted": "", "scope": "openid profile w_member_social", "redirect_uri": "", "enabled": False},
-    {"id": "linkedin_company", "label": "LinkedIn (Company Page)", "client_id": "", "client_secret_encrypted": "", "scope": "openid profile w_organization_social", "redirect_uri": "", "enabled": False},
-    {"id": "instagram", "label": "Instagram", "client_id": "", "client_secret_encrypted": "", "scope": "", "redirect_uri": "", "enabled": False},
-    {"id": "facebook", "label": "Facebook", "client_id": "", "client_secret_encrypted": "", "scope": "", "redirect_uri": "", "enabled": False},
-    {"id": "tiktok", "label": "TikTok", "client_id": "", "client_secret_encrypted": "", "scope": "", "redirect_uri": "", "enabled": False},
-    {"id": "x", "label": "X (Twitter)", "client_id": "", "client_secret_encrypted": "", "scope": "", "redirect_uri": "", "enabled": False},
-    {"id": "threads", "label": "Threads", "client_id": "", "client_secret_encrypted": "", "scope": "", "redirect_uri": "", "enabled": False},
+    {"id": "linkedin_personal", "label": "LinkedIn (Personal)", "client_id": "", "client_secret_encrypted": "", "scope": "openid profile w_member_social", "redirect_uri": "", "enabled": False, "video_ratio": "1.91:1"},
+    {"id": "linkedin_company", "label": "LinkedIn (Company Page)", "client_id": "", "client_secret_encrypted": "", "scope": "openid profile w_organization_social", "redirect_uri": "", "enabled": False, "video_ratio": "1.91:1"},
+    {"id": "instagram", "label": "Instagram", "client_id": "", "client_secret_encrypted": "", "scope": "", "redirect_uri": "", "enabled": False, "video_ratio": "1:1"},
+    {"id": "facebook", "label": "Facebook", "client_id": "", "client_secret_encrypted": "", "scope": "", "redirect_uri": "", "enabled": False, "video_ratio": "1.91:1"},
+    {"id": "tiktok", "label": "TikTok", "client_id": "", "client_secret_encrypted": "", "scope": "", "redirect_uri": "", "enabled": False, "video_ratio": "9:16"},
+    {"id": "x", "label": "X (Twitter)", "client_id": "", "client_secret_encrypted": "", "scope": "", "redirect_uri": "", "enabled": False, "video_ratio": "16:9"},
+    {"id": "threads", "label": "Threads", "client_id": "", "client_secret_encrypted": "", "scope": "", "redirect_uri": "", "enabled": False, "video_ratio": "1:1"},
 ]
 
 
@@ -50,11 +58,69 @@ async def get_platform_integrations(db: AsyncSession) -> list[dict]:
     (developer-only access — never returned to the frontend as
     plaintext, see routers/developer.py which masks it before
     responding). Seeds from DEFAULT_PLATFORMS the first time (if
-    nothing's been stored yet)."""
+    nothing's been stored yet).
+
+    Backfills video_ratio for any entry that predates this field
+    (added 2026-07-16) — an already-stored integration from before this
+    change simply won't have the key at all, same class of gap as the
+    earlier "linkedin" -> "linkedin_personal" rename that needed the
+    same kind of fix. Matches by id against DEFAULT_PLATFORMS; a
+    platform the developer added themselves (not one of the 7 defaults)
+    falls back to "1:1" as a safe, common default rather than being
+    left with no ratio at all."""
     row = await db.get(ModelConfig, 1)
     stored = row.config if row and row.config else {}
     raw = stored.get("platforms")
-    return raw if isinstance(raw, list) and raw else list(DEFAULT_PLATFORMS)
+    platforms = raw if isinstance(raw, list) and raw else list(DEFAULT_PLATFORMS)
+    defaults_by_id = {p["id"]: p["video_ratio"] for p in DEFAULT_PLATFORMS}
+    for p in platforms:
+        if "video_ratio" not in p:
+            p["video_ratio"] = defaults_by_id.get(p["id"], "1:1")
+    return platforms
+
+
+def get_platform_integrations_sync(db) -> list[dict]:
+    """SYNC equivalent — for use inside Celery tasks (tasks.py), which
+    run on a sync SQLAlchemy session/engine, same reasoning as
+    credits.get_available_models_sync. Same backfill logic as the async
+    version above."""
+    row = db.get(ModelConfig, 1)
+    stored = row.config if row and row.config else {}
+    raw = stored.get("platforms")
+    platforms = raw if isinstance(raw, list) and raw else list(DEFAULT_PLATFORMS)
+    defaults_by_id = {p["id"]: p["video_ratio"] for p in DEFAULT_PLATFORMS}
+    for p in platforms:
+        if "video_ratio" not in p:
+            p["video_ratio"] = defaults_by_id.get(p["id"], "1:1")
+    return platforms
+
+
+# Ad-targeting platform ids (used in ad.platforms, e.g. Create Ad's
+# platform picker) are a SEPARATE, simpler set than the OAuth
+# integrations list above — "linkedin" as one id, not split into
+# personal/company the way a real connection has to be. This maps the
+# ad-targeting id to whichever integration entry should be treated as
+# canonical for its ratio — personal and company page would want the
+# same native format regardless of which one is actually connected, so
+# "linkedin_personal" is used as that source rather than needing a
+# third, separate ratio setting just for ad-targeting purposes.
+_AD_TARGETING_TO_INTEGRATION_ID = {
+    "instagram": "instagram", "facebook": "facebook", "linkedin": "linkedin_personal",
+    "x": "x", "tiktok": "tiktok",
+}
+
+
+def _build_ratio_map(integrations: list[dict]) -> dict:
+    by_id = {p["id"]: p.get("video_ratio", "1:1") for p in integrations}
+    return {ad_id: by_id.get(integration_id, "1:1") for ad_id, integration_id in _AD_TARGETING_TO_INTEGRATION_ID.items() if integration_id in by_id}
+
+
+async def get_ad_targeting_ratios(db: AsyncSession) -> dict:
+    return _build_ratio_map(await get_platform_integrations(db))
+
+
+def get_ad_targeting_ratios_sync(db) -> dict:
+    return _build_ratio_map(get_platform_integrations_sync(db))
 
 
 async def save_platform_integrations(db: AsyncSession, platforms: list[dict]) -> None:

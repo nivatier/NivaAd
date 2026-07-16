@@ -8,19 +8,21 @@ import logging
 from datetime import datetime, timedelta
 
 import httpx
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
-from app.models import Ad, CreditLedger, GenerationJob, PlatformConnection, ScheduledPost
+from app.models import Ad, BrandKit, CreditLedger, GenerationJob, PlatformConnection, ScheduledPost
 from app.services import storage
 from app.services import linkedin
 from app.services.branding import composite_logo
 from app.services.images import generate_image
 from app.services.credits import get_available_models_sync
-from app.services.retention import get_retention_months_sync
+from app.services.retention import get_post_retention_months_sync, get_retention_months_sync
 from app.services import text_gen
+from app.services.platform_config import get_ad_targeting_ratios_sync
+from app.services.reframe import reframe_video, target_dimensions_for_ratio
 from app.services.video_prep import get_video_prep_settings_sync
 from app.services.token_crypto import decrypt_token
 from app.services.videos import generate_video
@@ -93,15 +95,26 @@ def _video_prompt(brief: dict, shot_description: str | None = None) -> str:
     movement, and pacing far more than static image prompts do (per
     OpenRouter's own guidance) — so this deliberately asks for those
     details explicitly, rather than reusing the image prompt as-is.
-    shot_description, when given (multi-shot mode), is the user's own
-    direction for THIS specific shot — same spirit as _image_prompt's
-    slide_description for carousel."""
+
+    When shot_description is given, it's trusted as the PRIMARY,
+    complete direction — no longer diluted with the full marketing
+    description (that's copy written for a human reading an ad caption,
+    not visual direction for a video model; it can contain phone
+    numbers, CTAs, and other text with nothing to do with what the
+    video should show) or generic camera-movement boilerplate that could
+    directly conflict with what the customer already specified (e.g.
+    their own "match-cut dissolve" vs. this function's old blanket
+    "keep pacing calm, not frantic" instruction). The fuller generic
+    template is now a fallback ONLY for the no-shot-description case,
+    where there's nothing specific to build from."""
     product = brief.get("product_name", "the product")
-    p = f"Professional advertising video for a product called \"{product}\". "
-    p += f"{brief.get('description', '')} "
     if shot_description:
-        p += f"For this specific shot: {shot_description}. "
-    elif brief.get("image_scene"):
+        return (
+            f'Professional advertising video for "{product}". {shot_description} '
+            "High-end commercial advertising style, no text overlay, no watermark."
+        )
+    p = f"Professional advertising video for a product called \"{product}\". "
+    if brief.get("image_scene"):
         p += f"Setting: {brief['image_scene']}. "
     else:
         p += "Setting: clean studio background, soft professional lighting. "
@@ -124,7 +137,7 @@ def _multi_shot_video_prompt(brief: dict, shots: list[dict]) -> str:
     no video-processing/stitching step on NivaAd's side at all."""
     product = brief.get("product_name", "the product")
     intro = (
-        f"Professional advertising video for a product called \"{product}\". {brief.get('description', '')} "
+        f'Professional advertising video for "{product}". '
         "This video has multiple distinct shots in sequence, each described below with its exact timing — "
         "follow the shot breakdown precisely, keeping the same product and a consistent overall visual style "
         "across every shot.\n\n"
@@ -421,9 +434,12 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                     # configured, neither customer-facing or customer-
                     # charged (see services/video_prep.py) — run BEFORE
                     # the main video prompt is built, so both feed into
-                    # it rather than happening alongside it.
+                    # it rather than happening alongside it. Shot review
+                    # specifically is opt-in per-ad now (refine_video_prompt) —
+                    # a configured review model doesn't mean it's always
+                    # applied; the customer decides per generation.
                     prep_settings = get_video_prep_settings_sync(db)
-                    if prep_settings.get("prompt_review_model_id"):
+                    if ad.brief.get("refine_video_prompt") and prep_settings.get("prompt_review_model_id"):
                         review_models = get_available_models_sync(db)
                         review_entry = next((m for m in review_models.get("text", []) if m["id"] == prep_settings["prompt_review_model_id"]), None)
                         if review_entry:
@@ -432,15 +448,19 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                                     shot["prompt"] = _review_shot_prompt(shot["prompt"], review_entry["model"])
                             logger.info("[video_prep] job=%s reviewed %d shot prompt(s) with %s", job_id, len(shots), review_entry["model"])
 
-                    if frame_image_url and prep_settings.get("image_model_id"):
-                        # THE actual fix for the "first frames show the
-                        # original reference photo's background, not the
-                        # described scene" problem — render a NEW first
-                        # frame that already matches shot 1's description,
-                        # instead of handing the video model the raw
-                        # reference photo (whatever background it happened
-                        # to be photographed against) and hoping it
-                        # transitions convincingly.
+                    # THE actual fix for the "first frames show the
+                    # original reference photo's background, not the
+                    # described scene" problem — render a NEW first
+                    # frame that already matches shot 1's description.
+                    # Two conditions now, not one: only in single_reference
+                    # mode (in first_last_frame mode, both images are
+                    # DELIBERATELY chosen compositions the customer picked
+                    # on purpose — reinterpreting them would be actively
+                    # wrong, not just unnecessary), and only when the
+                    # customer opted in via refine_video_frame (changing
+                    # someone's uploaded photo isn't always wanted, same
+                    # reasoning as making prompt review opt-in).
+                    if frame_image_url and ad.brief.get("video_mode", "single_reference") == "single_reference" and ad.brief.get("refine_video_frame") and prep_settings.get("image_model_id"):
                         prep_models = get_available_models_sync(db)
                         prep_entry = next((m for m in prep_models.get("image", []) if m["id"] == prep_settings["image_model_id"]), None)
                         first_shot_desc = (shots[0].get("prompt") or "").strip() if shots else ""
@@ -460,19 +480,28 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                                 # feature existed.
                                 logger.warning("[video_prep] job=%s first-frame pre-render failed, using original reference: %s", job_id, exc)
 
+                    # first_last_frame mode: the customer explicitly chose
+                    # both images as intentional starting/ending
+                    # compositions — used exactly as uploaded, never
+                    # pre-rendered or reinterpreted.
+                    end_frame_image_url = None
+                    if not skip_reference and ad.brief.get("video_mode") == "first_last_frame" and ad.brief.get("video_end_frame_image_url"):
+                        end_frame_image_url = storage.fetch_as_data_url(ad.brief["video_end_frame_image_url"])
+
                     video_model = ad.brief.get("video_model") or "alibaba/wan-2.7"  # resolved once at ad-creation time (ads.py), not re-looked-up here
                     video_resolution = ad.brief.get("video_resolution") or "720p"
                     video_audio = ad.brief.get("video_audio")  # None means "let OpenRouter use the model's own default" — only set when the customer actually had an audio toggle to choose from
                     total_duration = sum(s.get("duration") or 0 for s in shots) or 6
 
-                    # Single-shot mode respects a text-prompt-style
-                    # override from the confirmation popup, same as
-                    # image; multi-shot always uses the combined,
-                    # timing-marked prompt built from each shot's own
-                    # direction (set in Step 2) — no override applies,
-                    # same asymmetry as carousel_slides vs
-                    # image_prompt_override.
-                    if len(shots) == 1 and ad.brief.get("video_prompt_override"):
+                    # The confirmation popup's edited/reviewed prompt is
+                    # now used directly regardless of shot count — it
+                    # already reflects shot review (if configured) and
+                    # any manual edits the customer made, so there's no
+                    # reason to rebuild from the raw shots and
+                    # potentially re-review them a second time,
+                    # producing a DIFFERENT result than what was actually
+                    # confirmed.
+                    if ad.brief.get("video_prompt_override"):
                         video_prompt = ad.brief["video_prompt_override"]
                         logger.info("[video_prompt] job=%s USING OVERRIDE from confirmation popup", job_id)
                     else:
@@ -483,7 +512,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                     )
 
                     try:
-                        video_bytes = generate_video(video_prompt, video_model, duration=total_duration, resolution=video_resolution, frame_image_url=frame_image_url, audio=video_audio)
+                        video_bytes = generate_video(video_prompt, video_model, duration=total_duration, resolution=video_resolution, frame_image_url=frame_image_url, end_frame_image_url=end_frame_image_url, audio=video_audio)
                     except Exception as frame_exc:  # noqa: BLE001
                         if frame_image_url:
                             # Tagged (not auto-retried) — the frontend
@@ -497,6 +526,43 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                     video_url = storage.upload_bytes(video_bytes, "video/mp4", "mp4")
                     for v in new_results["variants"]:
                         v["video_url"] = video_url
+
+                    # Reframe pass — one FFmpeg run per DISTINCT ratio
+                    # actually needed by this ad's selected platforms
+                    # (not per platform; e.g. Facebook and LinkedIn share
+                    # 1.91:1, so that's one reframe serving both), never
+                    # per-model-generation, keeping AI generation cost
+                    # exactly what it was regardless of how many
+                    # platforms are targeted. See services/reframe.py.
+                    try:
+                        platform_ratios = get_ad_targeting_ratios_sync(db)
+                        needed_ratios = {platform_ratios[p] for p in (ad.platforms or []) if p in platform_ratios}
+                        if needed_ratios:
+                            brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == ad.company_id))
+                            if brand_kit is not None:
+                                reframed_by_ratio: dict[str, str] = {}
+                                for ratio in needed_ratios:
+                                    target_dims = target_dimensions_for_ratio(ratio)
+                                    if target_dims is None:
+                                        continue
+                                    try:
+                                        reframed_bytes = reframe_video(video_url, ratio, brand_kit)
+                                        reframed_by_ratio[ratio] = storage.upload_bytes(reframed_bytes, "video/mp4", "mp4")
+                                        logger.info("[reframe] job=%s produced %s version, url=%s", job_id, ratio, reframed_by_ratio[ratio])
+                                    except Exception as exc:  # noqa: BLE001
+                                        # One ratio failing shouldn't lose
+                                        # the others, or the master video
+                                        # itself — this is a nice-to-have
+                                        # layer on top of a generation
+                                        # that already succeeded.
+                                        logger.warning("[reframe] job=%s failed to produce %s version: %s", job_id, ratio, exc)
+                                if reframed_by_ratio:
+                                    platform_video_urls = {p: reframed_by_ratio[platform_ratios[p]] for p in (ad.platforms or []) if p in platform_ratios and platform_ratios[p] in reframed_by_ratio}
+                                    for v in new_results["variants"]:
+                                        v["platform_video_urls"] = platform_video_urls
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("[reframe] job=%s reframe pass failed entirely, master video unaffected: %s", job_id, exc)
+
                     models_used.append(video_model)
                 except Exception as vid_exc:  # noqa: BLE001
                     existing_err = job.error or "Copy OK"
@@ -679,8 +745,11 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
 
                 # Same two background quality steps as generate_ad — see
                 # services/video_prep.py and the detailed comments there.
+                # Shot review is opt-in per-ad (refine_video_prompt) —
+                # same as Create Ad, not automatic just because a review
+                # model is configured.
                 prep_settings = get_video_prep_settings_sync(db)
-                if prep_settings.get("prompt_review_model_id"):
+                if ad.brief.get("refine_video_prompt") and prep_settings.get("prompt_review_model_id"):
                     review_models = get_available_models_sync(db)
                     review_entry = next((m for m in review_models.get("text", []) if m["id"] == prep_settings["prompt_review_model_id"]), None)
                     if review_entry:
@@ -688,7 +757,10 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
                             if shot.get("prompt"):
                                 shot["prompt"] = _review_shot_prompt(shot["prompt"], review_entry["model"])
 
-                if frame_image_url and prep_settings.get("image_model_id"):
+                # Same conditions as generate_ad: only single_reference
+                # mode, only when the customer opted in — never in
+                # first_last_frame mode (deliberately chosen compositions).
+                if frame_image_url and ad.brief.get("video_mode", "single_reference") == "single_reference" and ad.brief.get("refine_video_frame") and prep_settings.get("image_model_id"):
                     prep_models = get_available_models_sync(db)
                     prep_entry = next((m for m in prep_models.get("image", []) if m["id"] == prep_settings["image_model_id"]), None)
                     first_shot_desc = (shots[0].get("prompt") or "").strip() if shots else ""
@@ -703,12 +775,19 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
                         except Exception as exc:  # noqa: BLE001
                             logger.warning("[video_prep] job=%s (campaign ad) first-frame pre-render failed, using original reference: %s", job_id, exc)
 
+                # Start + end frame mode — the customer explicitly chose
+                # both images as intentional compositions, used exactly
+                # as uploaded, never pre-rendered or reinterpreted.
+                end_frame_image_url = None
+                if not skip_reference and ad.brief.get("video_mode") == "first_last_frame" and ad.brief.get("video_end_frame_image_url"):
+                    end_frame_image_url = storage.fetch_as_data_url(ad.brief["video_end_frame_image_url"])
+
                 video_model = ad.brief.get("video_model") or "alibaba/wan-2.7"
                 video_resolution = ad.brief.get("video_resolution") or "720p"
                 video_audio = ad.brief.get("video_audio")
                 total_duration = sum(s.get("duration") or 0 for s in shots) or 6
 
-                if len(shots) == 1 and ad.brief.get("video_prompt_override"):
+                if ad.brief.get("video_prompt_override"):
                     video_prompt = ad.brief["video_prompt_override"]
                 else:
                     video_prompt = _multi_shot_video_prompt(ad.brief, shots)
@@ -718,7 +797,7 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
                 )
 
                 try:
-                    video_bytes = generate_video(video_prompt, video_model, duration=total_duration, resolution=video_resolution, frame_image_url=frame_image_url, audio=video_audio)
+                    video_bytes = generate_video(video_prompt, video_model, duration=total_duration, resolution=video_resolution, frame_image_url=frame_image_url, end_frame_image_url=end_frame_image_url, audio=video_audio)
                 except Exception as frame_exc:  # noqa: BLE001
                     if frame_image_url:
                         raise RuntimeError(f"REFERENCE_REJECTED::{frame_exc}") from frame_exc
@@ -728,6 +807,32 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
                 logger.info("[campaign_video] job=%s uploaded video, url=%s", job_id, video_url)
                 for v in variants:
                     v["video_url"] = video_url
+
+                # Same reframe pass as generate_ad — see the detailed
+                # comment there.
+                try:
+                    platform_ratios = get_ad_targeting_ratios_sync(db)
+                    needed_ratios = {platform_ratios[p] for p in (ad.platforms or []) if p in platform_ratios}
+                    if needed_ratios:
+                        brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == ad.company_id))
+                        if brand_kit is not None:
+                            reframed_by_ratio: dict[str, str] = {}
+                            for ratio in needed_ratios:
+                                if target_dimensions_for_ratio(ratio) is None:
+                                    continue
+                                try:
+                                    reframed_bytes = reframe_video(video_url, ratio, brand_kit)
+                                    reframed_by_ratio[ratio] = storage.upload_bytes(reframed_bytes, "video/mp4", "mp4")
+                                    logger.info("[reframe] job=%s (campaign ad) produced %s version", job_id, ratio)
+                                except Exception as exc:  # noqa: BLE001
+                                    logger.warning("[reframe] job=%s (campaign ad) failed to produce %s version: %s", job_id, ratio, exc)
+                            if reframed_by_ratio:
+                                platform_video_urls = {p: reframed_by_ratio[platform_ratios[p]] for p in (ad.platforms or []) if p in platform_ratios and platform_ratios[p] in reframed_by_ratio}
+                                for v in variants:
+                                    v["platform_video_urls"] = platform_video_urls
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[reframe] job=%s (campaign ad) reframe pass failed entirely, master video unaffected: %s", job_id, exc)
+
                 models_used.append(video_model)
             except Exception as exc:  # noqa: BLE001
                 job_error = f"{job_error + ', ' if job_error else ''}video generation failed: {exc}"[:1000]
@@ -885,3 +990,57 @@ def cleanup_expired_media():
         db.commit()
         logger.info("[retention] cleaned=%d skipped_pending=%d cutoff=%s", cleaned, skipped_pending, cutoff.isoformat())
         return f"cleaned {cleaned}, skipped {skipped_pending} (pending post)"
+
+
+@celery_app.task(name="app.cleanup_expired_posts")
+def cleanup_expired_posts():
+    """Daily cleanup of the AD RECORD ITSELF (see
+    services/retention.py's post_retention_months) — separate from and
+    much longer than media-only retention. Media cleanup (above) keeps
+    the ad forever and only strips files; this is the actual bound on
+    long-run database growth, deleting the whole row — caption,
+    metadata, everything — once it's old enough. Default 24 months (2
+    years), independently configurable from the 6-month media default.
+
+    GenerationJob and ScheduledPost both have a real foreign key to
+    ads.id with no cascade configured, so both must be deleted
+    explicitly before the Ad row itself, or the delete would fail on a
+    foreign key violation. FlaggedContent and AuditLog do NOT reference
+    ads.id (only companies.id/users.id), so nothing else needs
+    cleaning up here.
+
+    Same defensive "pending scheduled post" skip as the media cleanup,
+    even though at 2 years default it's an extreme edge case by the
+    time it would ever matter — cheap insurance, same reasoning as
+    before."""
+    BATCH_SIZE = 200
+    with Session(sync_engine) as db:
+        months = get_post_retention_months_sync(db)
+        cutoff = datetime.utcnow() - timedelta(days=months * 30)
+
+        candidates = db.scalars(
+            select(Ad).where(Ad.created_at < cutoff).limit(BATCH_SIZE * 2)
+        ).all()
+
+        deleted = 0
+        skipped_pending = 0
+        for ad in candidates:
+            if deleted >= BATCH_SIZE:
+                break
+            still_pending = db.scalar(
+                select(func.count()).select_from(ScheduledPost).where(
+                    ScheduledPost.ad_id == ad.id, ScheduledPost.status == "pending",
+                )
+            )
+            if still_pending:
+                skipped_pending += 1
+                continue
+
+            db.execute(delete(ScheduledPost).where(ScheduledPost.ad_id == ad.id))
+            db.execute(delete(GenerationJob).where(GenerationJob.ad_id == ad.id))
+            db.delete(ad)
+            deleted += 1
+
+        db.commit()
+        logger.info("[retention] posts deleted=%d skipped_pending=%d cutoff=%s", deleted, skipped_pending, cutoff.isoformat())
+        return f"deleted {deleted} posts, skipped {skipped_pending} (pending post)"

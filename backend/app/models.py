@@ -77,6 +77,23 @@ class BrandKit(Base):
     primary_color: Mapped[str] = mapped_column(String(9), default="#7c3aed")
     tagline: Mapped[str] = mapped_column(String(200), default="")
     logo_placement: Mapped[str] = mapped_column(String(20), default="bottom-right")
+    # Reframe/padding — used when a generated video's native aspect
+    # ratio doesn't match a platform's required ratio (see
+    # services/reframe.py). Two independent directions since they're
+    # visually unrelated choices: vertical padding (top/bottom bars,
+    # needed when the source is WIDER than the target) and horizontal
+    # padding (left/right bars, needed when the source is TALLER than
+    # the target). Mode is "blurred_video" | "image" | "color" — image
+    # URLs and colors below are only read when that direction's mode
+    # selects them.
+    vertical_pad_mode: Mapped[str] = mapped_column(String(20), default="blurred_video")
+    horizontal_pad_mode: Mapped[str] = mapped_column(String(20), default="blurred_video")
+    pad_top_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    pad_bottom_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    pad_left_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    pad_right_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    vertical_pad_color: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    horizontal_pad_color: Mapped[str | None] = mapped_column(String(9), nullable=True)
 
 
 class Product(Base):

@@ -61,6 +61,8 @@ type PhaseFormState = {
   imageModelId: string | null;
   wantVideo: boolean; videoModelId: string | null; videoResolution: string | null;
   videoFrameImage: string | null; videoShots: { prompt: string; duration: number }[];
+  videoMode: "single_reference" | "first_last_frame"; videoEndFrameImage: string | null;
+  refineVideoPrompt: boolean; refineVideoFrame: boolean;
 };
 
 function PhaseScheduleInput({ label, state, setState, availableImageModels, availableVideoModels }: {
@@ -77,6 +79,12 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
     const f = e.target.files?.[0];
     if (!f) return;
     setState({ ...state, videoFrameImage: await fileToDataUrl(f) });
+  }
+
+  async function handleVideoEndFrameImage(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setState({ ...state, videoEndFrameImage: await fileToDataUrl(f) });
   }
 
   const selectedVideoModel = availableVideoModels?.find((m) => m.id === state.videoModelId) || null;
@@ -185,6 +193,19 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
             )}
           </div>
 
+          {selectedVideoModel?.supports_last_frame && (
+            <div className="flex gap-1.5">
+              <button type="button" onClick={() => setState({ ...state, videoMode: "single_reference" })}
+                className={`rounded-full border px-2 py-0.5 text-[10px] ${state.videoMode === "single_reference" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
+                Single image
+              </button>
+              <button type="button" onClick={() => setState({ ...state, videoMode: "first_last_frame" })}
+                className={`rounded-full border px-2 py-0.5 text-[10px] ${state.videoMode === "first_last_frame" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
+                Start + end frame
+              </button>
+            </div>
+          )}
+
           {state.videoFrameImage ? (
             <div className="flex items-center gap-2">
               <img src={state.videoFrameImage} alt="video reference" className="h-10 w-10 rounded object-cover border border-border" />
@@ -194,15 +215,45 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
           ) : (
             <div className="flex flex-wrap items-center gap-1.5">
               <label className="inline-block cursor-pointer rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">
-                ⬆ Upload reference image
+                ⬆ {state.videoMode === "first_last_frame" ? "Upload starting frame" : "Upload reference image"}
                 <input type="file" accept="image/*" className="hidden" onChange={handleVideoFrameImage} />
               </label>
               {state.productImage && (
                 <button type="button" onClick={() => setState({ ...state, videoFrameImage: state.productImage })} className="rounded-full border border-border px-3 py-1 text-[10px] text-foreground">Use product photo</button>
               )}
-              <span className="text-[10px] text-muted-foreground">No image = text-to-video</span>
+              {state.videoMode === "single_reference" && <span className="text-[10px] text-muted-foreground">No image = text-to-video</span>}
             </div>
           )}
+
+          {state.videoMode === "single_reference" && state.videoFrameImage && (
+            <label className="flex items-center gap-1.5 text-[10px] text-foreground">
+              <input type="checkbox" checked={state.refineVideoFrame} onChange={(e) => setState({ ...state, refineVideoFrame: e.target.checked })} />
+              🎨 Change background to match shot 1's scene (optional)
+            </label>
+          )}
+
+          {state.videoMode === "first_last_frame" && (
+            state.videoEndFrameImage ? (
+              <div className="flex items-center gap-2 border-t border-border/60 pt-2">
+                <img src={state.videoEndFrameImage} alt="video end frame" className="h-10 w-10 rounded object-cover border border-border" />
+                <span className="text-[10px] text-emerald-400">✓ ending frame</span>
+                <button type="button" onClick={() => setState({ ...state, videoEndFrameImage: null })} className="text-[10px] text-destructive border border-destructive/40 rounded-full px-2 py-0.5">Remove</button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-2">
+                <label className="inline-block cursor-pointer rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">
+                  ⬆ Upload ending frame
+                  <input type="file" accept="image/*" className="hidden" onChange={handleVideoEndFrameImage} />
+                </label>
+                <span className="text-[10px] text-muted-foreground">Required for start + end frame mode</span>
+              </div>
+            )
+          )}
+
+          <label className="flex items-center gap-1.5 text-[10px] text-foreground">
+            <input type="checkbox" checked={state.refineVideoPrompt} onChange={(e) => setState({ ...state, refineVideoPrompt: e.target.checked })} />
+            ✨ Refine shot wording with AI (optional)
+          </label>
 
           <div className="rounded-lg border border-border/60 bg-background/40 p-2">
             <div className="flex items-center justify-between">
@@ -256,6 +307,8 @@ function newPhaseState(days: number): PhaseFormState {
     wantImage: false, productImage: null, sceneText: "", useBrandKit: false, imageModelId: null,
     wantVideo: false, videoModelId: null, videoResolution: null, videoFrameImage: null,
     videoShots: [{ prompt: "", duration: 6 }],
+    videoMode: "single_reference", videoEndFrameImage: null, refineVideoPrompt: false,
+    refineVideoFrame: false,
   };
 }
 
@@ -336,7 +389,11 @@ function Campaigns() {
       video_model_id: s.videoModelId,
       video_shots: s.wantVideo ? s.videoShots : null,
       video_frame_image: s.wantVideo && s.videoFrameImage?.startsWith("data:") ? s.videoFrameImage : null,
+      video_end_frame_image: s.wantVideo && s.videoMode === "first_last_frame" && s.videoEndFrameImage?.startsWith("data:") ? s.videoEndFrameImage : null,
+      video_mode: s.wantVideo ? s.videoMode : "single_reference",
       video_resolution: s.videoResolution,
+      refine_video_prompt: s.wantVideo ? s.refineVideoPrompt : false,
+      refine_video_frame: s.wantVideo ? s.refineVideoFrame : false,
     };
   }
 

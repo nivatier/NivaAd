@@ -11,6 +11,7 @@ from app.services.storage import upload_data_url
 router = APIRouter(prefix="/brand-kit", tags=["brand-kit"])
 
 VALID_PLACEMENTS = {"top-left", "top-right", "bottom-left", "bottom-right"}
+VALID_PAD_MODES = {"blurred_video", "image", "color"}
 
 
 async def _get_or_create(db: AsyncSession, company_id) -> BrandKit:
@@ -44,6 +45,21 @@ async def update_brand_kit(data: BrandKitUpdateIn, user: User = Depends(require_
         kit.tagline = data.tagline
     if data.logo_placement is not None and data.logo_placement in VALID_PLACEMENTS:
         kit.logo_placement = data.logo_placement
+    if data.vertical_pad_mode is not None and data.vertical_pad_mode in VALID_PAD_MODES:
+        kit.vertical_pad_mode = data.vertical_pad_mode
+    if data.horizontal_pad_mode is not None and data.horizontal_pad_mode in VALID_PAD_MODES:
+        kit.horizontal_pad_mode = data.horizontal_pad_mode
+    for field, image_attr in [
+        ("pad_top_image", "pad_top_image_url"), ("pad_bottom_image", "pad_bottom_image_url"),
+        ("pad_left_image", "pad_left_image_url"), ("pad_right_image", "pad_right_image_url"),
+    ]:
+        value = getattr(data, field)
+        if value is not None:
+            setattr(kit, image_attr, None if value == "" else upload_data_url(value, prefix="brand"))
+    if data.vertical_pad_color is not None:
+        kit.vertical_pad_color = data.vertical_pad_color or None
+    if data.horizontal_pad_color is not None:
+        kit.horizontal_pad_color = data.horizontal_pad_color or None
     await db.commit()
     await db.refresh(kit)
     return kit

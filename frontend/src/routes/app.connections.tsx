@@ -32,7 +32,7 @@ function Connections() {
   const allowed = useRequireCapability("admin-only");
 
   const [connections, setConnections] = useState<{ platform: string; status: string; connected_at: string | null }[] | null>(null);
-  const [available, setAvailable] = useState<Record<string, { label: string; built: boolean }>>({});
+  const [available, setAvailable] = useState<Record<string, { label: string; built: boolean; video_ratio: string }>>({});
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -41,7 +41,7 @@ function Connections() {
     try {
       const [conns, avail] = await Promise.all([api("/connections"), api("/connections/available")]);
       setConnections(conns);
-      setAvailable(Object.fromEntries(avail.map((p: { id: string; label: string; built: boolean }) => [p.id, { label: p.label, built: p.built }])));
+      setAvailable(Object.fromEntries(avail.map((p: { id: string; label: string; built: boolean; video_ratio: string }) => [p.id, { label: p.label, built: p.built, video_ratio: p.video_ratio }])));
     } catch (e: any) {
       setErr(e.message || "Could not load connections");
     }
@@ -113,7 +113,12 @@ function Connections() {
                     <div className="flex items-center gap-3">
                       <div className={`grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br ${meta?.color || "from-slate-500 to-slate-700"} text-xs font-bold text-white`}>{meta?.initials || c.platform.slice(0, 2).toUpperCase()}</div>
                       <div>
-                        <span className="text-sm text-foreground">{available[c.platform]?.label || c.platform}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-foreground">{available[c.platform]?.label || c.platform}</span>
+                          {available[c.platform]?.video_ratio && (
+                            <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">Posts at {available[c.platform].video_ratio}</span>
+                          )}
+                        </div>
                         {isConnected && <div className="text-[11px] text-emerald-400">✓ Connected{c.connected_at ? ` ${new Date(c.connected_at).toLocaleDateString()}` : ""}</div>}
                         {!built && <div className="text-[11px] text-muted-foreground">Coming soon</div>}
                       </div>

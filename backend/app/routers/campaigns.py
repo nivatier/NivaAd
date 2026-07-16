@@ -75,6 +75,9 @@ async def _create_phase_ad(
     video_shots: list | None = None, video_frame_image: str | None = None,
     video_frame_image_url: str | None = None, video_resolution: str | None = None,
     video_prompt_override: str | None = None,
+    video_mode: str = "single_reference", video_end_frame_image: str | None = None,
+    video_end_frame_image_url: str | None = None, refine_video_prompt: bool = False,
+    refine_video_frame: bool = False,
 ) -> tuple[Ad, int, uuid.UUID | None]:
     """Creates a real ad for one campaign phase. Copy is free (it's the
     phase's own caption, no extra Claude call) — cost is image and/or
@@ -128,6 +131,13 @@ async def _create_phase_ad(
         video_resolution = video_resolution or offered[0]
         if video_resolution not in offered:
             raise HTTPException(422, f"\"{video_model['label']}\" doesn't offer {video_resolution} for the {phase} phase — available: {', '.join(offered)}.")
+        if video_mode == "first_last_frame":
+            if not video_model.get("supports_last_frame"):
+                raise HTTPException(422, f"\"{video_model['label']}\" doesn't support a separate start and end frame for the {phase} phase — pick a model with that capability, or switch to single reference image mode.")
+            if not (video_frame_image or video_frame_image_url):
+                raise HTTPException(422, f"The {phase} phase's start + end frame mode needs a starting frame image.")
+            if not (video_end_frame_image or video_end_frame_image_url):
+                raise HTTPException(422, f"The {phase} phase's start + end frame mode needs an ending frame image too.")
         # Campaigns don't have an audio toggle in the UI yet (scoped out
         # of this round) — dynamically-priced models fall back to
         # OpenRouter's own per-model default audio behavior.
@@ -153,6 +163,16 @@ async def _create_phase_ad(
             raise HTTPException(400, f"Could not process the {phase} video reference photo: {exc}")
     elif video_frame_image_url:
         video_frame_image_url_resolved = video_frame_image_url
+
+    video_end_frame_image_url_resolved = None
+    if video_mode == "first_last_frame":
+        if video_end_frame_image:
+            try:
+                video_end_frame_image_url_resolved = upload_data_url(video_end_frame_image, prefix="uploads")
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(400, f"Could not process the {phase} end frame photo: {exc}")
+        elif video_end_frame_image_url:
+            video_end_frame_image_url_resolved = video_end_frame_image_url
 
     brand_logo_url = None
     brand_logo_placement = None
@@ -180,6 +200,10 @@ async def _create_phase_ad(
             "video_model_credits": video_model["credits"] if video_model else None,
             "video_shots": [s.model_dump() for s in video_shots] if video_shots else None,
             "video_frame_image_url": video_frame_image_url_resolved,
+            "video_mode": video_mode if generate_video else None,
+            "video_end_frame_image_url": video_end_frame_image_url_resolved,
+            "refine_video_prompt": refine_video_prompt if generate_video else False,
+            "refine_video_frame": refine_video_frame if generate_video else False,
             "video_resolution": video_resolution,
             "video_prompt_override": video_prompt_override,
         },
@@ -275,6 +299,9 @@ async def create_campaign(data: CampaignCreateIn, user: User = Depends(require_c
             generate_video=pin.generate_video, video_model_id=pin.video_model_id, video_shots=pin.video_shots,
             video_frame_image=pin.video_frame_image, video_frame_image_url=pin.video_frame_image_url,
             video_resolution=pin.video_resolution, video_prompt_override=pin.video_prompt_override,
+            video_mode=pin.video_mode, video_end_frame_image=pin.video_end_frame_image,
+            video_end_frame_image_url=pin.video_end_frame_image_url, refine_video_prompt=pin.refine_video_prompt,
+            refine_video_frame=pin.refine_video_frame,
         )
         if job_id:
             pending_job_ids.append(job_id)

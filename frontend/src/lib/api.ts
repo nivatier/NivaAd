@@ -96,7 +96,7 @@ export type AdOut = {
   error: string | null;
 };
 
-export type AvailableModel = { id: string; label: string; credits: number; min_duration?: number; max_duration?: number; duration_options?: number[]; resolutions?: string[]; supports_audio?: boolean; has_dynamic_pricing?: boolean };
+export type AvailableModel = { id: string; label: string; credits: number; min_duration?: number; max_duration?: number; duration_options?: number[]; resolutions?: string[]; supports_audio?: boolean; supports_last_frame?: boolean; has_dynamic_pricing?: boolean };
 export type AvailableModelsOut = { text: AvailableModel[]; image: AvailableModel[]; video: AvailableModel[] };
 
 export type ScheduledPostOut = {

@@ -106,6 +106,7 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
   const [durationOptions, setDurationOptions] = useState(entry.duration_options?.join(", ") ?? "");
   const [resolutions, setResolutions] = useState<string[]>(entry.resolutions || []);
   const [supportsAudio, setSupportsAudio] = useState(entry.supports_audio ?? false);
+  const [supportsLastFrame, setSupportsLastFrame] = useState(entry.supports_last_frame ?? false);
   const [pricingJson, setPricingJson] = useState(entry.pricing ? JSON.stringify(entry.pricing, null, 2) : "");
   const [pricingError, setPricingError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -133,6 +134,7 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
       duration_options: kind === "video" ? parsedDurationOptions : null,
       resolutions: kind === "video" && resolutions.length > 0 ? resolutions : null,
       supports_audio: kind === "video" ? supportsAudio : null,
+      supports_last_frame: kind === "video" ? supportsLastFrame : null,
       pricing,
     });
     setSaving(false);
@@ -176,6 +178,10 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
               <label className="flex items-center gap-1.5 text-[11px] text-foreground">
                 <input type="checkbox" checked={supportsAudio} onChange={(e) => setSupportsAudio(e.target.checked)} />
                 Supports an audio on/off choice (shows a real toggle in Create Ad — independent of whether dynamic pricing is set up)
+              </label>
+              <label className="flex items-center gap-1.5 text-[11px] text-foreground">
+                <input type="checkbox" checked={supportsLastFrame} onChange={(e) => setSupportsLastFrame(e.target.checked)} />
+                Supports a separate start + end frame (enables "first + last frame" mode in Create Ad)
               </label>
               <div>
                 <div className="text-[10px] font-semibold text-muted-foreground mb-1">Dynamic pricing (optional — leave blank to keep the flat credits above)</div>
@@ -257,6 +263,7 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
   const [durationOptions, setDurationOptions] = useState("");
   const [resolutions, setResolutions] = useState<string[]>(["720p"]);
   const [supportsAudio, setSupportsAudio] = useState(false);
+  const [supportsLastFrame, setSupportsLastFrame] = useState(false);
   const [pricePerSec, setPricePerSec] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -284,10 +291,11 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
       duration_options: kind === "video" ? parsedDurationOptions : null,
       resolutions: kind === "video" && resolutions.length > 0 ? resolutions : null,
       supports_audio: kind === "video" ? supportsAudio : null,
+      supports_last_frame: kind === "video" ? supportsLastFrame : null,
       price_per_second_usd: kind === "video" ? pricePerSec : null,
     });
     setSaving(false);
-    setLabel(""); setModel(""); setCredits("2"); setMinD("4"); setMaxD("15"); setDurationOptions(""); setResolutions(["720p"]); setSupportsAudio(false); setPricePerSec(null);
+    setLabel(""); setModel(""); setCredits("2"); setMinD("4"); setMaxD("15"); setDurationOptions(""); setResolutions(["720p"]); setSupportsAudio(false); setSupportsLastFrame(false); setPricePerSec(null);
     setOpen(false);
   }
 
@@ -328,6 +336,10 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
                 <input type="checkbox" checked={supportsAudio} onChange={(e) => setSupportsAudio(e.target.checked)} />
                 Supports an audio on/off choice
               </label>
+              <label className="flex items-center gap-1.5 text-[11px] text-foreground">
+                <input type="checkbox" checked={supportsLastFrame} onChange={(e) => setSupportsLastFrame(e.target.checked)} />
+                Supports a separate start + end frame
+              </label>
             </>
           )}
           <div className="flex items-center gap-2">
@@ -337,6 +349,86 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
         </div>
       )}
     </>
+  );
+}
+
+function RawJsonEditor({ onSaved }: { onSaved: () => void }) {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [err, setErr] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  async function loadRaw() {
+    setErr("");
+    try {
+      const r = await devApi("/developer/models/raw");
+      setText(JSON.stringify(r.models, null, 2));
+      setLoaded(true);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not load");
+    }
+  }
+
+  async function saveRaw() {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      setErr("That's not valid JSON — check for a missing comma or bracket before saving.");
+      return;
+    }
+    setSaving(true); setErr(""); setSaved(false);
+    try {
+      await devApi("/developer/models/raw", { method: "PUT", body: { models: parsed } });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+      onSaved(); // refreshes the form-based view above so both stay in sync
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not save — check the error for which entry needs fixing");
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div className="mb-6 max-w-4xl rounded-xl border border-slate-700/50 bg-card/60 p-4">
+      <button onClick={() => { setOpen(!open); if (!open && !loaded) loadRaw(); }} className="flex w-full items-center justify-between text-left">
+        <div>
+          <div className="text-sm font-semibold text-foreground">🗂️ Bulk edit as JSON</div>
+          <p className="mt-1 text-[11px] text-muted-foreground">Edit and save the entire text/image/video model list in one shot — the whole structure saves atomically, so there's nothing to partially drop like a single field can in the form above.</p>
+        </div>
+        <span className="text-muted-foreground">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="mt-4">
+          {!loaded ? (
+            <div className="text-xs text-muted-foreground">Loading…</div>
+          ) : (
+            <>
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                rows={24}
+                spellCheck={false}
+                className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-3 py-2 font-mono text-[11px] leading-relaxed text-foreground focus:border-slate-500 focus:outline-none"
+              />
+              <div className="mt-3 flex items-center gap-3">
+                <button onClick={saveRaw} disabled={saving} className="rounded-full bg-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+                  {saving ? "Saving…" : "Save all"}
+                </button>
+                <button onClick={loadRaw} className="rounded-full border border-slate-700/60 px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+                  Reload (discard changes)
+                </button>
+                {saved && <span className="text-xs text-emerald-400">✓ Saved — every model updated atomically</span>}
+              </div>
+              {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -444,6 +536,8 @@ function DeveloperModels() {
       <p className="mb-6 text-sm text-muted-foreground">
         Add as many image and video models as you want — "Fetch from OpenRouter" browses their real live catalog so you click an actual model instead of hand-typing an identifier. For video models, set which resolutions to offer, and optionally a dynamic pricing formula (see each model's Edit view) so the price customers see reflects exactly what they picked — resolution, audio, duration — not a flat guess. Companies never see model identifiers, only your labels.
       </p>
+
+      <RawJsonEditor onSaved={load} />
 
       <div className="mb-6 rounded-xl border border-slate-700/50 bg-card/60 p-4 max-w-md">
         <div className="text-sm font-semibold text-foreground">💰 Global markup multiplier</div>

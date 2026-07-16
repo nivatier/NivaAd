@@ -78,10 +78,10 @@ export type CompanyAdminOut = {
   created_at: string;
 };
 
-export type DeveloperModel = { id: string; label: string; model: string; credits: number; min_duration?: number; max_duration?: number; duration_options?: number[]; resolutions?: string[]; supports_audio?: boolean; price_per_second_usd?: number; enabled?: boolean; pricing?: Record<string, unknown> | null };
+export type DeveloperModel = { id: string; label: string; model: string; credits: number; min_duration?: number; max_duration?: number; duration_options?: number[]; resolutions?: string[]; supports_audio?: boolean; supports_last_frame?: boolean; price_per_second_usd?: number; enabled?: boolean; pricing?: Record<string, unknown> | null };
 export type DeveloperModelsOut = { text: DeveloperModel[]; image: DeveloperModel[]; video: DeveloperModel[] };
 export type OpenRouterCatalogModel = { slug: string; name: string; description?: string; price_per_second_usd?: number; price_per_image_usd?: number; resolutions?: string[]; max_duration?: number };
-export type PlatformIntegration = { id: string; label: string; client_id: string; has_secret: boolean; scope?: string; redirect_uri?: string; enabled: boolean; built: boolean };
+export type PlatformIntegration = { id: string; label: string; client_id: string; has_secret: boolean; scope?: string; redirect_uri?: string; enabled: boolean; built: boolean; video_ratio: string };
 export type GuardrailRuleOut = { id: string; phrase: string; created_at: string };
 
 export const devAuthApi = {

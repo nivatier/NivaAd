@@ -8,6 +8,7 @@ const NAV = [
   { to: "/developer/models", label: "Models", icon: "◐" },
   { to: "/developer/platforms", label: "Platforms", icon: "🔗" },
   { to: "/developer/moderation", label: "Moderation", icon: "⛊" },
+  { to: "/developer/settings", label: "Settings", icon: "⚙" },
 ];
 
 export function DeveloperShell({ title, children }: { title: ReactNode; children: ReactNode }) {

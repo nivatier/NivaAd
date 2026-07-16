@@ -33,6 +33,14 @@ function BrandKit() {
   const [color, setColor] = useState(COLORS[0]);
   const [tagline, setTagline] = useState("");
   const [placement, setPlacement] = useState("bottom-right");
+  const [verticalPadMode, setVerticalPadMode] = useState("blurred_video");
+  const [horizontalPadMode, setHorizontalPadMode] = useState("blurred_video");
+  const [padTopImage, setPadTopImage] = useState<string | null>(null);
+  const [padBottomImage, setPadBottomImage] = useState<string | null>(null);
+  const [padLeftImage, setPadLeftImage] = useState<string | null>(null);
+  const [padRightImage, setPadRightImage] = useState<string | null>(null);
+  const [verticalPadColor, setVerticalPadColor] = useState("#000000");
+  const [horizontalPadColor, setHorizontalPadColor] = useState("#000000");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
@@ -45,6 +53,14 @@ function BrandKit() {
       setColor(kit.primary_color || COLORS[0]);
       setTagline(kit.tagline || "");
       setPlacement(kit.logo_placement || "bottom-right");
+      setVerticalPadMode(kit.vertical_pad_mode || "blurred_video");
+      setHorizontalPadMode(kit.horizontal_pad_mode || "blurred_video");
+      setPadTopImage(kit.pad_top_image_url || null);
+      setPadBottomImage(kit.pad_bottom_image_url || null);
+      setPadLeftImage(kit.pad_left_image_url || null);
+      setPadRightImage(kit.pad_right_image_url || null);
+      setVerticalPadColor(kit.vertical_pad_color || "#000000");
+      setHorizontalPadColor(kit.horizontal_pad_color || "#000000");
     } catch (e: any) {
       setErr(e.message || "Could not load brand kit");
     }
@@ -60,6 +76,49 @@ function BrandKit() {
   async function savePlacement(p: string) {
     setPlacement(p);
     try { await api("/brand-kit", { method: "PUT", body: { logo_placement: p } }); } catch { /* non-fatal */ }
+  }
+
+  async function saveVerticalPadMode(m: string) {
+    setVerticalPadMode(m);
+    try { await api("/brand-kit", { method: "PUT", body: { vertical_pad_mode: m } }); } catch { /* non-fatal */ }
+  }
+
+  async function saveHorizontalPadMode(m: string) {
+    setHorizontalPadMode(m);
+    try { await api("/brand-kit", { method: "PUT", body: { horizontal_pad_mode: m } }); } catch { /* non-fatal */ }
+  }
+
+  async function saveVerticalPadColor(c: string) {
+    setVerticalPadColor(c);
+    try { await api("/brand-kit", { method: "PUT", body: { vertical_pad_color: c } }); } catch { /* non-fatal */ }
+  }
+
+  async function saveHorizontalPadColor(c: string) {
+    setHorizontalPadColor(c);
+    try { await api("/brand-kit", { method: "PUT", body: { horizontal_pad_color: c } }); } catch { /* non-fatal */ }
+  }
+
+  async function handlePadImage(field: string, setter: (v: string | null) => void, e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const dataUrl = await fileToDataUrl(f);
+    setSaving(true);
+    try {
+      const kit = await api("/brand-kit", { method: "PUT", body: { [field]: dataUrl } });
+      setter(kit[`${field}_url`]);
+    } catch (e: any) {
+      setErr(e.message || "Could not upload image");
+    }
+    setSaving(false);
+  }
+
+  async function removePadImage(field: string, setter: (v: string | null) => void) {
+    setSaving(true);
+    try {
+      await api("/brand-kit", { method: "PUT", body: { [field]: "" } });
+      setter(null);
+    } catch { /* non-fatal */ }
+    setSaving(false);
   }
 
   async function handleLogo(e: React.ChangeEvent<HTMLInputElement>) {
@@ -168,6 +227,87 @@ function BrandKit() {
               {saving ? "Saving…" : "Save tagline"}
             </button>
             {savedMsg && <span className="text-xs text-emerald-400">{savedMsg}</span>}
+          </div>
+        </div>
+
+        <div className="mt-8 border-t border-border pt-6">
+          <div className="text-sm font-medium text-foreground">Video padding</div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            When a generated video's shape doesn't match a platform's required ratio, it's scaled to fit and the leftover space is padded — never cropped, so nothing in the video is ever cut off. Choose what fills that space, separately for each direction.
+          </p>
+
+          <div className="mt-5 grid gap-6 md:grid-cols-2">
+            <div>
+              <div className="text-xs font-semibold text-foreground">Top / bottom padding <span className="font-normal text-muted-foreground">(when a wide video fits into a taller space)</span></div>
+              <div className="mt-2 flex gap-1.5">
+                {[["blurred_video", "Blurred video"], ["image", "Image"], ["color", "Color"]].map(([k, l]) => (
+                  <button key={k} onClick={() => saveVerticalPadMode(k)} className={`rounded-full border px-2.5 py-1 text-[11px] ${verticalPadMode === k ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>{l}</button>
+                ))}
+              </div>
+              {verticalPadMode === "image" && (
+                <div className="mt-3 space-y-3">
+                  {([["pad_top_image", padTopImage, setPadTopImage, "Top bar"], ["pad_bottom_image", padBottomImage, setPadBottomImage, "Bottom bar"]] as const).map(([field, url, setter, label]) => (
+                    <div key={field}>
+                      <div className="text-[11px] text-muted-foreground mb-1">{label}</div>
+                      {url ? (
+                        <div className="flex items-center gap-2">
+                          <img src={url} alt={label} className="h-10 w-24 rounded border border-border object-cover" />
+                          <button onClick={() => removePadImage(field, setter)} disabled={saving} className="rounded-full border border-destructive/40 px-2.5 py-1 text-[10px] text-destructive">Remove</button>
+                        </div>
+                      ) : (
+                        <label className="inline-block cursor-pointer rounded-full border border-dashed border-slate-500 px-3 py-1.5 text-[11px] text-muted-foreground hover:text-foreground">
+                          ⬆ Upload
+                          <input type="file" accept="image/*" className="hidden" disabled={saving} onChange={(e) => handlePadImage(field, setter, e)} />
+                        </label>
+                      )}
+                    </div>
+                  ))}
+                  <p className="text-[10px] text-muted-foreground">These scale to fit varying padding heights depending on the exact conversion — design with some tolerance for stretching, not a fixed exact height.</p>
+                </div>
+              )}
+              {verticalPadMode === "color" && (
+                <div className="mt-3 flex items-center gap-2">
+                  <input type="color" value={verticalPadColor} onChange={(e) => saveVerticalPadColor(e.target.value)} className="h-8 w-8 rounded border border-border bg-transparent cursor-pointer" />
+                  <span className="text-[11px] text-muted-foreground">{verticalPadColor}</span>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold text-foreground">Left / right padding <span className="font-normal text-muted-foreground">(when a tall video fits into a wider space)</span></div>
+              <div className="mt-2 flex gap-1.5">
+                {[["blurred_video", "Blurred video"], ["image", "Image"], ["color", "Color"]].map(([k, l]) => (
+                  <button key={k} onClick={() => saveHorizontalPadMode(k)} className={`rounded-full border px-2.5 py-1 text-[11px] ${horizontalPadMode === k ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>{l}</button>
+                ))}
+              </div>
+              {horizontalPadMode === "image" && (
+                <div className="mt-3 space-y-3">
+                  {([["pad_left_image", padLeftImage, setPadLeftImage, "Left bar"], ["pad_right_image", padRightImage, setPadRightImage, "Right bar"]] as const).map(([field, url, setter, label]) => (
+                    <div key={field}>
+                      <div className="text-[11px] text-muted-foreground mb-1">{label}</div>
+                      {url ? (
+                        <div className="flex items-center gap-2">
+                          <img src={url} alt={label} className="h-10 w-24 rounded border border-border object-cover" />
+                          <button onClick={() => removePadImage(field, setter)} disabled={saving} className="rounded-full border border-destructive/40 px-2.5 py-1 text-[10px] text-destructive">Remove</button>
+                        </div>
+                      ) : (
+                        <label className="inline-block cursor-pointer rounded-full border border-dashed border-slate-500 px-3 py-1.5 text-[11px] text-muted-foreground hover:text-foreground">
+                          ⬆ Upload
+                          <input type="file" accept="image/*" className="hidden" disabled={saving} onChange={(e) => handlePadImage(field, setter, e)} />
+                        </label>
+                      )}
+                    </div>
+                  ))}
+                  <p className="text-[10px] text-muted-foreground">Same scaling tolerance note applies here.</p>
+                </div>
+              )}
+              {horizontalPadMode === "color" && (
+                <div className="mt-3 flex items-center gap-2">
+                  <input type="color" value={horizontalPadColor} onChange={(e) => saveHorizontalPadColor(e.target.value)} className="h-8 w-8 rounded border border-border bg-transparent cursor-pointer" />
+                  <span className="text-[11px] text-muted-foreground">{horizontalPadColor}</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

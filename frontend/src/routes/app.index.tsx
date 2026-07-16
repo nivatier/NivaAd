@@ -47,6 +47,8 @@ function CreateAd() {
   const [goal, setGoal] = useState("Drive sales");
   const [tone, setTone] = useState("Professional");
   const [videoFrameImage, setVideoFrameImage] = useState<string | null>(null);
+  const [videoMode, setVideoMode] = useState<"single_reference" | "first_last_frame">("single_reference");
+  const [videoEndFrameImage, setVideoEndFrameImage] = useState<string | null>(null);
   const [imageReferenceImage, setImageReferenceImage] = useState<string | null>(null);
   const [envStyle, setEnvStyle] = useState("Studio");
   const placementTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -76,6 +78,8 @@ function CreateAd() {
   const [liveVideoCredits, setLiveVideoCredits] = useState<number | null>(null);
   const [liveTextCredits, setLiveTextCredits] = useState<number | null>(null);
   const [videoShots, setVideoShots] = useState<{ prompt: string; duration: number }[]>([{ prompt: "", duration: 6 }]);
+  const [refineVideoPrompt, setRefineVideoPrompt] = useState(false);
+  const [refineVideoFrame, setRefineVideoFrame] = useState(false);
 
   // Platforms
   const [selected, setSelected] = useState<Record<string, boolean>>({ instagram: true, facebook: true, linkedin: false, x: false, tiktok: false });
@@ -87,6 +91,7 @@ function CreateAd() {
   const [warning, setWarning] = useState("");
   const [referenceRejectedMsg, setReferenceRejectedMsg] = useState("");
   const [retentionMonths, setRetentionMonths] = useState<number | null>(null);
+  const [postRetentionMonths, setPostRetentionMonths] = useState<number | null>(null);
   const [retryingWithoutRef, setRetryingWithoutRef] = useState(false);
   const [adId, setAdId] = useState<string | null>(null);
   const [variants, setVariants] = useState<AdVariant[] | null>(null);
@@ -126,6 +131,13 @@ function CreateAd() {
       : videoTotalDuration >= (selectedVideoModel.min_duration ?? 1) && videoTotalDuration <= (selectedVideoModel.max_duration ?? 60)
   ));
   const credits = me?.credits ?? 0;
+
+  useEffect(() => {
+    if (videoMode === "first_last_frame" && !selectedVideoModel?.supports_last_frame) {
+      setVideoMode("single_reference");
+      setVideoEndFrameImage(null);
+    }
+  }, [selectedVideoModel?.id, selectedVideoModel?.supports_last_frame]);
 
   // Live, exact pricing — recomputed server-side whenever the actual
   // selection changes, since dynamically-priced models genuinely cost
@@ -200,7 +212,7 @@ function CreateAd() {
       setBrandTagline(kit.tagline || "");
       setBrandLogoUrl(kit.logo_url || null);
     }).catch(() => { /* non-fatal */ });
-    api("/ads/retention-info").then((r) => setRetentionMonths(r.retention_months)).catch(() => { /* non-fatal — notice just won't show a specific number */ });
+    api("/ads/retention-info").then((r) => { setRetentionMonths(r.retention_months); setPostRetentionMonths(r.post_retention_months); }).catch(() => { /* non-fatal — notice just won't show a specific number */ });
     api("/ads/available-models").then((models: AvailableModelsOut) => {
       setAvailableModels(models);
       if (models.text.length > 0) setTextModelId(models.text[0].id);
@@ -248,6 +260,12 @@ function CreateAd() {
     setVideoFrameImage(await fileToDataUrl(f));
   }
 
+  async function handleVideoEndFrameImage(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setVideoEndFrameImage(await fileToDataUrl(f));
+  }
+
   async function handleImageReferenceImage(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -270,11 +288,13 @@ function CreateAd() {
           format, variations,
           carousel_slides: format === "carousel" ? carouselSlides.slice(0, carouselCount) : null,
           video_shots: outputs.video ? videoShots : null,
+          refine_video_prompt: outputs.video ? refineVideoPrompt : false,
         },
       });
       setTextPrompt(res.text_prompt);
       setImagePrompt(res.image_prompt || "");
       setVideoPrompt(res.video_prompt || "");
+      if (res.reviewed_shots) setVideoShots(res.reviewed_shots); // Step 2 now shows the reviewed wording too, not just this popup
       setShowPromptModal(true);
     } catch (e: any) {
       setErrorMsg(e.message || "Could not build the prompt preview");
@@ -312,8 +332,12 @@ function CreateAd() {
             outputs, format, variations,
             carousel_slides: format === "carousel" ? carouselSlides.slice(0, carouselCount) : null,
             video_shots: outputs.video ? videoShots : null,
+            refine_video_prompt: outputs.video ? refineVideoPrompt : false,
+            refine_video_frame: outputs.video ? refineVideoFrame : false,
             video_frame_image: outputs.video && isDataUrlVideoFrame ? videoFrameImage : null,
             video_frame_image_url: outputs.video && !isDataUrlVideoFrame && videoFrameImage ? videoFrameImage : null,
+            video_mode: outputs.video ? videoMode : "single_reference",
+            video_end_frame_image: outputs.video && videoMode === "first_last_frame" ? videoEndFrameImage : null,
             image_reference_image: outputs.image && isDataUrlImageReference ? imageReferenceImage : null,
             image_reference_image_url: outputs.image && !isDataUrlImageReference && imageReferenceImage ? imageReferenceImage : null,
             text_prompt_override: textPrompt || null,
@@ -707,16 +731,26 @@ function CreateAd() {
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     If attached, the video opens on this exact photo (image-to-video). If not, the video is fully AI-generated from your prompt (text-to-video) — no image is sent either way unless you attach one here, deliberately separate from the image section's reference above.
                   </p>
+                  {selectedVideoModel?.supports_last_frame && (
+                    <div className="mt-3 flex gap-2">
+                      <button onClick={() => setVideoMode("single_reference")} className={`rounded-full border px-3 py-1.5 text-[11px] ${videoMode === "single_reference" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
+                        Single starting image
+                      </button>
+                      <button onClick={() => setVideoMode("first_last_frame")} className={`rounded-full border px-3 py-1.5 text-[11px] ${videoMode === "first_last_frame" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
+                        Start + end frame
+                      </button>
+                    </div>
+                  )}
                   {videoFrameImage ? (
                     <div className="mt-3 flex items-center gap-3">
                       <img src={videoFrameImage} alt="video reference" className="h-16 w-16 rounded-lg border border-border object-cover" />
-                      <div className="text-[11px] text-emerald-400">✓ This photo will be sent as the video's starting frame.</div>
+                      <div className="text-[11px] text-emerald-400">✓ {videoMode === "first_last_frame" ? "Starting frame" : "This photo will be sent as the video's starting frame"}.</div>
                       <button onClick={() => setVideoFrameImage(null)} className="ml-auto rounded-full border border-destructive/40 px-3 py-1 text-xs text-destructive">Remove</button>
                     </div>
                   ) : (
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <label className="inline-block cursor-pointer rounded-full bg-gold-gradient px-4 py-2 text-xs font-semibold text-background">
-                        Upload image for video
+                        {videoMode === "first_last_frame" ? "Upload starting frame" : "Upload image for video"}
                         <input type="file" accept="image/*" onChange={handleVideoFrameImage} className="hidden" />
                       </label>
                       {imageReferenceImage && (
@@ -724,8 +758,31 @@ function CreateAd() {
                           Use the image reference above
                         </button>
                       )}
-                      <span className="text-[11px] text-muted-foreground">No image = text-to-video</span>
+                      {videoMode === "single_reference" && <span className="text-[11px] text-muted-foreground">No image = text-to-video</span>}
                     </div>
+                  )}
+                  {videoMode === "single_reference" && videoFrameImage && (
+                    <label className="mt-3 flex items-center gap-1.5 text-[11px] text-foreground">
+                      <input type="checkbox" checked={refineVideoFrame} onChange={(e) => setRefineVideoFrame(e.target.checked)} />
+                      🎨 Change the background to match shot 1's described scene (optional — leave unchecked to use this photo exactly as uploaded)
+                    </label>
+                  )}
+                  {videoMode === "first_last_frame" && (
+                    videoEndFrameImage ? (
+                      <div className="mt-3 flex items-center gap-3 border-t border-border/60 pt-3">
+                        <img src={videoEndFrameImage} alt="video end frame" className="h-16 w-16 rounded-lg border border-border object-cover" />
+                        <div className="text-[11px] text-emerald-400">✓ Ending frame — the video will move from the starting composition to this one.</div>
+                        <button onClick={() => setVideoEndFrameImage(null)} className="ml-auto rounded-full border border-destructive/40 px-3 py-1 text-xs text-destructive">Remove</button>
+                      </div>
+                    ) : (
+                      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+                        <label className="inline-block cursor-pointer rounded-full bg-gold-gradient px-4 py-2 text-xs font-semibold text-background">
+                          Upload ending frame
+                          <input type="file" accept="image/*" onChange={handleVideoEndFrameImage} className="hidden" />
+                        </label>
+                        <span className="text-[11px] text-muted-foreground">Required for start + end frame mode</span>
+                      </div>
+                    )
                   )}
                 </div>
 
@@ -756,6 +813,10 @@ function CreateAd() {
                         : <> "<b className="text-foreground">{selectedVideoModel.label}</b>" allows a total of {selectedVideoModel.min_duration}–{selectedVideoModel.max_duration}s across all shots.</>
                     )}
                   </p>
+                  <label className="mt-2 flex items-center gap-1.5 text-[11px] text-foreground">
+                    <input type="checkbox" checked={refineVideoPrompt} onChange={(e) => setRefineVideoPrompt(e.target.checked)} />
+                    ✨ Refine my shot wording with AI before generating (optional — your own wording is used as-is unless this is checked)
+                  </label>
                   <div className="mt-3 space-y-3">
                     {videoShots.map((shot, i) => (
                       <div key={i} className="rounded-lg border border-border/60 bg-card/40 p-2.5">
@@ -830,7 +891,7 @@ function CreateAd() {
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <button
-              disabled={!productName.trim() || description.trim().length < 10 || !audience.trim() || (!outputs.text && !outputs.image && !outputs.video) || !videoShotsValid || chosenPlatforms.length === 0 || credits < cost || previewBusy}
+              disabled={!productName.trim() || description.trim().length < 10 || !audience.trim() || (!outputs.text && !outputs.image && !outputs.video) || !videoShotsValid || (outputs.video && videoMode === "first_last_frame" && (!videoFrameImage || !videoEndFrameImage)) || chosenPlatforms.length === 0 || credits < cost || previewBusy}
               onClick={openPromptPreview}
               className="rounded-full bg-gold-gradient px-6 py-2.5 text-sm font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-40"
             >
@@ -873,7 +934,9 @@ function CreateAd() {
           {retentionMonths != null && (
             <div className="mb-4 rounded-lg border border-border bg-background/40 px-3 py-2 text-[11px] text-muted-foreground">
               📦 This media will be stored for {retentionMonths} month{retentionMonths !== 1 ? "s" : ""} from today, then automatically removed as per the platform policy.
-              {" "}If you're scheduling this ad, it must be posted within that same {retentionMonths}-month window. Download a copy if you want to keep it longer.
+              {" "}If you're scheduling this ad, it must be posted within that same {retentionMonths}-month window.
+              {postRetentionMonths != null && <> The full post record is kept for up to {postRetentionMonths} months, after which it's permanently deleted.</>}
+              {" "}Download a copy if you want to keep it longer.
             </div>
           )}
           {variants && variants.length > 1 && (
@@ -991,6 +1054,7 @@ function CreateAd() {
           cost={cost} busy={busy}
           onBack={() => setShowPromptModal(false)}
           onConfirm={() => { setShowPromptModal(false); setStep(2); generate(); }}
+          retentionMonths={retentionMonths} postRetentionMonths={postRetentionMonths}
         />
       )}
     </AppShell>

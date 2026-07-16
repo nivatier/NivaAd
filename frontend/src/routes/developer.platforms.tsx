@@ -20,13 +20,14 @@ function PlatformRow({ entry, onSave, onDelete }: {
   const [clientSecret, setClientSecret] = useState(""); // never pre-filled — the real secret is never sent back from the server once saved
   const [scope, setScope] = useState(entry.scope || "");
   const [redirectUri, setRedirectUri] = useState(entry.redirect_uri || "");
+  const [videoRatio, setVideoRatio] = useState(entry.video_ratio || "1:1");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [togglingEnabled, setTogglingEnabled] = useState(false);
 
   async function save() {
     setSaving(true);
-    const body: Record<string, unknown> = { label: label.trim(), client_id: clientId.trim(), scope: scope.trim() || null, redirect_uri: redirectUri.trim() || null };
+    const body: Record<string, unknown> = { label: label.trim(), client_id: clientId.trim(), scope: scope.trim() || null, redirect_uri: redirectUri.trim() || null, video_ratio: videoRatio };
     if (clientSecret.trim()) body.client_secret = clientSecret.trim(); // omit entirely if left blank — keeps the existing secret unchanged
     await onSave(entry.id, body);
     setSaving(false);
@@ -56,6 +57,12 @@ function PlatformRow({ entry, onSave, onDelete }: {
           <input value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} type="password" placeholder={entry.has_secret ? "Leave blank to keep the current secret" : "Client Secret"} className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
           <input value={redirectUri} onChange={(e) => setRedirectUri(e.target.value)} placeholder="Redirect URI, e.g. http://localhost:8000/connections/linkedin/callback" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
           <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder="OAuth scope, e.g. openid profile w_member_social" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+          <div>
+            <div className="mb-1 text-[10px] text-muted-foreground">Video posting ratio — what the reframe pipeline treats as this platform's required format</div>
+            <select value={videoRatio} onChange={(e) => setVideoRatio(e.target.value)} className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
+              {["1:1", "9:16", "16:9", "1.91:1", "4:5"].map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
           <div className="flex items-center gap-2">
             <button disabled={saving || !label.trim() || !clientId.trim()} onClick={save} className="rounded-full bg-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">{saving ? "Saving…" : "Save"}</button>
             <button onClick={() => { setEditing(false); setClientSecret(""); }} className="rounded-full border border-slate-700/50 px-3 py-1 text-[11px] text-muted-foreground">Cancel</button>
@@ -69,7 +76,7 @@ function PlatformRow({ entry, onSave, onDelete }: {
               {!entry.built && <span className="ml-2 rounded-full bg-amber-900/40 px-2 py-0.5 text-[9px] font-normal text-amber-400">NO INTEGRATION CODE YET</span>}
               {!entry.enabled && <span className="ml-2 rounded-full bg-slate-700 px-2 py-0.5 text-[9px] font-normal text-slate-300">DISABLED</span>}
             </div>
-            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">Client ID: {entry.client_id || "—"} · Secret: {entry.has_secret ? "✓ set" : "not set"}</div>
+            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">Client ID: {entry.client_id || "—"} · Secret: {entry.has_secret ? "✓ set" : "not set"} · Ratio: {entry.video_ratio || "1:1"}</div>
             {entry.redirect_uri && <div className="mt-0.5 truncate text-[11px] text-muted-foreground">Redirect: {entry.redirect_uri}</div>}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -94,16 +101,17 @@ function AddPlatformForm({ onAdd }: { onAdd: (body: Record<string, unknown>) => 
   const [clientSecret, setClientSecret] = useState("");
   const [redirectUri, setRedirectUri] = useState("");
   const [scope, setScope] = useState("");
+  const [videoRatio, setVideoRatio] = useState("1:1");
   const [saving, setSaving] = useState(false);
 
   async function add() {
     setSaving(true);
     await onAdd({
       id: id.trim().toLowerCase(), label: label.trim(), client_id: clientId.trim(), client_secret: clientSecret.trim(),
-      redirect_uri: redirectUri.trim() || null, scope: scope.trim() || null,
+      redirect_uri: redirectUri.trim() || null, scope: scope.trim() || null, video_ratio: videoRatio,
     });
     setSaving(false);
-    setId(""); setLabel(""); setClientId(""); setClientSecret(""); setRedirectUri(""); setScope("");
+    setId(""); setLabel(""); setClientId(""); setClientSecret(""); setRedirectUri(""); setScope(""); setVideoRatio("1:1");
     setOpen(false);
   }
 
@@ -118,6 +126,12 @@ function AddPlatformForm({ onAdd }: { onAdd: (body: Record<string, unknown>) => 
       <input value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} type="password" placeholder="Client Secret" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
       <input value={redirectUri} onChange={(e) => setRedirectUri(e.target.value)} placeholder="Redirect URI (must match what's registered with the platform)" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
       <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder="OAuth scope" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+      <div>
+        <div className="mb-1 text-[10px] text-muted-foreground">Video posting ratio</div>
+        <select value={videoRatio} onChange={(e) => setVideoRatio(e.target.value)} className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
+          {["1:1", "9:16", "16:9", "1.91:1", "4:5"].map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
       <div className="flex items-center gap-2">
         <button disabled={saving || !id.trim() || !label.trim() || !clientId.trim() || !clientSecret.trim()} onClick={add} className="rounded-full bg-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">{saving ? "Adding…" : "Add"}</button>
         <button onClick={() => setOpen(false)} className="rounded-full border border-slate-700/50 px-3 py-1 text-[11px] text-muted-foreground">Cancel</button>

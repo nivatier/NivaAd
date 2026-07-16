@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell, EmptyState, Input } from "@/components/app-shell";
 import { RepostModal } from "@/components/repost-modal";
-import { PLATFORMS } from "@/components/create-ad-parts";
+import { PLATFORMS, RetentionWarning } from "@/components/create-ad-parts";
 import { detectedTimeZone, formatInTimeZone } from "@/lib/timezone";
 import { api, type AdListOut, type AdOut, type ProductOut } from "@/lib/api";
 import { useRequireCapability } from "@/hooks/use-require-capability";
@@ -46,6 +46,8 @@ function MyAds() {
   const [statusFilter, setStatusFilter] = useState(""); // "" = all, "created" | "scheduled" | "posted"
   const [search, setSearch] = useState("");
   const [err, setErr] = useState("");
+  const [retentionMonths, setRetentionMonths] = useState<number | null>(null);
+  const [postRetentionMonths, setPostRetentionMonths] = useState<number | null>(null);
   const [repostAd, setRepostAd] = useState<AdOut | null>(null);
   const [confirmDeleteAd, setConfirmDeleteAd] = useState<AdOut | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -78,6 +80,9 @@ function MyAds() {
   }
 
   useEffect(() => { loadProducts(); loadCampaigns(); }, []);
+  useEffect(() => {
+    api("/ads/retention-info").then((r) => { setRetentionMonths(r.retention_months); setPostRetentionMonths(r.post_retention_months); }).catch(() => { /* non-fatal */ });
+  }, []);
   useEffect(() => {
     load();
     // Auto-refresh so scheduled posts that fire in the background (the
@@ -136,6 +141,8 @@ function MyAds() {
         <p className="text-sm text-muted-foreground">All the ads you've generated.</p>
         <Input placeholder="🔍 Search by product…" value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-xs" />
       </div>
+
+      <RetentionWarning retentionMonths={retentionMonths} postRetentionMonths={postRetentionMonths} className="mb-4" />
 
       <div className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card/40 p-4">
         <div>

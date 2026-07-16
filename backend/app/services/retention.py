@@ -78,3 +78,51 @@ async def set_retention_months(db, months: int) -> None:
     row.config = config
     flag_modified(row, "config")
     await db.commit()
+
+
+# Separate, longer-horizon retention for the AD RECORD ITSELF — not just
+# its media. Media retention (above) is Option B: strip the files,
+# keep the ad forever for analytics/history. This is different and
+# more destructive on purpose: once a post is older than this, the
+# WHOLE row is deleted — caption, metadata, everything — to actually
+# bound database growth over the long run, since Option B alone means
+# the ads table grows forever even with media long since cleaned up.
+DEFAULT_POST_RETENTION_MONTHS = 24  # 2 years
+
+
+async def get_post_retention_months(db) -> int:
+    row = await db.get(ModelConfig, 1)
+    stored = row.config if row and row.config else {}
+    retention_cfg = stored.get("retention") or {}
+    value = retention_cfg.get("post_months")
+    try:
+        return int(value) if value else DEFAULT_POST_RETENTION_MONTHS
+    except (TypeError, ValueError):
+        return DEFAULT_POST_RETENTION_MONTHS
+
+
+def get_post_retention_months_sync(db) -> int:
+    """SYNC equivalent — for use inside Celery tasks."""
+    row = db.get(ModelConfig, 1)
+    stored = row.config if row and row.config else {}
+    retention_cfg = stored.get("retention") or {}
+    value = retention_cfg.get("post_months")
+    try:
+        return int(value) if value else DEFAULT_POST_RETENTION_MONTHS
+    except (TypeError, ValueError):
+        return DEFAULT_POST_RETENTION_MONTHS
+
+
+async def set_post_retention_months(db, months: int) -> None:
+    row = await db.get(ModelConfig, 1)
+    if row is None:
+        row = ModelConfig(id=1, config={})
+        db.add(row)
+        await db.flush()
+    config = dict(row.config or {})
+    retention_cfg = dict(config.get("retention") or {})
+    retention_cfg["post_months"] = months
+    config["retention"] = retention_cfg
+    row.config = config
+    flag_modified(row, "config")
+    await db.commit()

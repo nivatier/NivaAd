@@ -124,12 +124,20 @@ def _prepare_frame_image(data_url: str) -> str:
         return data_url
 
 
-def generate_video(prompt: str, model: str, duration: int = 6, resolution: str = "720p", frame_image_url: str | None = None) -> bytes:
+def generate_video(prompt: str, model: str, duration: int = 6, resolution: str = "720p", frame_image_url: str | None = None, end_frame_image_url: str | None = None, audio: bool | None = None) -> bytes:
     headers = {
         "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
     body = {"model": model, "prompt": prompt, "duration": duration, "resolution": resolution}
+    if audio is not None:
+        # Confirmed exact field name via OpenRouter's video generation API
+        # docs — defaults to true for models that support audio, false
+        # otherwise, if omitted. Passed explicitly only when the caller
+        # actually has an audio preference (models without a real audio
+        # toggle just don't set this, letting OpenRouter's own default
+        # apply).
+        body["generate_audio"] = audio
     if frame_image_url:
         # Image-to-video: animate starting from the customer's actual
         # product photo, same spirit as how image generation uses it as
@@ -138,8 +146,30 @@ def generate_video(prompt: str, model: str, duration: int = 6, resolution: str =
         # since a transparent PNG reliably fails here even though the
         # same file works fine as an image-generation reference.
         safe_frame_url = _prepare_frame_image(frame_image_url) if frame_image_url.startswith("data:") else frame_image_url
-        body["frame_images"] = [{"type": "image_url", "image_url": {"url": safe_frame_url}, "frame_type": "first_frame"}]
+        frame_images = [{"type": "image_url", "image_url": {"url": safe_frame_url}, "frame_type": "first_frame"}]
+        if end_frame_image_url:
+            # Confirmed via OpenRouter's own docs/cookbook: adding a
+            # second frame_images entry with frame_type "last_frame"
+            # tells the model to move from a known starting composition
+            # to a known ending composition, rather than just animating
+            # freely from the first frame. Only some models support this
+            # (see DeveloperModelOut.supports_last_frame) — sending it to
+            # a model that doesn't would be rejected by OpenRouter itself
+            # with a 400, which the caller surfaces normally.
+            safe_end_url = _prepare_frame_image(end_frame_image_url) if end_frame_image_url.startswith("data:") else end_frame_image_url
+            frame_images.append({"type": "image_url", "image_url": {"url": safe_end_url}, "frame_type": "last_frame"})
+        body["frame_images"] = frame_images
 
+    # Logs exactly what's being sent, deliberately including whether
+    # generate_audio is present and what it's set to — the only way to
+    # tell, from evidence rather than assumption, whether an audio-off
+    # request that still comes back with audio is a bug in this code
+    # (the flag never reaching OpenRouter) or a provider/model that
+    # accepts the parameter but doesn't actually honor it.
+    logger.info(
+        "[video_gen] model=%s duration=%s resolution=%s generate_audio=%s frame_images=%d",
+        model, duration, resolution, body.get("generate_audio", "NOT SENT — provider default applies"), len(body.get("frame_images", [])),
+    )
     submit_resp = _post_with_retry(OPENROUTER_VIDEOS_URL, headers=headers, json=body, timeout=30)
     if submit_resp.status_code >= 400:
         raise RuntimeError(f"OpenRouter video submit {submit_resp.status_code}: {submit_resp.text[:500]}")

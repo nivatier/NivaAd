@@ -16,6 +16,7 @@ import { Route as DeveloperLoginRouteImport } from './routes/developer-login'
 import { Route as AcceptInviteRouteImport } from './routes/accept-invite'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as DeveloperSettingsRouteImport } from './routes/developer.settings'
 import { Route as DeveloperPlatformsRouteImport } from './routes/developer.platforms'
 import { Route as DeveloperOverviewRouteImport } from './routes/developer.overview'
 import { Route as DeveloperModerationRouteImport } from './routes/developer.moderation'
@@ -65,6 +66,11 @@ const IndexRoute = IndexRouteImport.update({
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/app/',
   path: '/app/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DeveloperSettingsRoute = DeveloperSettingsRouteImport.update({
+  id: '/developer/settings',
+  path: '/developer/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DeveloperPlatformsRoute = DeveloperPlatformsRouteImport.update({
@@ -165,6 +171,7 @@ export interface FileRoutesByFullPath {
   '/developer/moderation': typeof DeveloperModerationRoute
   '/developer/overview': typeof DeveloperOverviewRoute
   '/developer/platforms': typeof DeveloperPlatformsRoute
+  '/developer/settings': typeof DeveloperSettingsRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRoutesByTo {
@@ -189,6 +196,7 @@ export interface FileRoutesByTo {
   '/developer/moderation': typeof DeveloperModerationRoute
   '/developer/overview': typeof DeveloperOverviewRoute
   '/developer/platforms': typeof DeveloperPlatformsRoute
+  '/developer/settings': typeof DeveloperSettingsRoute
   '/app': typeof AppIndexRoute
 }
 export interface FileRoutesById {
@@ -214,6 +222,7 @@ export interface FileRoutesById {
   '/developer/moderation': typeof DeveloperModerationRoute
   '/developer/overview': typeof DeveloperOverviewRoute
   '/developer/platforms': typeof DeveloperPlatformsRoute
+  '/developer/settings': typeof DeveloperSettingsRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRouteTypes {
@@ -240,6 +249,7 @@ export interface FileRouteTypes {
     | '/developer/moderation'
     | '/developer/overview'
     | '/developer/platforms'
+    | '/developer/settings'
     | '/app/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -264,6 +274,7 @@ export interface FileRouteTypes {
     | '/developer/moderation'
     | '/developer/overview'
     | '/developer/platforms'
+    | '/developer/settings'
     | '/app'
   id:
     | '__root__'
@@ -288,6 +299,7 @@ export interface FileRouteTypes {
     | '/developer/moderation'
     | '/developer/overview'
     | '/developer/platforms'
+    | '/developer/settings'
     | '/app/'
   fileRoutesById: FileRoutesById
 }
@@ -313,6 +325,7 @@ export interface RootRouteChildren {
   DeveloperModerationRoute: typeof DeveloperModerationRoute
   DeveloperOverviewRoute: typeof DeveloperOverviewRoute
   DeveloperPlatformsRoute: typeof DeveloperPlatformsRoute
+  DeveloperSettingsRoute: typeof DeveloperSettingsRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
@@ -365,6 +378,13 @@ declare module '@tanstack/react-router' {
       path: '/app'
       fullPath: '/app/'
       preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/developer/settings': {
+      id: '/developer/settings'
+      path: '/developer/settings'
+      fullPath: '/developer/settings'
+      preLoaderRoute: typeof DeveloperSettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/developer/platforms': {
@@ -497,6 +517,7 @@ const rootRouteChildren: RootRouteChildren = {
   DeveloperModerationRoute: DeveloperModerationRoute,
   DeveloperOverviewRoute: DeveloperOverviewRoute,
   DeveloperPlatformsRoute: DeveloperPlatformsRoute,
+  DeveloperSettingsRoute: DeveloperSettingsRoute,
   AppIndexRoute: AppIndexRoute,
 }
 export const routeTree = rootRouteImport

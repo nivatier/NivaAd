@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import date, datetime, time, timedelta
 
@@ -13,16 +14,17 @@ from app.models import Ad, AuditLog, BrandKit, Campaign, CreditLedger, Generatio
 from app.schemas import (
     AdCreateIn, AdCreatedOut, AdListOut, AdOut, AdPatchIn, AdScheduledPostOut, AvailableModelOut,
     AvailableModelsOut, PostAdIn, PreviewCostIn, PreviewCostOut, PromptPreviewIn, PromptPreviewOut,
-    RefineIn, RetentionMonthsOut,
+    RefineIn, RetentionInfoOut,
 )
 from app.services import credits as credit_svc
 from app.services import linkedin
 from app.services import pricing as pricing_svc
 from app.services import retention as retention_svc
+from app.services import video_prep as video_prep_svc
 from app.services.guardrails import check_text
 from app.services.storage import upload_data_url
 from app.services.token_crypto import decrypt_token
-from app.tasks import _build_prompt, _image_prompt, _video_prompt
+from app.tasks import _build_prompt, _image_prompt, _multi_shot_video_prompt, _review_shot_prompt, _video_prompt
 from app.worker import celery_app
 
 router = APIRouter(prefix="/ads", tags=["ads"])
@@ -119,19 +121,23 @@ async def get_available_models_endpoint(user: User = Depends(require_capability(
             min_duration=m.get("min_duration"), max_duration=m.get("max_duration"),
             duration_options=m.get("duration_options"), resolutions=m.get("resolutions"),
             supports_audio=m.get("supports_audio", False) or (has_dynamic and p.get("supports_audio", False)),
+            supports_last_frame=m.get("supports_last_frame", False),
             has_dynamic_pricing=has_dynamic,
         ))
 
     return AvailableModelsOut(text=text_out, image=image_out, video=video_out)
 
 
-@router.get("/retention-info", response_model=RetentionMonthsOut)
+@router.get("/retention-info", response_model=RetentionInfoOut)
 async def get_retention_info(_: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Company-facing — just the number, for the generation-time notice
-    on the results page ('this media will be stored for N months...').
-    Any active user can read this, not just admins — everyone
-    generating ads should see it."""
-    return RetentionMonthsOut(retention_months=await retention_svc.get_retention_months(db))
+    """Company-facing — both numbers, for the generation-time notice,
+    the confirmation popup, and the My Ads page warning. Any active
+    user can read this, not just admins — everyone generating or
+    viewing ads should see it."""
+    return RetentionInfoOut(
+        retention_months=await retention_svc.get_retention_months(db),
+        post_retention_months=await retention_svc.get_post_retention_months(db),
+    )
 
 
 @router.post("/preview-cost", response_model=PreviewCostOut)
@@ -156,7 +162,7 @@ async def preview_cost(data: PreviewCostIn, user: User = Depends(require_capabil
 
 
 @router.post("/preview-prompt", response_model=PromptPreviewOut)
-async def preview_prompt(data: PromptPreviewIn, user: User = Depends(get_current_user)):
+async def preview_prompt(data: PromptPreviewIn, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     brief = {
         "product_name": data.product_name, "description": data.description,
         "audience": data.audience, "offer": data.offer, "goal": data.goal,
@@ -167,12 +173,29 @@ async def preview_prompt(data: PromptPreviewIn, user: User = Depends(get_current
     outputs = {**data.outputs, "format": data.format, "variations": data.variations}
     text_prompt = _build_prompt(brief, data.platforms, outputs, feedback=None)
     image_prompt = _image_prompt(brief) if data.outputs.get("image") else None
-    # Only single-shot video gets an editable preview — multi-shot prompts
-    # are set per-shot in Step 2 itself, same asymmetry as carousel_slides.
+    # Video prompt now runs through the SAME shot-review step generation
+    # itself uses (if the developer has one configured — see
+    # services/video_prep.py) BEFORE being built and shown — so what the
+    # customer previews and can edit here is genuinely what would be
+    # generated, not the raw pre-review wording. Reviewed shots are
+    # returned too (reviewed_shots) so the frontend can update its own
+    # shot list to match, keeping Step 2 and this preview in sync.
     video_prompt = None
-    if data.outputs.get("video") and data.video_shots and len(data.video_shots) == 1:
-        video_prompt = _video_prompt(brief)
-    return PromptPreviewOut(text_prompt=text_prompt, image_prompt=image_prompt, video_prompt=video_prompt)
+    reviewed_shots = None
+    if data.outputs.get("video") and data.video_shots:
+        shots = [s.model_dump() for s in data.video_shots]
+        if data.refine_video_prompt:
+            prep_settings = await video_prep_svc.get_video_prep_settings(db)
+            if prep_settings.get("prompt_review_model_id"):
+                review_models = await credit_svc.get_available_models(db)
+                review_entry = next((m for m in review_models.get("text", []) if m["id"] == prep_settings["prompt_review_model_id"]), None)
+                if review_entry:
+                    for shot in shots:
+                        if shot.get("prompt"):
+                            shot["prompt"] = await asyncio.to_thread(_review_shot_prompt, shot["prompt"], review_entry["model"])
+                    reviewed_shots = shots
+        video_prompt = _video_prompt(brief, shots[0].get("prompt")) if len(shots) == 1 else _multi_shot_video_prompt(brief, shots)
+    return PromptPreviewOut(text_prompt=text_prompt, image_prompt=image_prompt, video_prompt=video_prompt, reviewed_shots=reviewed_shots)
 
 
 @router.post("", response_model=AdCreatedOut, status_code=201)
@@ -225,6 +248,14 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
         video_resolution = data.video_resolution or offered[0]
         if video_resolution not in offered:
             raise HTTPException(422, f"\"{video_model['label']}\" doesn't offer {video_resolution} — available: {', '.join(offered)}.")
+
+        if data.video_mode == "first_last_frame":
+            if not video_model.get("supports_last_frame"):
+                raise HTTPException(422, f"\"{video_model['label']}\" doesn't support a separate start and end frame — pick a model with that capability, or switch to the single reference image mode.")
+            if not (data.video_frame_image or data.video_frame_image_url):
+                raise HTTPException(422, "Start + end frame mode needs a starting frame image.")
+            if not (data.video_end_frame_image or data.video_end_frame_image_url):
+                raise HTTPException(422, "Start + end frame mode needs an ending frame image too.")
 
         shots = data.video_shots or []
         shot_count = len(shots) if shots else 1
@@ -282,6 +313,16 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
     elif data.video_frame_image_url:
         video_frame_image_url = data.video_frame_image_url
 
+    video_end_frame_image_url = None
+    if data.video_mode == "first_last_frame":
+        if data.video_end_frame_image:
+            try:
+                video_end_frame_image_url = upload_data_url(data.video_end_frame_image, prefix="uploads")
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(400, f"Could not process the uploaded end frame photo: {exc}")
+        elif data.video_end_frame_image_url:
+            video_end_frame_image_url = data.video_end_frame_image_url
+
     image_reference_image_url = None
     if data.image_reference_image:
         try:
@@ -327,6 +368,10 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
             "video_model": video_model["model"] if video_model else None,
             "video_model_credits": video_model["credits"] if video_model else None,
             "video_resolution": video_resolution,
+            "video_mode": data.video_mode if video_model else None,
+            "video_end_frame_image_url": video_end_frame_image_url,
+            "refine_video_prompt": data.refine_video_prompt if video_model else False,
+            "refine_video_frame": data.refine_video_frame if video_model else False,
             "video_audio": data.video_audio if video_model else None,
             "text_model": text_model["model"] if text_model else None,
             "text_model_credits": text_model["credits"] if text_model else None,

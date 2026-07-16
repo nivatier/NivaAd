@@ -1,6 +1,7 @@
 cd "F:\MY WORKS\00-NIVATIER\00-PRODUCTS\02-NivaAd"
-docker compose up -d --build
 docker compose up -d
+docker compose up -d --build
+
 docker compose down
 
 docker compose logs api --tail 60
@@ -15,3 +16,4 @@ docker compose logs -f api
 Worth testing specifically: since the cleanup job itself runs on a daily schedule and is hard to observe live without waiting, you can trigger it manually once deployed
 
 docker compose exec worker celery -A app.worker call app.cleanup_expired_media
+docker compose exec worker celery -A app.worker call app.cleanup_expired_posts
