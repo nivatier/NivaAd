@@ -1,5 +1,9 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
+import {
+  BarChart3, CalendarDays, Crown, Images, Link2, Megaphone, Package, Palette,
+  Settings as SettingsIcon, ShieldCheck, Sparkles, type LucideIcon,
+} from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { BuyCreditsModal } from "@/components/buy-credits-modal";
 import { ProfileModal } from "@/components/profile-modal";
@@ -12,35 +16,36 @@ import { useAuth } from "@/hooks/use-auth";
 // would be inconsistent). "admin-only" is a special marker: shown only
 // when role === "admin", never a configurable capability, matching the
 // backend's hardcoded (non-configurable) Admin access.
-const NAV: { section: string; items: { to: string; label: string; icon: string; capability?: string }[] }[] = [
+const NAV: { section: string; items: { to: string; label: string; icon: LucideIcon; capability?: string; hintKey?: string }[] }[] = [
   {
     section: "Create",
     items: [
-      { to: "/app", label: "Create Ad", icon: "✦" },
-      { to: "/app/campaigns", label: "Campaigns", icon: "◈", capability: "view_campaigns" },
+      { to: "/app", label: "Create Ad", icon: Sparkles, hintKey: "nav:create-ad" },
+      { to: "/app/campaigns", label: "Campaigns", icon: Megaphone, capability: "view_campaigns", hintKey: "nav:campaigns" },
     ],
   },
   {
     section: "Library",
     items: [
-      { to: "/app/my-ads", label: "My Ads", icon: "▤", capability: "view_my_ads" },
-      { to: "/app/products", label: "Products", icon: "▣" },
+      { to: "/app/my-ads", label: "My Ads", icon: Images, capability: "view_my_ads", hintKey: "nav:my-ads" },
+      { to: "/app/calendar", label: "Calendar", icon: CalendarDays, capability: "view_my_ads", hintKey: "nav:calendar" },
+      { to: "/app/products", label: "Products", icon: Package, hintKey: "nav:products" },
     ],
   },
   {
     section: "Setup",
     items: [
-      { to: "/app/brand-kit", label: "Brand Kit", icon: "◐", capability: "view_brand_kit" },
-      { to: "/app/connections", label: "Connections", icon: "🔗", capability: "admin-only" },
-      { to: "/app/moderation", label: "Moderation", icon: "⛊", capability: "admin-only" },
-      { to: "/app/settings", label: "Settings", icon: "◍", capability: "view_settings" },
+      { to: "/app/brand-kit", label: "Brand Kit", icon: Palette, capability: "view_brand_kit", hintKey: "nav:brand-kit" },
+      { to: "/app/connections", label: "Connections", icon: Link2, capability: "admin-only", hintKey: "nav:connections" },
+      { to: "/app/moderation", label: "Moderation", icon: ShieldCheck, capability: "admin-only", hintKey: "nav:moderation" },
+      { to: "/app/settings", label: "Settings", icon: SettingsIcon, capability: "view_settings", hintKey: "nav:settings" },
     ],
   },
   {
     section: "Insights",
     items: [
-      { to: "/app/analytics", label: "Analytics", icon: "◑", capability: "view_analytics" },
-      { to: "/app/admin", label: "Admin", icon: "◆", capability: "admin-only" },
+      { to: "/app/analytics", label: "Analytics", icon: BarChart3, capability: "view_analytics", hintKey: "nav:analytics" },
+      { to: "/app/admin", label: "Admin", icon: Crown, capability: "admin-only", hintKey: "nav:admin" },
     ],
   },
 ];
@@ -142,6 +147,7 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
                 <li key={it.to}>
                   <Link
                     to={it.to}
+                    data-robot-hint-key={it.hintKey || undefined}
                     className={`relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
                       active
                         ? "bg-primary/10 text-primary neon-ring"
@@ -149,7 +155,7 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
                     }`}
                   >
                     {active && <span className="absolute inset-y-1 left-0 w-0.5 rounded-r bg-gold-gradient" />}
-                    <span className={`w-4 text-center ${active ? "text-primary" : "text-muted-foreground"}`}>{it.icon}</span>
+                    <it.icon className={`h-4 w-4 shrink-0 ${active ? "text-primary" : "text-muted-foreground"}`} strokeWidth={2} />
                     <span>{it.label}</span>
                   </Link>
                 </li>

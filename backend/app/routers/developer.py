@@ -18,12 +18,17 @@ from app.database import get_db
 from app.deps import require_developer
 from app.models import Ad, Campaign, Company, CreditLedger, FlaggedContent, GuardrailRule, ModelConfig, Subscription, User
 from app.schemas import (
-    AddModelIn, AddPlatformIntegrationIn, AddVideoRatioIn, CompanyAdminOut, DeveloperLoginIn,
-    DeveloperModelOut, DeveloperModelsOut, DeveloperTokenOut, GuardrailRuleCreateIn, GuardrailRuleOut,
+    AddAssistantHintIn, AddModelIn, AddPlatformIntegrationIn, AddTextStylePresetIn, AddThemeTagIn, AddVideoRatioIn,
+    AddVisionModelIn, AnalyzeThemeImageIn, AnalyzeThemeImageOut, AssistantHintOut, AssistantSettingsIn,
+    AssistantSettingsOut, CompanyAdminOut, DeveloperLoginIn, DeveloperModelOut, DeveloperModelsOut,
+    DeveloperTokenOut, GenerateAllMissingOut, GenerateIntroAudioIn, GenerateTagPromptIn, GenerateTagPromptOut,
+    GuardrailRuleCreateIn, GuardrailRuleOut, ImageGalleryEntryIn, ImageThemeEditorIn, ImageThemeEditorOut,
     MarkupMultiplierIn, MarkupMultiplierOut, MaxExtraUsersIn, MaxExtraUsersOut, OpenRouterCatalogModelOut,
     OpenRouterCreditsOut, PlatformIntegrationOut, PlatformOverviewOut, PostRetentionMonthsIn,
-    PostRetentionMonthsOut, RatioUsageOut, RawModelsIn, RawModelsOut, ReorderModelsIn, RetentionMonthsIn,
-    RetentionMonthsOut, UpdateModelIn, UpdatePlatformIntegrationIn, VideoPrepSettingsIn, VideoPrepSettingsOut,
+    PostRetentionMonthsOut, RatioUsageOut, RawModelsIn, RawModelsOut, RawThemesIn, RawThemesOut, ReorderModelsIn,
+    RetentionMonthsIn, RetentionMonthsOut, TextStylePresetOut, ThemeAiSettingsIn, ThemeAiSettingsOut,
+    ThemeThumbnailUploadIn, ThemeThumbnailUploadOut, UpdateAssistantHintIn, UpdateModelIn,
+    UpdatePlatformIntegrationIn, UpdateTextStylePresetIn, VideoPrepSettingsIn, VideoPrepSettingsOut,
     VideoRatiosOut,
 )
 from app.security import create_developer_token
@@ -32,9 +37,13 @@ from app.services import platform_config
 from app.services import pricing as pricing_svc
 from app.services import retention as retention_svc
 from app.services import team_limits as team_limits_svc
+from app.services import assistant_hints as assistant_hints_svc
+from app.services import theme_ai as theme_ai_svc
+from app.services import themes as themes_svc
 from app.services import video_prep as video_prep_svc
 from app.services import video_ratios as video_ratios_svc
 from app.services.guardrails import get_or_seed_global_rules
+from app.services.storage import upload_data_url
 from app.services.token_crypto import encrypt_token
 
 router = APIRouter(prefix="/developer", tags=["developer"])
@@ -360,6 +369,322 @@ async def update_models_raw(data: RawModelsIn, _: str = Depends(require_develope
         validated[kind] = clean_entries
     await _save_models(db, validated)
     return DeveloperModelsOut(text=[DeveloperModelOut(**m) for m in validated["text"]], image=[DeveloperModelOut(**m) for m in validated["image"]], video=[DeveloperModelOut(**m) for m in validated["video"]])
+
+
+@router.get("/themes", response_model=RawThemesOut)
+async def get_themes(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Create Ad's Text Theme Reference chips + Image Theme Reference
+    gallery, exactly as stored — bulk-edited as one JSON blob, same
+    pattern as /models/raw above."""
+    return RawThemesOut(themes=await themes_svc.get_themes(db))
+
+
+@router.put("/themes", response_model=RawThemesOut)
+async def update_themes(data: RawThemesIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Replaces the ENTIRE themes blob at once. Validates structurally
+    before saving anything, same all-or-nothing behavior as /models/raw:
+    a malformed paste rejects cleanly instead of partially corrupting
+    what's stored (and instantly appearing broken in every company's
+    Create Ad)."""
+    required_keys = {"image_themes", "text_themes", "style_tags", "category_tags"}
+    if set(data.themes.keys()) != required_keys:
+        raise HTTPException(422, f"Must have exactly these top-level keys: {', '.join(sorted(required_keys))}.")
+
+    style_tags = data.themes["style_tags"]
+    category_tags = data.themes["category_tags"]
+    if not isinstance(style_tags, list) or not all(isinstance(t, str) for t in style_tags):
+        raise HTTPException(422, '"style_tags" must be a list of strings.')
+    if not isinstance(category_tags, list) or not all(isinstance(t, str) for t in category_tags):
+        raise HTTPException(422, '"category_tags" must be a list of strings.')
+
+    text_themes = data.themes["text_themes"]
+    if not isinstance(text_themes, list) or len(text_themes) == 0:
+        raise HTTPException(422, '"text_themes" must be a non-empty list — Create Ad needs at least one option.')
+    seen = set()
+    for i, t in enumerate(text_themes):
+        for field in ("id", "label", "scene_prompt", "placement_prompt"):
+            if not t.get(field):
+                raise HTTPException(422, f'"text_themes" entry #{i + 1} is missing required field "{field}".')
+        if t["id"] in seen:
+            raise HTTPException(422, f'"text_themes" has a duplicate id "{t["id"]}".')
+        seen.add(t["id"])
+        t.setdefault("style_tags", [])
+        t.setdefault("category_tags", [])
+
+    image_themes = data.themes["image_themes"]
+    if not isinstance(image_themes, list):
+        raise HTTPException(422, '"image_themes" must be a list (can be empty while you\'re still building it out).')
+    seen = set()
+    for i, t in enumerate(image_themes):
+        for field in ("id", "label", "base_prompt"):
+            if not t.get(field):
+                raise HTTPException(422, f'"image_themes" entry #{i + 1} is missing required field "{field}".')
+        if t["id"] in seen:
+            raise HTTPException(422, f'"image_themes" has a duplicate id "{t["id"]}".')
+        seen.add(t["id"])
+        t.setdefault("thumbnail", "")
+        t.setdefault("style_tags", [])
+        t.setdefault("category_tags", [])
+        text_fields = t.setdefault("text_fields", [])
+        if not isinstance(text_fields, list):
+            raise HTTPException(422, f'"image_themes" entry #{i + 1}: "text_fields" must be a list.')
+        for j, f in enumerate(text_fields):
+            for field in ("key", "label"):
+                if not f.get(field):
+                    raise HTTPException(422, f'"image_themes" entry #{i + 1}, text_fields #{j + 1} is missing required field "{field}".')
+            f.setdefault("placeholder", "")
+            f.setdefault("style_hint", "")
+            f.setdefault("default_position", "top-left")
+
+    saved = await themes_svc.set_themes(db, {
+        "image_themes": image_themes, "text_themes": text_themes,
+        "style_tags": style_tags, "category_tags": category_tags,
+    })
+    return RawThemesOut(themes=saved)
+
+
+@router.post("/themes/thumbnail", response_model=ThemeThumbnailUploadOut)
+async def upload_theme_thumbnail(data: ThemeThumbnailUploadIn, _: str = Depends(require_developer)):
+    """Uploads a thumbnail image directly — used inline by the Image Theme
+    tab's per-tag editor (pick a file, it uploads and fills the thumbnail
+    right there; no separate JSON paste step)."""
+    try:
+        url = upload_data_url(data.image, prefix="theme-thumbnails")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"Could not process that image: {exc}")
+    return ThemeThumbnailUploadOut(url=url)
+
+
+@router.get("/themes/image-theme", response_model=ImageThemeEditorOut)
+async def get_image_theme_editor(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Powers the Image Theme tab's fully visual editor — every style tag
+    and every product-category tag, each with its own editable prompt (and,
+    for the image-reference variant, its own thumbnail). No JSON shown."""
+    return ImageThemeEditorOut(**await themes_svc.get_image_theme_editor(db))
+
+
+@router.put("/themes/image-theme", response_model=ImageThemeEditorOut)
+async def update_image_theme_editor(data: ImageThemeEditorIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Saves the whole Image Theme editor state at once — still one atomic
+    write under the hood (same ModelConfig blob), but the developer never
+    sees or edits raw JSON; the frontend sends this after each field edit."""
+    for section_name, section in (("text_for_image", data.text_for_image), ("image_for_image", data.image_for_image)):
+        if set(section.keys()) != {"style", "product"}:
+            raise HTTPException(422, f'"{section_name}" must have exactly two keys: "style" and "product".')
+        for axis_name, axis in section.items():
+            if not isinstance(axis, dict):
+                raise HTTPException(422, f'"{section_name}.{axis_name}" must be an object keyed by tag name.')
+    return ImageThemeEditorOut(**await themes_svc.set_image_theme_editor(db, data.text_for_image, data.image_for_image))
+
+
+@router.post("/themes/tags", response_model=ImageThemeEditorOut)
+async def add_theme_tag(data: AddThemeTagIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Adds a brand-new Style or Product Category tag — it shows up with an
+    empty prompt slot immediately, ready to fill in."""
+    if data.axis not in ("style", "category"):
+        raise HTTPException(422, 'axis must be "style" or "category".')
+    return ImageThemeEditorOut(**await themes_svc.add_theme_tag(db, data.axis, data.tag.strip()))
+
+
+@router.get("/themes/text-style-presets", response_model=list[TextStylePresetOut])
+async def list_text_style_presets(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Text-overlay style presets (font style, text color, accent color,
+    size) for the Headline/Discount badge/Body fields — "Standard (fits
+    the image)" is the default no-override option and can't be deleted."""
+    return [TextStylePresetOut(**p) for p in await themes_svc.get_text_style_presets(db)]
+
+
+@router.post("/themes/text-style-presets", response_model=list[TextStylePresetOut])
+async def add_text_style_preset(data: AddTextStylePresetIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    presets = await themes_svc.add_text_style_preset(db, data.label, data.font_style, data.text_color, data.accent_color, data.size)
+    return [TextStylePresetOut(**p) for p in presets]
+
+
+@router.put("/themes/text-style-presets/{preset_id}", response_model=list[TextStylePresetOut])
+async def update_text_style_preset(preset_id: str, data: UpdateTextStylePresetIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    try:
+        presets = await themes_svc.update_text_style_preset(db, preset_id, data.label, data.font_style, data.text_color, data.accent_color, data.size)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    return [TextStylePresetOut(**p) for p in presets]
+
+
+@router.delete("/themes/text-style-presets/{preset_id}", response_model=list[TextStylePresetOut])
+async def delete_text_style_preset(preset_id: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    try:
+        presets = await themes_svc.delete_text_style_preset(db, preset_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return [TextStylePresetOut(**p) for p in presets]
+
+
+@router.get("/assistant-hints", response_model=list[AssistantHintOut])
+async def list_assistant_hints(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Explanation messages the assistant mascot shows when a company
+    user clicks a hinted nav item or field. `key` must match a real
+    `data-robot-hint-key` in the frontend to actually do anything — the
+    seeded defaults already do; new ones need matching frontend wiring."""
+    return [AssistantHintOut(**h) for h in await assistant_hints_svc.get_assistant_hints(db)]
+
+
+@router.post("/assistant-hints", response_model=list[AssistantHintOut])
+async def add_assistant_hint(data: AddAssistantHintIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    try:
+        hints = await assistant_hints_svc.add_assistant_hint(db, data.key.strip(), data.label.strip(), data.message.strip())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return [AssistantHintOut(**h) for h in hints]
+
+
+@router.put("/assistant-hints/{hint_id}", response_model=list[AssistantHintOut])
+async def update_assistant_hint(hint_id: str, data: UpdateAssistantHintIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    try:
+        hints = await assistant_hints_svc.update_assistant_hint(db, hint_id, data.label.strip(), data.message.strip())
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    return [AssistantHintOut(**h) for h in hints]
+
+
+@router.delete("/assistant-hints/{hint_id}", response_model=list[AssistantHintOut])
+async def delete_assistant_hint(hint_id: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    hints = await assistant_hints_svc.delete_assistant_hint(db, hint_id)
+    return [AssistantHintOut(**h) for h in hints]
+
+
+@router.get("/assistant-settings", response_model=AssistantSettingsOut)
+async def get_assistant_settings(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Typing speed, TTS voice, TTS model, and stored intro audio URL."""
+    s = await assistant_hints_svc.get_assistant_settings(db)
+    return AssistantSettingsOut(**{**s, "intro_audio_url": s.get("intro_audio_url")})
+
+
+@router.put("/assistant-settings", response_model=AssistantSettingsOut)
+async def update_assistant_settings(data: AssistantSettingsIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    s = await assistant_hints_svc.set_assistant_settings(db, data.typing_ms_per_char, data.tts_voice, data.tts_model)
+    return AssistantSettingsOut(**{**s, "intro_audio_url": s.get("intro_audio_url")})
+
+
+@router.post("/assistant-hints/{hint_id}/generate-audio", response_model=list[AssistantHintOut])
+async def generate_hint_audio(hint_id: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Generates TTS audio for one hint via openai/gpt-4o-mini-audio-preview
+    on OpenRouter (same key, no extra setup), uploads to MinIO, stores URL."""
+    try:
+        hints = await assistant_hints_svc.generate_hint_audio(db, hint_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(502, f"Audio generation failed: {exc}")
+    return [AssistantHintOut(**h) for h in hints]
+
+
+@router.post("/assistant-intro/generate-audio", response_model=AssistantSettingsOut)
+async def generate_intro_audio(data: GenerateIntroAudioIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Generates and stores TTS for Nova's intro speech."""
+    try:
+        await assistant_hints_svc.generate_intro_audio(db, data.text)
+    except RuntimeError as exc:
+        raise HTTPException(502, f"Audio generation failed: {exc}")
+    s = await assistant_hints_svc.get_assistant_settings(db)
+    return AssistantSettingsOut(**{**s, "intro_audio_url": s.get("intro_audio_url")})
+
+
+@router.get("/theme-ai/settings", response_model=ThemeAiSettingsOut)
+async def get_theme_ai_settings(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Dedicated model settings for theme AI assistance (Developer >
+    Settings) — separate from the video shot-review model, since these
+    serve a different purpose. text_model_id/image_transform_model_id
+    reference entries from the existing Developer > Models text/image
+    lists; vision_model_id references the vision_models list below, which
+    is its own addable list since there's no "vision" kind in Models yet."""
+    return ThemeAiSettingsOut(**await theme_ai_svc.get_theme_ai_settings(db))
+
+
+@router.put("/theme-ai/settings", response_model=ThemeAiSettingsOut)
+async def update_theme_ai_settings(data: ThemeAiSettingsIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    return ThemeAiSettingsOut(**await theme_ai_svc.set_theme_ai_settings(
+        db, data.text_model_id, data.vision_model_id, data.image_transform_model_id,
+    ))
+
+
+@router.post("/theme-ai/vision-models", response_model=ThemeAiSettingsOut)
+async def add_vision_model(data: AddVisionModelIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    return ThemeAiSettingsOut(**await theme_ai_svc.add_vision_model(db, data.label, data.model))
+
+
+@router.delete("/theme-ai/vision-models/{model_id}", response_model=ThemeAiSettingsOut)
+async def delete_vision_model(model_id: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    return ThemeAiSettingsOut(**await theme_ai_svc.delete_vision_model(db, model_id))
+
+
+@router.post("/themes/image-theme/generate-prompt", response_model=GenerateTagPromptOut)
+async def generate_tag_prompt(data: GenerateTagPromptIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Text for Image: called automatically right after a new Style/Product
+    tag is added — writes a draft prompt into that tag's textarea for the
+    developer to review/edit before saving (never auto-saved)."""
+    if data.axis not in ("style", "category"):
+        raise HTTPException(422, 'axis must be "style" or "category".')
+    try:
+        prompt = await theme_ai_svc.generate_tag_prompt(db, data.axis, data.tag)
+    except RuntimeError as exc:
+        raise HTTPException(422, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"AI prompt generation failed: {exc}")
+    return GenerateTagPromptOut(prompt=prompt)
+
+
+@router.post("/themes/image-theme/generate-all-missing", response_model=GenerateAllMissingOut)
+async def generate_all_missing_prompts(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Fills in a draft prompt for every currently-empty Style/Product tag
+    in one go — for backfilling all the tags that existed before this AI
+    assistance was added."""
+    themes = await themes_svc.get_themes(db)
+    result = await theme_ai_svc.generate_all_missing_prompts(db, themes["style_tags"], themes["category_tags"])
+    return GenerateAllMissingOut(editor=ImageThemeEditorOut(**result["editor"]), filled=result["filled"], skipped=result["skipped"])
+
+
+@router.post("/themes/image-gallery/analyze", response_model=AnalyzeThemeImageOut)
+async def analyze_theme_image(data: AnalyzeThemeImageIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Image for Image: the full AI pipeline for a newly-uploaded reference
+    — vision tagging + image-model transform (so a reference sourced from
+    the open web never appears verbatim in the app). Returns a draft only;
+    nothing is saved to the gallery until the developer confirms via
+    POST /themes/image-gallery."""
+    themes = await themes_svc.get_themes(db)
+    try:
+        result = await theme_ai_svc.analyze_and_transform_image(db, data.image, themes["style_tags"], themes["category_tags"])
+    except RuntimeError as exc:
+        raise HTTPException(422, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"AI image analysis failed: {exc}")
+    return AnalyzeThemeImageOut(**result)
+
+
+@router.post("/themes/image-gallery", response_model=RawThemesOut)
+async def save_image_gallery_entry(data: ImageGalleryEntryIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Confirms an AI-analyzed (or manually filled) gallery entry —
+    creates it if the id is new, overwrites it if the id already exists.
+    Stored in the same image_themes list Create Ad's Image Theme
+    Reference gallery already reads from. Every entry gets the same
+    standard Headline/Discount badge/Body text-overlay fields — every
+    Image Theme Reference should offer these, not just some."""
+    themes = await themes_svc.get_themes(db)
+    image_themes = [t for t in themes["image_themes"] if t["id"] != data.id]
+    image_themes.append({
+        "id": data.id, "label": data.label, "thumbnail": data.thumbnail,
+        "style_tags": data.style_tags, "category_tags": data.category_tags,
+        "base_prompt": data.base_prompt, "text_fields": themes_svc.STANDARD_TEXT_FIELDS,
+    })
+    themes["image_themes"] = image_themes
+    saved = await themes_svc.set_themes(db, themes)
+    return RawThemesOut(themes=saved)
+
+
+@router.delete("/themes/image-gallery/{entry_id}", response_model=RawThemesOut)
+async def delete_image_gallery_entry(entry_id: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    themes = await themes_svc.get_themes(db)
+    themes["image_themes"] = [t for t in themes["image_themes"] if t["id"] != entry_id]
+    saved = await themes_svc.set_themes(db, themes)
+    return RawThemesOut(themes=saved)
 
 
 @router.put("/models/{model_id}", response_model=DeveloperModelsOut)

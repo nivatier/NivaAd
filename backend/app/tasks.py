@@ -175,6 +175,16 @@ def _image_prompt(brief: dict, slide_description: str | None = None) -> str:
     exactly what the real API call uses, falling back to
     product_image_url only for ads created before that field existed."""
     product = brief.get("product_name", "the product")
+    overlay = (brief.get("text_overlay") or "").strip()
+    overlay_line = (
+        f"- Also render this text directly on the image, exactly as written, positioned as described: {overlay}\n"
+        if overlay else ""
+    )
+    style_tail = (
+        "High-end commercial ad photography style, sharp focus, no watermark."
+        if overlay else
+        "High-end commercial ad photography style, sharp focus, no text overlay, no watermark."
+    )
     reference_url = brief.get("image_reference_image_url") or brief.get("product_image_url")
     if reference_url:
         base_scene = brief.get("env") or "a clean, professional studio setting with soft natural lighting"
@@ -199,7 +209,8 @@ def _image_prompt(brief: dict, slide_description: str | None = None) -> str:
             "- FRAMING: the ENTIRE product must be fully visible within the frame, with clear margin on all "
             "sides — do not crop, cut off, or zoom in past any edge of the product. Compose the shot wider "
             "rather than tighter if in doubt; a fully visible product matters more than a dramatic close-up.\n"
-            "High-end commercial ad photography style, sharp focus, no text overlay, no watermark."
+            f"{overlay_line}"
+            f"{style_tail}"
         )
     else:
         p = f"Professional advertising photograph for a product called \"{product}\". "
@@ -211,7 +222,9 @@ def _image_prompt(brief: dict, slide_description: str | None = None) -> str:
         else:
             p += "Setting: clean studio background, soft professional lighting. "
         p += "Compose the shot so the ENTIRE product is fully visible with clear margin on all sides — do not crop or cut off any part of it. "
-        p += "High-end commercial ad photography style, sharp focus, no text overlay, no watermark."
+        if overlay:
+            p += f"Also render this text directly on the image, exactly as written, positioned as described: {overlay} "
+        p += style_tail
         return p
 
 
@@ -342,13 +355,37 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
 
                     if is_carousel:
                         slides = ad.brief.get("carousel_slides") or []
-                        slide_count = len(slides) if slides else 2
+                        # Per-slide theme overrides (Text/Image Theme Reference chosen
+                        # independently per carousel slide) — falls back to the single
+                        # shared env/image_scene/text_overlay for ads created before
+                        # this existed, or for any slide left on "same as ad" by not
+                        # sending an override.
+                        carousel_theme = ad.brief.get("carousel_theme") or []
+                        # FIXED 2026-07-18: was `len(slides) if slides else 2`. Once
+                        # carousel_theme replaced the old free-text per-slide
+                        # description as the primary mechanism, carousel_slides is
+                        # always empty on new ads — so this unconditionally fell back
+                        # to a hardcoded 2 images, silently ignoring whatever count
+                        # the user actually chose (3, 5, whatever). carousel_theme's
+                        # length IS the real chosen count now; carousel_slides is kept
+                        # as a second fallback only for ads created before this change.
+                        slide_count = len(carousel_theme) or len(slides) or 2
                         logger.info("[image_prompt] job=%s carousel with %d slides", job_id, slide_count)
                         urls: list[str] = []
                         slide_failures = 0
                         for i in range(slide_count):
                             slide_desc = slides[i] if i < len(slides) and slides[i] else None
-                            img_prompt = _image_prompt(ad.brief, slide_desc)
+                            slide_brief = ad.brief
+                            if i < len(carousel_theme) and carousel_theme[i]:
+                                override = carousel_theme[i]
+                                slide_brief = dict(ad.brief)
+                                if override.get("env") is not None:
+                                    slide_brief["env"] = override["env"]
+                                if override.get("image_scene") is not None:
+                                    slide_brief["image_scene"] = override["image_scene"]
+                                if override.get("text_overlay") is not None:
+                                    slide_brief["text_overlay"] = override["text_overlay"]
+                            img_prompt = _image_prompt(slide_brief, slide_desc)
                             logger.info(
                                 "[image_prompt] job=%s carousel slide=%d/%d\n----- PROMPT START -----\n%s\n----- PROMPT END -----",
                                 job_id, i + 1, slide_count, img_prompt,

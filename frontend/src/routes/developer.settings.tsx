@@ -220,6 +220,139 @@ function VideoRatiosCard() {
   );
 }
 
+function ThemeAiSettingsCard() {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [settings, setSettings] = useState<any>(null);
+  const [textModels, setTextModels] = useState<{ id: string; label: string }[]>([]);
+  const [imageModels, setImageModels] = useState<{ id: string; label: string }[]>([]);
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [newVisionLabel, setNewVisionLabel] = useState("");
+  const [newVisionModel, setNewVisionModel] = useState("");
+  const [addingVision, setAddingVision] = useState(false);
+
+  async function load() {
+    try {
+      const [s, models] = await Promise.all([
+        devApi("/developer/theme-ai/settings"),
+        devApi("/developer/models"),
+      ]);
+      setSettings(s);
+      setTextModels(models.text.map((m: any) => ({ id: m.id, label: m.label })));
+      setImageModels(models.image.map((m: any) => ({ id: m.id, label: m.label })));
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not load theme AI settings");
+    }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function save(patch: Partial<{ text_model_id: string; vision_model_id: string; image_transform_model_id: string }>) {
+    setSaving(true); setErr(""); setSaved(false);
+    try {
+      const body = {
+        text_model_id: settings.text_model_id, vision_model_id: settings.vision_model_id,
+        image_transform_model_id: settings.image_transform_model_id, ...patch,
+      };
+      const r = await devApi("/developer/theme-ai/settings", { method: "PUT", body });
+      setSettings(r);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not save");
+    }
+    setSaving(false);
+  }
+
+  async function addVisionModel() {
+    if (!newVisionLabel.trim() || !newVisionModel.trim()) return;
+    setAddingVision(true); setErr("");
+    try {
+      const r = await devApi("/developer/theme-ai/vision-models", { method: "POST", body: { label: newVisionLabel.trim(), model: newVisionModel.trim() } });
+      setSettings(r);
+      setNewVisionLabel(""); setNewVisionModel("");
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not add that vision model");
+    }
+    setAddingVision(false);
+  }
+
+  async function removeVisionModel(id: string) {
+    setErr("");
+    try {
+      const r = await devApi(`/developer/theme-ai/vision-models/${id}`, { method: "DELETE" });
+      setSettings(r);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not remove that vision model");
+    }
+  }
+
+  if (!settings) return <div className="mb-6 max-w-2xl text-xs text-muted-foreground">Loading theme AI settings…</div>;
+
+  return (
+    <div className="mb-6 rounded-xl border border-slate-700/50 bg-card/60 p-5 max-w-2xl">
+      <div className="text-sm font-semibold text-foreground">Theme AI models</div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Dedicated models used by Developer &gt; Themes &gt; Image Theme's AI assistance — writing draft prompts for
+        new tags, and analyzing/tagging uploaded reference images. Separate from the video shot-review model.
+      </p>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className="text-[11px] text-muted-foreground">Text model (writes tag prompts)</label>
+          <select value={settings.text_model_id || ""} onChange={(e) => save({ text_model_id: e.target.value || undefined })}
+            className="mt-1 w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
+            <option value="">— none selected —</option>
+            {textModels.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-[11px] text-muted-foreground">Image model (regenerates uploaded references)</label>
+          <select value={settings.image_transform_model_id || ""} onChange={(e) => save({ image_transform_model_id: e.target.value || undefined })}
+            className="mt-1 w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
+            <option value="">— none selected —</option>
+            {imageModels.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <label className="text-[11px] text-muted-foreground">Vision model (tags uploaded reference images)</label>
+        <select value={settings.vision_model_id || ""} onChange={(e) => save({ vision_model_id: e.target.value || undefined })}
+          className="mt-1 w-full max-w-xs rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
+          {settings.vision_models.map((m: any) => <option key={m.id} value={m.id}>{m.label}</option>)}
+        </select>
+
+        <div className="mt-2 space-y-1">
+          {settings.vision_models.map((m: any) => (
+            <div key={m.id} className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <code className="rounded bg-slate-800/50 px-1.5 py-0.5">{m.model}</code>
+              <span>{m.label}</span>
+              <button onClick={() => removeVisionModel(m.id)} className="ml-auto text-muted-foreground hover:text-destructive">✕ remove</button>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-2 flex gap-2">
+          <input value={newVisionLabel} onChange={(e) => setNewVisionLabel(e.target.value)} placeholder="Label, e.g. GPT-4o Vision"
+            className="w-40 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+          <input value={newVisionModel} onChange={(e) => setNewVisionModel(e.target.value)} placeholder="OpenRouter slug, e.g. openai/gpt-4o"
+            className="w-56 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+          <button onClick={addVisionModel} disabled={addingVision} className="rounded-full bg-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+            {addingVision ? "Adding…" : "+ Add"}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center gap-3">
+        {saving && <span className="text-xs text-muted-foreground">Saving…</span>}
+        {saved && <span className="text-xs text-emerald-400">✓ Saved</span>}
+      </div>
+      {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
+    </div>
+  );
+}
+
 function DeveloperSettings() {
   const allowed = useRequireDeveloperAuth();
   if (!allowed) return null;
@@ -233,6 +366,7 @@ function DeveloperSettings() {
       <DataRetentionCard />
       <PostRetentionCard />
       <VideoRatiosCard />
+      <ThemeAiSettingsCard />
     </DeveloperShell>
   );
 }

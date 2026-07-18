@@ -16,12 +16,14 @@ import { Route as DeveloperLoginRouteImport } from './routes/developer-login'
 import { Route as AcceptInviteRouteImport } from './routes/accept-invite'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as DeveloperThemesRouteImport } from './routes/developer.themes'
 import { Route as DeveloperSettingsRouteImport } from './routes/developer.settings'
 import { Route as DeveloperPlatformsRouteImport } from './routes/developer.platforms'
 import { Route as DeveloperOverviewRouteImport } from './routes/developer.overview'
 import { Route as DeveloperModerationRouteImport } from './routes/developer.moderation'
 import { Route as DeveloperModelsRouteImport } from './routes/developer.models'
 import { Route as DeveloperCompaniesRouteImport } from './routes/developer.companies'
+import { Route as DeveloperAssistantRouteImport } from './routes/developer.assistant'
 import { Route as AppSettingsRouteImport } from './routes/app.settings'
 import { Route as AppScheduleRouteImport } from './routes/app.schedule'
 import { Route as AppProductsRouteImport } from './routes/app.products'
@@ -29,6 +31,7 @@ import { Route as AppMyAdsRouteImport } from './routes/app.my-ads'
 import { Route as AppModerationRouteImport } from './routes/app.moderation'
 import { Route as AppConnectionsRouteImport } from './routes/app.connections'
 import { Route as AppCampaignsRouteImport } from './routes/app.campaigns'
+import { Route as AppCalendarRouteImport } from './routes/app.calendar'
 import { Route as AppBrandKitRouteImport } from './routes/app.brand-kit'
 import { Route as AppAnalyticsRouteImport } from './routes/app.analytics'
 import { Route as AppAdminRouteImport } from './routes/app.admin'
@@ -68,6 +71,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/app/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DeveloperThemesRoute = DeveloperThemesRouteImport.update({
+  id: '/developer/themes',
+  path: '/developer/themes',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DeveloperSettingsRoute = DeveloperSettingsRouteImport.update({
   id: '/developer/settings',
   path: '/developer/settings',
@@ -96,6 +104,11 @@ const DeveloperModelsRoute = DeveloperModelsRouteImport.update({
 const DeveloperCompaniesRoute = DeveloperCompaniesRouteImport.update({
   id: '/developer/companies',
   path: '/developer/companies',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DeveloperAssistantRoute = DeveloperAssistantRouteImport.update({
+  id: '/developer/assistant',
+  path: '/developer/assistant',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppSettingsRoute = AppSettingsRouteImport.update({
@@ -133,6 +146,11 @@ const AppCampaignsRoute = AppCampaignsRouteImport.update({
   path: '/app/campaigns',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppCalendarRoute = AppCalendarRouteImport.update({
+  id: '/app/calendar',
+  path: '/app/calendar',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppBrandKitRoute = AppBrandKitRouteImport.update({
   id: '/app/brand-kit',
   path: '/app/brand-kit',
@@ -159,6 +177,7 @@ export interface FileRoutesByFullPath {
   '/app/admin': typeof AppAdminRoute
   '/app/analytics': typeof AppAnalyticsRoute
   '/app/brand-kit': typeof AppBrandKitRoute
+  '/app/calendar': typeof AppCalendarRoute
   '/app/campaigns': typeof AppCampaignsRoute
   '/app/connections': typeof AppConnectionsRoute
   '/app/moderation': typeof AppModerationRoute
@@ -166,12 +185,14 @@ export interface FileRoutesByFullPath {
   '/app/products': typeof AppProductsRoute
   '/app/schedule': typeof AppScheduleRoute
   '/app/settings': typeof AppSettingsRoute
+  '/developer/assistant': typeof DeveloperAssistantRoute
   '/developer/companies': typeof DeveloperCompaniesRoute
   '/developer/models': typeof DeveloperModelsRoute
   '/developer/moderation': typeof DeveloperModerationRoute
   '/developer/overview': typeof DeveloperOverviewRoute
   '/developer/platforms': typeof DeveloperPlatformsRoute
   '/developer/settings': typeof DeveloperSettingsRoute
+  '/developer/themes': typeof DeveloperThemesRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRoutesByTo {
@@ -184,6 +205,7 @@ export interface FileRoutesByTo {
   '/app/admin': typeof AppAdminRoute
   '/app/analytics': typeof AppAnalyticsRoute
   '/app/brand-kit': typeof AppBrandKitRoute
+  '/app/calendar': typeof AppCalendarRoute
   '/app/campaigns': typeof AppCampaignsRoute
   '/app/connections': typeof AppConnectionsRoute
   '/app/moderation': typeof AppModerationRoute
@@ -191,12 +213,14 @@ export interface FileRoutesByTo {
   '/app/products': typeof AppProductsRoute
   '/app/schedule': typeof AppScheduleRoute
   '/app/settings': typeof AppSettingsRoute
+  '/developer/assistant': typeof DeveloperAssistantRoute
   '/developer/companies': typeof DeveloperCompaniesRoute
   '/developer/models': typeof DeveloperModelsRoute
   '/developer/moderation': typeof DeveloperModerationRoute
   '/developer/overview': typeof DeveloperOverviewRoute
   '/developer/platforms': typeof DeveloperPlatformsRoute
   '/developer/settings': typeof DeveloperSettingsRoute
+  '/developer/themes': typeof DeveloperThemesRoute
   '/app': typeof AppIndexRoute
 }
 export interface FileRoutesById {
@@ -210,6 +234,7 @@ export interface FileRoutesById {
   '/app/admin': typeof AppAdminRoute
   '/app/analytics': typeof AppAnalyticsRoute
   '/app/brand-kit': typeof AppBrandKitRoute
+  '/app/calendar': typeof AppCalendarRoute
   '/app/campaigns': typeof AppCampaignsRoute
   '/app/connections': typeof AppConnectionsRoute
   '/app/moderation': typeof AppModerationRoute
@@ -217,12 +242,14 @@ export interface FileRoutesById {
   '/app/products': typeof AppProductsRoute
   '/app/schedule': typeof AppScheduleRoute
   '/app/settings': typeof AppSettingsRoute
+  '/developer/assistant': typeof DeveloperAssistantRoute
   '/developer/companies': typeof DeveloperCompaniesRoute
   '/developer/models': typeof DeveloperModelsRoute
   '/developer/moderation': typeof DeveloperModerationRoute
   '/developer/overview': typeof DeveloperOverviewRoute
   '/developer/platforms': typeof DeveloperPlatformsRoute
   '/developer/settings': typeof DeveloperSettingsRoute
+  '/developer/themes': typeof DeveloperThemesRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRouteTypes {
@@ -237,6 +264,7 @@ export interface FileRouteTypes {
     | '/app/admin'
     | '/app/analytics'
     | '/app/brand-kit'
+    | '/app/calendar'
     | '/app/campaigns'
     | '/app/connections'
     | '/app/moderation'
@@ -244,12 +272,14 @@ export interface FileRouteTypes {
     | '/app/products'
     | '/app/schedule'
     | '/app/settings'
+    | '/developer/assistant'
     | '/developer/companies'
     | '/developer/models'
     | '/developer/moderation'
     | '/developer/overview'
     | '/developer/platforms'
     | '/developer/settings'
+    | '/developer/themes'
     | '/app/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -262,6 +292,7 @@ export interface FileRouteTypes {
     | '/app/admin'
     | '/app/analytics'
     | '/app/brand-kit'
+    | '/app/calendar'
     | '/app/campaigns'
     | '/app/connections'
     | '/app/moderation'
@@ -269,12 +300,14 @@ export interface FileRouteTypes {
     | '/app/products'
     | '/app/schedule'
     | '/app/settings'
+    | '/developer/assistant'
     | '/developer/companies'
     | '/developer/models'
     | '/developer/moderation'
     | '/developer/overview'
     | '/developer/platforms'
     | '/developer/settings'
+    | '/developer/themes'
     | '/app'
   id:
     | '__root__'
@@ -287,6 +320,7 @@ export interface FileRouteTypes {
     | '/app/admin'
     | '/app/analytics'
     | '/app/brand-kit'
+    | '/app/calendar'
     | '/app/campaigns'
     | '/app/connections'
     | '/app/moderation'
@@ -294,12 +328,14 @@ export interface FileRouteTypes {
     | '/app/products'
     | '/app/schedule'
     | '/app/settings'
+    | '/developer/assistant'
     | '/developer/companies'
     | '/developer/models'
     | '/developer/moderation'
     | '/developer/overview'
     | '/developer/platforms'
     | '/developer/settings'
+    | '/developer/themes'
     | '/app/'
   fileRoutesById: FileRoutesById
 }
@@ -313,6 +349,7 @@ export interface RootRouteChildren {
   AppAdminRoute: typeof AppAdminRoute
   AppAnalyticsRoute: typeof AppAnalyticsRoute
   AppBrandKitRoute: typeof AppBrandKitRoute
+  AppCalendarRoute: typeof AppCalendarRoute
   AppCampaignsRoute: typeof AppCampaignsRoute
   AppConnectionsRoute: typeof AppConnectionsRoute
   AppModerationRoute: typeof AppModerationRoute
@@ -320,12 +357,14 @@ export interface RootRouteChildren {
   AppProductsRoute: typeof AppProductsRoute
   AppScheduleRoute: typeof AppScheduleRoute
   AppSettingsRoute: typeof AppSettingsRoute
+  DeveloperAssistantRoute: typeof DeveloperAssistantRoute
   DeveloperCompaniesRoute: typeof DeveloperCompaniesRoute
   DeveloperModelsRoute: typeof DeveloperModelsRoute
   DeveloperModerationRoute: typeof DeveloperModerationRoute
   DeveloperOverviewRoute: typeof DeveloperOverviewRoute
   DeveloperPlatformsRoute: typeof DeveloperPlatformsRoute
   DeveloperSettingsRoute: typeof DeveloperSettingsRoute
+  DeveloperThemesRoute: typeof DeveloperThemesRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
@@ -380,6 +419,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/developer/themes': {
+      id: '/developer/themes'
+      path: '/developer/themes'
+      fullPath: '/developer/themes'
+      preLoaderRoute: typeof DeveloperThemesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/developer/settings': {
       id: '/developer/settings'
       path: '/developer/settings'
@@ -420,6 +466,13 @@ declare module '@tanstack/react-router' {
       path: '/developer/companies'
       fullPath: '/developer/companies'
       preLoaderRoute: typeof DeveloperCompaniesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/developer/assistant': {
+      id: '/developer/assistant'
+      path: '/developer/assistant'
+      fullPath: '/developer/assistant'
+      preLoaderRoute: typeof DeveloperAssistantRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app/settings': {
@@ -471,6 +524,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCampaignsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/calendar': {
+      id: '/app/calendar'
+      path: '/app/calendar'
+      fullPath: '/app/calendar'
+      preLoaderRoute: typeof AppCalendarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/app/brand-kit': {
       id: '/app/brand-kit'
       path: '/app/brand-kit'
@@ -505,6 +565,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppAdminRoute: AppAdminRoute,
   AppAnalyticsRoute: AppAnalyticsRoute,
   AppBrandKitRoute: AppBrandKitRoute,
+  AppCalendarRoute: AppCalendarRoute,
   AppCampaignsRoute: AppCampaignsRoute,
   AppConnectionsRoute: AppConnectionsRoute,
   AppModerationRoute: AppModerationRoute,
@@ -512,12 +573,14 @@ const rootRouteChildren: RootRouteChildren = {
   AppProductsRoute: AppProductsRoute,
   AppScheduleRoute: AppScheduleRoute,
   AppSettingsRoute: AppSettingsRoute,
+  DeveloperAssistantRoute: DeveloperAssistantRoute,
   DeveloperCompaniesRoute: DeveloperCompaniesRoute,
   DeveloperModelsRoute: DeveloperModelsRoute,
   DeveloperModerationRoute: DeveloperModerationRoute,
   DeveloperOverviewRoute: DeveloperOverviewRoute,
   DeveloperPlatformsRoute: DeveloperPlatformsRoute,
   DeveloperSettingsRoute: DeveloperSettingsRoute,
+  DeveloperThemesRoute: DeveloperThemesRoute,
   AppIndexRoute: AppIndexRoute,
 }
 export const routeTree = rootRouteImport

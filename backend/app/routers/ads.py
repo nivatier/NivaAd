@@ -3,7 +3,7 @@ import uuid
 from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, exists, func, select
+from sqlalchemy import and_, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -12,14 +12,17 @@ from app.database import get_db
 from app.deps import get_current_user, require_capability
 from app.models import Ad, AuditLog, BrandKit, Campaign, CreditLedger, GenerationJob, PlatformConnection, Product, ScheduledPost, User
 from app.schemas import (
-    AdCreateIn, AdCreatedOut, AdListOut, AdOut, AdPatchIn, AdScheduledPostOut, AvailableModelOut,
-    AvailableModelsOut, PostAdIn, PreviewCostIn, PreviewCostOut, PromptPreviewIn, PromptPreviewOut,
-    RefineIn, RetentionInfoOut,
+    AdCreateIn, AdCreatedOut, AdListOut, AdOut, AdPatchIn, AdScheduledPostOut, AssistantHintOut,
+    AssistantSettingsOut, AvailableModelOut, AvailableModelsOut, PostAdIn, PreviewCostIn, PreviewCostOut,
+    PromptPreviewIn, PromptPreviewOut, RawThemesOut, RefineIn, RetentionInfoOut, TextStylePresetOut,
+    TextThemeSelectionOut,
 )
 from app.services import credits as credit_svc
 from app.services import linkedin
 from app.services import pricing as pricing_svc
 from app.services import retention as retention_svc
+from app.services import assistant_hints as assistant_hints_svc
+from app.services import themes as themes_svc
 from app.services import video_prep as video_prep_svc
 from app.services.guardrails import check_text
 from app.services.storage import upload_data_url
@@ -68,6 +71,52 @@ def _ad_out(
         scheduled_posts=scheduled_posts or [],
         created_at=ad.created_at, error=error,
     )
+
+
+@router.get("/themes", response_model=RawThemesOut)
+async def get_themes_endpoint(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Powers Create Ad's Text Theme Reference chips and Image Theme
+    Reference gallery — developer-managed (Developer > Themes), read-only
+    here. Any active user can call this, same access level as
+    /available-models."""
+    return RawThemesOut(themes=await themes_svc.get_themes(db))
+
+
+@router.get("/text-theme", response_model=TextThemeSelectionOut)
+async def get_text_theme_endpoint(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Create Ad's Text Theme Reference — a Style pick + a Product
+    Category pick, each with its own developer-written prompt (Developer
+    > Themes > Image Theme > Text for Image). The two combine into the
+    final scene description; picking neither is a valid choice (falls
+    through to "Define your own")."""
+    editor = await themes_svc.get_image_theme_editor(db)
+    return TextThemeSelectionOut(
+        style_tags=editor["style_tags"], category_tags=editor["category_tags"],
+        style_prompts=editor["text_for_image"]["style"], category_prompts=editor["text_for_image"]["product"],
+    )
+
+
+@router.get("/text-style-presets", response_model=list[TextStylePresetOut])
+async def get_text_style_presets_endpoint(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Text-overlay style presets for the Headline/Discount badge/Body
+    fields (Developer > Themes > Text Styles), read-only here."""
+    return [TextStylePresetOut(**p) for p in await themes_svc.get_text_style_presets(db)]
+
+
+@router.get("/assistant-hints", response_model=list[AssistantHintOut])
+async def get_assistant_hints_endpoint(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Explanation messages for the assistant mascot (Developer >
+    Assistant), read-only here."""
+    return [AssistantHintOut(**h) for h in await assistant_hints_svc.get_assistant_hints(db)]
+
+
+@router.get("/assistant-settings", response_model=AssistantSettingsOut)
+async def get_assistant_settings_endpoint(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Typing speed, TTS voice, and intro audio URL for the mascot — the
+    frontend reads these once on mount so it can set the correct typing
+    speed and play the right audio clip."""
+    s = await assistant_hints_svc.get_assistant_settings(db)
+    return AssistantSettingsOut(**{**s, "intro_audio_url": s.get("intro_audio_url")})
 
 
 @router.get("/available-models", response_model=AvailableModelsOut)
@@ -167,7 +216,7 @@ async def preview_prompt(data: PromptPreviewIn, user: User = Depends(get_current
         "product_name": data.product_name, "description": data.description,
         "audience": data.audience, "offer": data.offer, "goal": data.goal,
         "tone": data.tone, "env": data.env, "image_scene": data.image_scene,
-        "tagline": data.tagline,
+        "text_overlay": data.text_overlay, "tagline": data.tagline,
         "product_image_url": "preview-only" if data.has_photo else None,
     }
     outputs = {**data.outputs, "format": data.format, "variations": data.variations}
@@ -202,9 +251,13 @@ async def preview_prompt(data: PromptPreviewIn, user: User = Depends(get_current
 async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("create_ads")), db: AsyncSession = Depends(get_db)):
     combined = " ".join(filter(None, [
         data.product_name, data.description, data.audience, data.offer,
-        data.env or "", data.image_scene or "", data.tagline or "",
+        data.env or "", data.image_scene or "", data.text_overlay or "", data.tagline or "",
         " ".join(data.carousel_slides or []),
         " ".join(s.prompt for s in (data.video_shots or [])),
+        " ".join(filter(None, [
+            v for s in (data.carousel_theme or []) if s
+            for v in (s.env, s.image_scene, s.text_overlay) if v
+        ])),
     ]))
     hit = await check_text(db, user.company_id, user.id, combined)
     if hit:
@@ -353,6 +406,7 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
             "product_name": data.product_name, "description": data.description,
             "audience": data.audience, "offer": data.offer, "goal": data.goal,
             "tone": data.tone, "env": data.env, "image_scene": data.image_scene,
+            "text_overlay": data.text_overlay,
             "tagline": data.tagline, "product_image_url": product_image_url,
             "image_reference_image_url": image_reference_image_url,
             "text_prompt_override": data.text_prompt_override,
@@ -360,6 +414,7 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
             "brand_logo_url": brand_logo_url,
             "brand_logo_placement": brand_logo_placement,
             "carousel_slides": data.carousel_slides,
+            "carousel_theme": [s.model_dump() if s else None for s in data.carousel_theme] if data.carousel_theme else None,
             "video_shots": [s.model_dump() for s in data.video_shots] if data.video_shots else None,
             "video_frame_image_url": video_frame_image_url,
             "video_prompt_override": data.video_prompt_override,
@@ -480,6 +535,63 @@ async def list_ads(
         for a in rows
     ]
     return AdListOut(items=items, total=total or 0, page=page, page_size=page_size)
+
+
+@router.get("/calendar", response_model=list[AdOut])
+async def calendar_ads(
+    month: str = Query(..., pattern=r"^\d{4}-\d{2}$", description="YYYY-MM, e.g. 2026-07"),
+    user: User = Depends(require_capability("view_my_ads")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Powers the Calendar page — every ad with a scheduled post OR a
+    posted_at falling within the given month, regardless of when the ad
+    was actually created (unlike list_ads' date_from/date_to, which
+    filter by created_at and would miss/misplace exactly the ads a
+    calendar needs). Each returned ad's scheduled_posts is filtered down
+    to just that month's occurrences too, so a post scheduled far in the
+    future doesn't show up on this month's grid."""
+    year, mo = int(month[:4]), int(month[5:7])
+    month_start = datetime(year, mo, 1)
+    month_end = datetime(year + 1, 1, 1) if mo == 12 else datetime(year, mo + 1, 1)
+
+    in_month_schedule = exists(
+        select(ScheduledPost.id).where(
+            ScheduledPost.ad_id == Ad.id, ScheduledPost.status == "pending",
+            ScheduledPost.scheduled_at >= month_start, ScheduledPost.scheduled_at < month_end,
+        )
+    )
+    posted_in_month = and_(Ad.posted_at.is_not(None), Ad.posted_at >= month_start, Ad.posted_at < month_end)
+
+    stmt = select(Ad).where(Ad.company_id == user.company_id, or_(in_month_schedule, posted_in_month))
+    rows = (await db.scalars(stmt.order_by(Ad.created_at.desc()))).all()
+
+    camp_ids = {a.campaign_id for a in rows if a.campaign_id}
+    campaign_names: dict[uuid.UUID, str] = {}
+    if camp_ids:
+        camp_rows = (await db.scalars(select(Campaign).where(Campaign.id.in_(camp_ids)))).all()
+        campaign_names = {c.id: c.name for c in camp_rows}
+
+    ad_ids = [a.id for a in rows]
+    scheduled_by_ad: dict[uuid.UUID, list[AdScheduledPostOut]] = {}
+    if ad_ids:
+        pending_rows = (await db.scalars(
+            select(ScheduledPost).where(
+                ScheduledPost.ad_id.in_(ad_ids), ScheduledPost.status == "pending",
+                ScheduledPost.scheduled_at >= month_start, ScheduledPost.scheduled_at < month_end,
+            ).order_by(ScheduledPost.scheduled_at.asc())
+        )).all()
+        for r in pending_rows:
+            scheduled_by_ad.setdefault(r.ad_id, []).append(AdScheduledPostOut(id=r.id, platform=r.platform, scheduled_at=r.scheduled_at))
+
+    return [
+        _ad_out(
+            a, campaign_name=campaign_names.get(a.campaign_id) if a.campaign_id else None,
+            has_pending_schedule=a.id in scheduled_by_ad,
+            next_scheduled_at=scheduled_by_ad[a.id][0].scheduled_at if a.id in scheduled_by_ad else None,
+            scheduled_posts=scheduled_by_ad.get(a.id, []),
+        )
+        for a in rows
+    ]
 
 
 @router.get("/{ad_id}", response_model=AdOut)

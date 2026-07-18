@@ -16,7 +16,167 @@ export const Route = createFileRoute("/app/")({
 const STEPS = ["Setup", "Generate", "Preview & Post"];
 const GOALS = ["Drive sales", "Product launch", "Brand awareness", "Get signups"];
 const TONES = ["Professional", "Fun", "Luxury", "Minimal"];
-const ENV_STYLES = ["Studio", "Lifestyle / in use", "Outdoor / nature", "Home setting", "Luxury / premium", "Festive / seasonal"];
+const POSITION_OPTIONS = [
+  "top-left", "top-center", "top-right",
+  "middle-left", "center", "middle-right",
+  "bottom-left", "bottom-center", "bottom-right",
+];
+
+type ImageThemeField = { key: string; label: string; placeholder: string; styleHint: string; defaultPosition: string };
+
+// Same three fields the backend now guarantees on every Image Theme
+// Reference gallery entry (services/themes.py STANDARD_TEXT_FIELDS) —
+// Text Theme Reference doesn't have a gallery entry to carry these, so
+// they're defined here directly and shared by both modes.
+const STANDARD_TEXT_FIELDS: ImageThemeField[] = [
+  {
+    key: "headline", label: "Headline", placeholder: "e.g. MEGA SALE", defaultPosition: "top-left",
+    styleHint: "large bold advertising headline typography, thick sans-serif or bold script font as commonly used on ad banners, strong color contrast against the background so it pops, clean crisp edges, no clutter behind it",
+  },
+  {
+    key: "badge", label: "Discount badge", placeholder: "e.g. UP TO 50% OFF", defaultPosition: "middle-right",
+    styleHint: "styled like a real promotional discount sticker/badge — bold circular or starburst badge shape with a solid contrasting fill color, bold white or dark numerals, sized to grab attention like a sale-tag callout",
+  },
+  {
+    key: "body", label: "Body / about text", placeholder: "e.g. short brand or offer description", defaultPosition: "bottom-left",
+    styleHint: "smaller clean sans-serif supporting/caption text, standard ad-copy weight (not bold), legible against the background, laid out like a short marketing tagline under a headline",
+  },
+];
+
+type TextStylePreset = { id: string; label: string; fontStyle: string; textColor: string; accentColor: string; size: string };
+
+const SIZE_DESCRIPTIONS: Record<string, string> = { small: "small, subtle", medium: "medium-sized, clearly legible", large: "large, attention-grabbing", xlarge: "extra-large, dominant" };
+
+/** Mirrors the backend's build_style_phrase (services/themes.py) — turns a
+ * developer-defined preset into the descriptive phrase folded into the
+ * field's overlay instruction. Empty/"standard" preset returns "" so the
+ * field's own built-in styleHint is used unchanged (original behavior). */
+function buildStylePhrase(preset: TextStylePreset | undefined): string {
+  if (!preset || (!preset.fontStyle && !preset.textColor)) return "";
+  const parts: string[] = [];
+  const size = SIZE_DESCRIPTIONS[preset.size] || "";
+  if (size) parts.push(size);
+  if (preset.fontStyle) parts.push(preset.fontStyle.toLowerCase());
+  const phrase = parts.join(" ") || "styled";
+  const colorBits: string[] = [];
+  if (preset.textColor) colorBits.push(`text color ${preset.textColor}`);
+  if (preset.accentColor) colorBits.push(`accent/outline/background color ${preset.accentColor} for contrast`);
+  const colorPhrase = colorBits.length ? `, ${colorBits.join(", ")}` : "";
+  return `rendered in a ${phrase} font${colorPhrase}`;
+}
+
+function buildOverlayText(
+  fields: ImageThemeField[],
+  fieldValues: Record<string, string>,
+  positions: Record<string, string>,
+  stylePresets?: Record<string, string>,
+  presetList?: TextStylePreset[]
+): string | null {
+  const filled = fields.filter((f) => fieldValues[f.key]?.trim());
+  if (filled.length === 0) return null;
+  return filled
+    .map((f) => {
+      const presetId = stylePresets?.[f.key];
+      const preset = presetId ? presetList?.find((p) => p.id === presetId) : undefined;
+      const stylePhrase = buildStylePhrase(preset) || f.styleHint;
+      return `${f.label}: "${fieldValues[f.key].trim()}" (${positions[f.key] || f.defaultPosition}, ${stylePhrase})`;
+    })
+    .join(". ") + ".";
+}
+type ImageTheme = {
+  id: string;
+  label: string;
+  thumbnail: string;
+  styleTags: string[];
+  categoryTags: string[];
+  basePrompt: string;
+  textFields: ImageThemeField[];
+};
+type TextThemeData = {
+  styleTags: string[];
+  categoryTags: string[];
+  stylePrompts: Record<string, string>;
+  categoryPrompts: Record<string, string>;
+};
+
+function mapImageTheme(t: any): ImageTheme {
+  return {
+    id: t.id, label: t.label, thumbnail: t.thumbnail || "",
+    styleTags: t.style_tags || [], categoryTags: t.category_tags || [],
+    basePrompt: t.base_prompt,
+    textFields: (t.text_fields || []).map((f: any) => ({
+      key: f.key, label: f.label, placeholder: f.placeholder || "",
+      styleHint: f.style_hint || "", defaultPosition: f.default_position || "top-left",
+    })),
+  };
+}
+
+/** Returns the scene/style prompt and the text-overlay instruction as two
+ * SEPARATE strings — they must never be nested inside one another, or a
+ * template that quotes the scene more than once (as the backend's
+ * fixed-subject composite prompt does) will end up repeating the overlay
+ * text too. */
+function buildImageThemePrompt(
+  theme: ImageTheme,
+  fieldValues: Record<string, string>,
+  positions: Record<string, string>,
+  stylePresets?: Record<string, string>,
+  presetList?: TextStylePreset[]
+): { scene: string; overlay: string | null } {
+  return { scene: theme.basePrompt, overlay: buildOverlayText(theme.textFields, fieldValues, positions, stylePresets, presetList) };
+}
+
+
+function TextOverlayFieldsEditor({
+  fields, fieldValues, positions, onFieldChange, onPositionChange, stylePresets, onStyleChange, presetList,
+}: {
+  fields: ImageThemeField[];
+  fieldValues: Record<string, string>;
+  positions: Record<string, string>;
+  onFieldChange: (key: string, value: string) => void;
+  onPositionChange: (key: string, value: string) => void;
+  stylePresets: Record<string, string>;
+  onStyleChange: (key: string, value: string) => void;
+  presetList: TextStylePreset[];
+}) {
+  return (
+    <div className="space-y-2 mb-2">
+      {fields.map((f) => (
+        <div key={f.key} className="flex gap-2 items-end">
+          <div className="flex-1">
+            <label className="text-[11px] text-muted-foreground">{f.label}</label>
+            <input
+              value={fieldValues[f.key] ?? ""}
+              onChange={(e) => onFieldChange(f.key, e.target.value)}
+              placeholder={f.placeholder}
+              className="w-full rounded-lg border border-input bg-input/40 p-2 text-sm text-foreground placeholder:text-muted-foreground/70 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </div>
+          <div className="w-36">
+            <label className="text-[11px] text-muted-foreground">Position</label>
+            <select
+              value={positions[f.key] ?? f.defaultPosition}
+              onChange={(e) => onPositionChange(f.key, e.target.value)}
+              className="w-full rounded-lg border border-input bg-input/40 p-2 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              {POSITION_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div className="w-40">
+            <label className="text-[11px] text-muted-foreground">Style</label>
+            <select
+              value={stylePresets[f.key] ?? "standard"}
+              onChange={(e) => onStyleChange(f.key, e.target.value)}
+              className="w-full rounded-lg border border-input bg-input/40 p-2 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              {presetList.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -50,10 +210,70 @@ function CreateAd() {
   const [videoMode, setVideoMode] = useState<"single_reference" | "first_last_frame">("single_reference");
   const [videoEndFrameImage, setVideoEndFrameImage] = useState<string | null>(null);
   const [imageReferenceImage, setImageReferenceImage] = useState<string | null>(null);
-  const [envStyle, setEnvStyle] = useState("Studio");
+  const [selectedTextStyle, setSelectedTextStyle] = useState<string | null>(null);
+  const [selectedTextCategory, setSelectedTextCategory] = useState<string | null>(null);
   const placementTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [envDesc, setEnvDesc] = useState("");
   const [imageScene, setImageScene] = useState("");
+  const [refMode, setRefMode] = useState<"text" | "image">("text");
+  const [selectedImageTheme, setSelectedImageTheme] = useState<string | null>(null);
+  const [themeFieldValues, setThemeFieldValues] = useState<Record<string, string>>({});
+  const [themePositions, setThemePositions] = useState<Record<string, string>>({});
+  const [themeStyles, setThemeStyles] = useState<Record<string, string>>({});
+  const [textStylePresets, setTextStylePresets] = useState<TextStylePreset[]>([{ id: "standard", label: "Standard (fits the image)", fontStyle: "", textColor: "", accentColor: "", size: "" }]);
+  const [imageTextOverlay, setImageTextOverlay] = useState<string | null>(null);
+  const [showThemeModal, setShowThemeModal] = useState(false);
+  const [modalFilterStyle, setModalFilterStyle] = useState("All");
+  const [modalFilterCategory, setModalFilterCategory] = useState("All");
+
+  // --- Per-slide theme (carousel) ---
+  // Single mode: the flat state above (refMode/envDesc/imageScene/...) IS
+  // the whole ad's theme, same as before this existed. Carousel mode: each
+  // slide gets its OWN independent Text/Image Theme Reference selection.
+  // Rather than parametrizing every piece of state and JSX by slide index
+  // (a much larger rewrite), the flat state above always represents
+  // "whichever slide tab is currently open" — switching tabs snapshots it
+  // into slideThemes[oldIndex] and loads slideThemes[newIndex] back into
+  // the same flat state, so every existing effect/JSX keeps working
+  // unchanged for whichever slide is active.
+  type SlideTheme = {
+    refMode: "text" | "image"; envDesc: string; imageScene: string;
+    selectedTextStyle: string | null; selectedTextCategory: string | null; selectedImageTheme: string | null;
+    themeFieldValues: Record<string, string>; themePositions: Record<string, string>; themeStyles: Record<string, string>;
+    imageTextOverlay: string | null;
+  };
+  const emptySlideTheme = (): SlideTheme => ({
+    refMode: "text", envDesc: "", imageScene: "",
+    selectedTextStyle: null, selectedTextCategory: null, selectedImageTheme: null,
+    themeFieldValues: {}, themePositions: {}, themeStyles: {}, imageTextOverlay: null,
+  });
+  const [slideThemes, setSlideThemes] = useState<SlideTheme[]>([]);
+  const [activeSlide, setActiveSlide] = useState(0);
+
+  function captureSlideTheme(): SlideTheme {
+    return { refMode, envDesc, imageScene, selectedTextStyle, selectedTextCategory, selectedImageTheme, themeFieldValues, themePositions, themeStyles, imageTextOverlay };
+  }
+  function applySlideTheme(t: SlideTheme) {
+    setRefMode(t.refMode); setEnvDesc(t.envDesc); setImageScene(t.imageScene);
+    setSelectedTextStyle(t.selectedTextStyle); setSelectedTextCategory(t.selectedTextCategory); setSelectedImageTheme(t.selectedImageTheme);
+    setThemeFieldValues(t.themeFieldValues); setThemePositions(t.themePositions); setThemeStyles(t.themeStyles);
+    setImageTextOverlay(t.imageTextOverlay);
+  }
+  function switchSlide(index: number, snapshot: SlideTheme[]) {
+    const updated = [...snapshot];
+    updated[activeSlide] = captureSlideTheme();
+    setSlideThemes(updated);
+    applySlideTheme(updated[index] ?? emptySlideTheme());
+    setActiveSlide(index);
+  }
+
+  // Developer-managed theme library (Developer > Themes) — fetched once;
+  // falls back to empty lists (chips/gallery just show nothing) if the
+  // call fails, rather than breaking the rest of Create Ad.
+  const [textTheme, setTextTheme] = useState<TextThemeData>({ styleTags: [], categoryTags: [], stylePrompts: {}, categoryPrompts: {} });
+  const [imageThemes, setImageThemes] = useState<ImageTheme[]>([]);
+  const [styleTagList, setStyleTagList] = useState<string[]>([]);
+  const [categoryTagList, setCategoryTagList] = useState<string[]>([]);
   const [savingProduct, setSavingProduct] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
   const [brandTagline, setBrandTagline] = useState("");
@@ -67,7 +287,6 @@ function CreateAd() {
   const [format, setFormat] = useState("single");
   const [variations, setVariations] = useState(1);
   const [carouselCount, setCarouselCount] = useState(3);
-  const [carouselSlides, setCarouselSlides] = useState<string[]>(Array(CAROUSEL_MAX_IMAGES).fill(""));
   const [availableModels, setAvailableModels] = useState<AvailableModelsOut | null>(null);
   const [textModelId, setTextModelId] = useState<string | null>(null);
   const [imageModelId, setImageModelId] = useState<string | null>(null);
@@ -133,6 +352,38 @@ function CreateAd() {
   const credits = me?.credits ?? 0;
 
   useEffect(() => {
+    let cancelled = false;
+    api("/ads/themes")
+      .then((r) => {
+        if (cancelled) return;
+        const t = r.themes || {};
+        setImageThemes((t.image_themes || []).map(mapImageTheme));
+        setStyleTagList(t.style_tags || []);
+        setCategoryTagList(t.category_tags || []);
+      })
+      .catch(() => { /* Create Ad still works without themes — chips/gallery just show empty */ });
+    api("/ads/text-theme")
+      .then((r) => {
+        if (cancelled) return;
+        setTextTheme({
+          styleTags: r.style_tags || [], categoryTags: r.category_tags || [],
+          stylePrompts: r.style_prompts || {}, categoryPrompts: r.category_prompts || {},
+        });
+      })
+      .catch(() => { /* Text Theme Reference just shows no style/product options */ });
+    api("/ads/text-style-presets")
+      .then((r) => {
+        if (cancelled || !Array.isArray(r) || r.length === 0) return;
+        setTextStylePresets(r.map((p: any) => ({
+          id: p.id, label: p.label, fontStyle: p.font_style || "", textColor: p.text_color || "",
+          accentColor: p.accent_color || "", size: p.size || "",
+        })));
+      })
+      .catch(() => { /* falls back to just the built-in "Standard" option */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
     if (videoMode === "first_last_frame" && !selectedVideoModel?.supports_last_frame) {
       setVideoMode("single_reference");
       setVideoEndFrameImage(null);
@@ -175,15 +426,69 @@ function CreateAd() {
     return () => { cancelled = true; };
   }, [outputs.video, selectedVideoModel?.id, selectedVideoModel?.has_dynamic_pricing, videoResolution, videoAudio, videoTotalDuration, videoShotsValid, videoFrameImage]);
 
+  // Switching between Text Theme Reference and Image Theme Reference
+  // previously left the OTHER mode's composed text sitting in the
+  // textbox (e.g. an Image Theme's "Product to feature: ..." line was
+  // still showing after switching to Text Theme). Clear it first on any
+  // switch; the compose effects below (which also depend on refMode, and
+  // so re-run in the same commit, in this declared order) then refill it
+  // if the new mode already has a selection.
+  useEffect(() => {
+    if (imageReferenceImage) setEnvDesc(""); else setImageScene("");
+    setImageTextOverlay(null);
+  }, [refMode]);
+
+  useEffect(() => {
+    if (refMode !== "image" || !selectedImageTheme) return;
+    const theme = imageThemes.find((t) => t.id === selectedImageTheme);
+    if (!theme) return;
+    const { scene, overlay } = buildImageThemePrompt(theme, themeFieldValues, themePositions, themeStyles, textStylePresets);
+    if (imageReferenceImage) setEnvDesc(scene); else setImageScene(scene);
+    setImageTextOverlay(overlay);
+  }, [refMode, selectedImageTheme, themeFieldValues, themePositions, themeStyles, textStylePresets, imageReferenceImage]);
+
+  // Keep slideThemes sized to carouselCount whenever in carousel mode —
+  // new slots start empty ("Define your own" until the user picks a
+  // theme), removed slots just drop off the end. If the currently-open
+  // tab got trimmed away, fall back to the last remaining slide.
+  useEffect(() => {
+    if (format !== "carousel") return;
+    setSlideThemes((prev) => {
+      const next = [...prev];
+      next[activeSlide] = captureSlideTheme();
+      while (next.length < carouselCount) next.push(emptySlideTheme());
+      if (next.length > carouselCount) next.length = carouselCount;
+      return next;
+    });
+    if (activeSlide >= carouselCount) setActiveSlide(carouselCount - 1);
+  }, [format, carouselCount]);
+
+  // Text Theme Reference: Style + Product Category are two independent
+  // picks (either, both, or neither — "neither" just falls through to
+  // "Define your own" in the textbox, so we leave it alone rather than
+  // forcing it blank). Their prompts combine.
+  useEffect(() => {
+    if (refMode !== "text") return;
+    const stylePrompt = selectedTextStyle ? textTheme.stylePrompts[selectedTextStyle] : "";
+    const categoryPrompt = selectedTextCategory ? textTheme.categoryPrompts[selectedTextCategory] : "";
+    const combined = [stylePrompt, categoryPrompt].filter((p) => p?.trim()).join(" ");
+    if (combined) {
+      if (imageReferenceImage) setEnvDesc(`Place the product into this setting: ${combined}`);
+      else setImageScene(combined);
+    }
+    setImageTextOverlay(buildOverlayText(STANDARD_TEXT_FIELDS, themeFieldValues, themePositions, themeStyles, textStylePresets));
+  }, [refMode, selectedTextStyle, selectedTextCategory, textTheme, imageReferenceImage, themeFieldValues, themePositions, themeStyles, textStylePresets]);
+
   const results = variants ? variants[activeVariant] : null;
 
   function resetWizard() {
     setStep(1); setProductName(""); setAudience(""); setDescription(""); setOffer("");
     setGoal("Drive sales"); setTone("Professional"); setVideoFrameImage(null); setImageReferenceImage(null);
-    setEnvStyle("Studio"); setEnvDesc(""); setImageScene("");
+    setSelectedTextStyle(null); setSelectedTextCategory(null); setEnvDesc(""); setImageScene("");
     setAdId(null); setVariants(null); setPostedMap({}); setBlocked(false); setWarning(""); setErrorMsg("");
     setSelectedProductId(null);
-    setFormat("single"); setVariations(1); setCarouselCount(3); setCarouselSlides(Array(CAROUSEL_MAX_IMAGES).fill(""));
+    setFormat("single"); setVariations(1); setCarouselCount(3);
+    setSlideThemes([]); setActiveSlide(0);
     setVideoShots([{ prompt: "", duration: selectedVideoModel?.min_duration || 6 }]);
   }
 
@@ -192,7 +497,8 @@ function CreateAd() {
   function clearBrief() {
     setProductName(""); setAudience(""); setDescription(""); setOffer("");
     setGoal("Drive sales"); setTone("Professional"); setVideoFrameImage(null); setImageReferenceImage(null);
-    setEnvStyle("Studio"); setEnvDesc(""); setImageScene(""); setSelectedProductId(null);
+    setSelectedTextStyle(null); setSelectedTextCategory(null); setEnvDesc(""); setImageScene(""); setSelectedProductId(null);
+    setSlideThemes([]); setActiveSlide(0);
   }
 
   // Cancel buttons on steps 2-5: for steps 2-3 nothing has been sent to
@@ -272,6 +578,16 @@ function CreateAd() {
     setImageReferenceImage(await fileToDataUrl(f));
   }
 
+  function buildCarouselTheme(): { env: string | null; image_scene: string | null; text_overlay: string | null }[] {
+    const flushed = [...slideThemes];
+    flushed[activeSlide] = captureSlideTheme();
+    return flushed.slice(0, carouselCount).map((slot) => ({
+      env: imageReferenceImage ? (slot.envDesc || null) : null,
+      image_scene: !imageReferenceImage && slot.imageScene ? slot.imageScene : null,
+      text_overlay: slot.imageTextOverlay,
+    }));
+  }
+
   async function openPromptPreview() {
     setErrorMsg(""); setPreviewBusy(true);
     try {
@@ -279,14 +595,15 @@ function CreateAd() {
         method: "POST",
         body: {
           product_name: productName, description, audience, offer, goal, tone,
-          env: imageReferenceImage ? (envDesc || envStyle) : null,
+          env: imageReferenceImage ? envDesc : null,
           image_scene: !imageReferenceImage && imageScene ? imageScene : null,
+          text_overlay: imageTextOverlay,
           has_photo: !!imageReferenceImage,
           tagline: useTagline && brandTagline ? brandTagline : null,
           platforms: chosenPlatforms.map((p) => p.id),
           outputs,
           format, variations,
-          carousel_slides: format === "carousel" ? carouselSlides.slice(0, carouselCount) : null,
+          carousel_slides: null,
           video_shots: outputs.video ? videoShots : null,
           refine_video_prompt: outputs.video ? refineVideoPrompt : false,
         },
@@ -321,8 +638,9 @@ function CreateAd() {
           method: "POST",
           body: {
             product_name: productName, description, audience, offer, goal, tone,
-            env: imageReferenceImage ? (envDesc || envStyle) : null,
+            env: imageReferenceImage ? envDesc : null,
             image_scene: !imageReferenceImage && imageScene ? imageScene : null,
+            text_overlay: imageTextOverlay,
             product_image: null,
             product_image_url: null,
             product_id: selectedProductId,
@@ -330,7 +648,8 @@ function CreateAd() {
             use_brand_logo: useLogo,
             platforms: chosenPlatforms.map((p) => p.id),
             outputs, format, variations,
-            carousel_slides: format === "carousel" ? carouselSlides.slice(0, carouselCount) : null,
+            carousel_slides: null,
+            carousel_theme: format === "carousel" ? buildCarouselTheme() : null,
             video_shots: outputs.video ? videoShots : null,
             refine_video_prompt: outputs.video ? refineVideoPrompt : false,
             refine_video_frame: outputs.video ? refineVideoFrame : false,
@@ -593,23 +912,140 @@ function CreateAd() {
                   )}
                 </div>
 
+                <div>
+                  <div className="text-xs font-semibold text-foreground mb-2">Image format</div>
+                  <div className="flex gap-2">
+                    {[["single", "🖼 Single"], ["carousel", "🎠 Carousel"]].map(([f, l]) => (
+                      <button key={f} onClick={() => setFormat(f)}
+                        className={`rounded-full border px-4 py-2 text-xs ${format === f ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                  {format === "carousel" && (
+                    <div className="mt-3 flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Number of images:</span>
+                      <button onClick={() => setCarouselCount((n) => Math.max(CAROUSEL_MIN_IMAGES, n - 1))} className="grid h-7 w-7 place-items-center rounded-full border border-border text-sm text-foreground hover:border-primary/40">−</button>
+                      <span className="w-6 text-center text-sm font-semibold text-foreground">{carouselCount}</span>
+                      <button onClick={() => setCarouselCount((n) => Math.min(CAROUSEL_MAX_IMAGES, n + 1))} className="grid h-7 w-7 place-items-center rounded-full border border-border text-sm text-foreground hover:border-primary/40">＋</button>
+                      <span className="text-[11px] text-muted-foreground">up to {CAROUSEL_MAX_IMAGES} — each is a real, separate generation ({2 * carouselCount} credits at the image tier shown here)</span>
+                    </div>
+                  )}
+                </div>
+
+                {format === "carousel" && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {Array.from({ length: carouselCount }).map((_, i) => (
+                      <button key={i} type="button" onClick={() => i !== activeSlide && switchSlide(i, slideThemes)}
+                        className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${activeSlide === i ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
+                        Slide {i + 1}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <div className="rounded-xl border border-border/60 bg-background/40 p-4">
                   <label className="text-xs font-semibold text-foreground">{imageReferenceImage ? "Product placement & surroundings" : "Describe how the AI-generated image should look"}</label>
                   <div className="text-[11px] text-muted-foreground mt-1 mb-2">
                     {imageReferenceImage ? "💡 Describe how to place YOUR product and what should surround it. Pick a quick style below, or write your own in the box — whatever you type there is always what's actually used." : "💡 No photo uploaded — describe the background/environment for a fully AI-generated image."}
                   </div>
-                  <div className="flex flex-wrap gap-2 mb-2">
-                    {ENV_STYLES.map((s) => (
-                      <button key={s} type="button" onClick={() => (imageReferenceImage ? setEnvStyle(s) : setImageScene((p) => p || s))}
-                        className={`rounded-full border px-3 py-1.5 text-xs ${imageReferenceImage && envStyle === s ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
-                        {s}
+
+                  <div className="flex gap-2 mb-3">
+                    {([["text", "✏️ Text Theme Reference", "field:text-theme-reference"], ["image", "🖼 Image Theme Reference", "field:image-theme-reference"]] as const).map(([m, l, hintKey]) => (
+                      <button key={m} type="button" data-robot-hint-key={hintKey} onClick={() => setRefMode(m)}
+                        className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${refMode === m ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
+                        {l}
                       </button>
                     ))}
-                    <button type="button" onClick={() => placementTextareaRef.current?.focus()}
-                      className="rounded-full border border-dashed border-primary/50 px-3 py-1.5 text-xs text-primary hover:bg-primary/5">
-                      ✏️ Define your own
-                    </button>
                   </div>
+
+                  {refMode === "text" ? (
+                    <div className="mb-2 flex flex-wrap gap-3">
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-muted-foreground">Style</label>
+                        <select
+                          value={selectedTextStyle ?? ""}
+                          onChange={(e) => setSelectedTextStyle(e.target.value || null)}
+                          className="w-48 rounded-lg border border-input bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                        >
+                          <option value="">None</option>
+                          {textTheme.styleTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-muted-foreground">Product category</label>
+                        <select
+                          value={selectedTextCategory ?? ""}
+                          onChange={(e) => setSelectedTextCategory(e.target.value || null)}
+                          className="w-48 rounded-lg border border-input bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                        >
+                          <option value="">None</option>
+                          {textTheme.categoryTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+                        </select>
+                      </div>
+                      <div className="flex items-end">
+                        <button type="button" onClick={() => placementTextareaRef.current?.focus()}
+                          className="rounded-full border border-dashed border-primary/50 px-3 py-1.5 text-xs text-primary hover:bg-primary/5">
+                          ✏️ Define your own
+                        </button>
+                      </div>
+                      <div className="w-full">
+                        <TextOverlayFieldsEditor
+                          fields={STANDARD_TEXT_FIELDS}
+                          fieldValues={themeFieldValues}
+                          positions={themePositions}
+                          onFieldChange={(key, value) => setThemeFieldValues((prev) => ({ ...prev, [key]: value }))}
+                          onPositionChange={(key, value) => setThemePositions((prev) => ({ ...prev, [key]: value }))}
+                          stylePresets={themeStyles}
+                          onStyleChange={(key, value) => setThemeStyles((prev) => ({ ...prev, [key]: value }))}
+                          presetList={textStylePresets}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mb-3">
+                      {selectedImageTheme ? (() => {
+                        const theme = imageThemes.find((t) => t.id === selectedImageTheme)!;
+                        return (
+                          <div className="flex items-center gap-3 rounded-lg border border-primary/40 bg-primary/5 p-2 mb-3">
+                            <img src={theme.thumbnail} alt={theme.label} className="h-16 w-16 rounded-md object-cover shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-semibold text-foreground">{theme.label}</div>
+                              <div className="text-[11px] text-muted-foreground truncate">{[...theme.styleTags, ...theme.categoryTags].join(" · ")}</div>
+                            </div>
+                            <button type="button" onClick={() => setShowThemeModal(true)}
+                              className="shrink-0 rounded-full border border-primary/50 px-3 py-1.5 text-xs text-primary hover:bg-primary/10">
+                              Change theme
+                            </button>
+                          </div>
+                        );
+                      })() : (
+                        <button type="button" onClick={() => setShowThemeModal(true)}
+                          className="w-full mb-3 rounded-lg border border-dashed border-primary/50 px-4 py-4 text-xs text-primary hover:bg-primary/5 flex items-center justify-center gap-2">
+                          🖼 Browse image themes
+                        </button>
+                      )}
+
+                      {selectedImageTheme && (() => {
+                        const theme = imageThemes.find((t) => t.id === selectedImageTheme)!;
+                        return theme.textFields.length > 0 ? (
+                          <TextOverlayFieldsEditor
+                            fields={theme.textFields}
+                            fieldValues={themeFieldValues}
+                            positions={themePositions}
+                            onFieldChange={(key, value) => setThemeFieldValues((prev) => ({ ...prev, [key]: value }))}
+                            onPositionChange={(key, value) => setThemePositions((prev) => ({ ...prev, [key]: value }))}
+                            stylePresets={themeStyles}
+                            onStyleChange={(key, value) => setThemeStyles((prev) => ({ ...prev, [key]: value }))}
+                            presetList={textStylePresets}
+                          />
+                        ) : (
+                          <div className="text-[11px] text-muted-foreground mb-2">This theme has no text overlay — it's a pure background/style reference.</div>
+                        );
+                      })()}
+                    </div>
+                  )}
+
                   <textarea
                     ref={placementTextareaRef}
                     rows={2}
@@ -618,43 +1054,12 @@ function CreateAd() {
                     placeholder={imageReferenceImage ? "e.g. place the bottle upright on a wooden gym bench, morning sunlight" : "e.g. minimalist studio background, soft top lighting"}
                     className="w-full rounded-lg border border-input bg-input/40 p-2.5 text-sm text-foreground placeholder:text-muted-foreground/70 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                   />
-                </div>
-
-                <div>
-                  <div className="text-xs font-semibold text-foreground mb-2">Image format</div>
-                  <div className="flex gap-2">
-                    {[["single", "🖼 Single"], ["carousel", "🎠 Carousel"]].map(([f, l]) => (
-                      <button key={f} onClick={() => setFormat(f)} className={`rounded-full border px-4 py-2 text-xs ${format === f ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>{l}</button>
-                    ))}
-                  </div>
-                </div>
-
-                {format === "carousel" && (
-                  <div className="rounded-xl border border-border/60 bg-background/40 p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs font-semibold text-foreground">Carousel images</div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => setCarouselCount((n) => Math.max(CAROUSEL_MIN_IMAGES, n - 1))} className="grid h-7 w-7 place-items-center rounded-full border border-border text-sm text-foreground hover:border-primary/40">−</button>
-                        <span className="w-6 text-center text-sm font-semibold text-foreground">{carouselCount}</span>
-                        <button onClick={() => setCarouselCount((n) => Math.min(CAROUSEL_MAX_IMAGES, n + 1))} className="grid h-7 w-7 place-items-center rounded-full border border-border text-sm text-foreground hover:border-primary/40">＋</button>
-                      </div>
+                  {refMode === "image" && imageTextOverlay && (
+                    <div className="mt-2 text-[11px] text-muted-foreground bg-background/60 border border-border/60 rounded-lg p-2">
+                      <span className="font-semibold text-foreground">Text overlay to render: </span>{imageTextOverlay}
                     </div>
-                    <p className="mt-1 text-[11px] text-muted-foreground">Up to {CAROUSEL_MAX_IMAGES} images — each is a real, separate AI generation, so cost scales with the count (2 credits × {carouselCount} = {2 * carouselCount} credits for the image tier shown here).</p>
-                    <div className="mt-3 space-y-2">
-                      {Array.from({ length: carouselCount }).map((_, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <span className="w-5 shrink-0 text-[11px] text-muted-foreground">#{i + 1}</span>
-                          <input
-                            placeholder={`Describe image ${i + 1} (optional — e.g. "close-up on the label")`}
-                            value={carouselSlides[i] || ""}
-                            onChange={(e) => setCarouselSlides((s) => { const copy = [...s]; copy[i] = e.target.value; return copy; })}
-                            className="w-full rounded-lg border border-input bg-input/40 px-3 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1043,6 +1448,66 @@ function CreateAd() {
           </Panel>
         </div>
       )}
+
+      {showThemeModal && (() => {
+        const styleOpts = ["All", ...Array.from(new Set(imageThemes.flatMap((t) => t.styleTags)))];
+        const categoryOpts = ["All", ...Array.from(new Set(imageThemes.flatMap((t) => t.categoryTags)))];
+        const visible = imageThemes.filter((t) =>
+          (modalFilterStyle === "All" || t.styleTags.includes(modalFilterStyle)) &&
+          (modalFilterCategory === "All" || t.categoryTags.includes(modalFilterCategory))
+        );
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowThemeModal(false)}>
+            <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-2xl border border-border bg-background p-5" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <div className="text-sm font-semibold text-foreground">Choose an image theme</div>
+                <button type="button" onClick={() => setShowThemeModal(false)} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+              </div>
+
+              <div className="mb-2">
+                <div className="text-[11px] font-semibold text-muted-foreground mb-1.5">Style</div>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {styleOpts.map((tag) => (
+                    <button key={tag} type="button" onClick={() => setModalFilterStyle(tag)}
+                      className={`rounded-full border px-3 py-1.5 text-xs ${modalFilterStyle === tag ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+                <div className="text-[11px] font-semibold text-muted-foreground mb-1.5">Product category</div>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {categoryOpts.map((tag) => (
+                    <button key={tag} type="button" onClick={() => setModalFilterCategory(tag)}
+                      className={`rounded-full border px-3 py-1.5 text-xs ${modalFilterCategory === tag ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                {visible.map((t) => (
+                  <button key={t.id} type="button"
+                    onClick={() => { setSelectedImageTheme(t.id); setThemeFieldValues({}); setThemePositions({}); setShowThemeModal(false); }}
+                    className={`rounded-xl border overflow-hidden text-left transition ${selectedImageTheme === t.id ? "border-primary ring-2 ring-primary" : "border-border hover:border-primary/50"}`}>
+                    <img src={t.thumbnail} alt={t.label} className="h-40 w-full object-cover" />
+                    <div className="p-2">
+                      <div className="text-xs font-semibold text-foreground">{t.label}</div>
+                      <div className="text-[11px] text-muted-foreground">{[...t.styleTags, ...t.categoryTags].join(" · ")}</div>
+                    </div>
+                  </button>
+                ))}
+                {visible.length === 0 && (
+                  <div className="col-span-full text-center text-xs text-muted-foreground py-8">No themes match those filters yet.</div>
+                )}
+                <div className="rounded-xl border border-dashed border-border flex items-center justify-center text-[11px] text-muted-foreground px-3 py-8 text-center">
+                  More themes coming soon
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {showPromptModal && (
         <PromptConfirmModal

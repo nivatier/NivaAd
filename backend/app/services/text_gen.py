@@ -47,3 +47,41 @@ def generate_text(prompt: str, model: str) -> dict:
         raise RuntimeError(f"OpenRouter returned no choices: {data}")
     text = choices[0].get("message", {}).get("content", "")
     return json.loads(text.replace("```json", "").replace("```", "").strip())
+
+
+def analyze_image_with_vision(image_url: str, prompt: str, model: str) -> dict:
+    """Same chat completions endpoint as generate_text, but with an image
+    content block added — OpenRouter's multimodal chat format (OpenAI-
+    compatible: a content array mixing "text" and "image_url" blocks).
+    Used by the theme library's AI auto-tagging (Developer > Themes >
+    Image Theme > Image for Image): the model looks at an uploaded
+    reference photo and suggests which existing style/product tags fit,
+    or a new tag name if nothing does, plus a scene-description prompt.
+    Expects (and parses) a JSON response, same contract as generate_text."""
+    resp = httpx.post(
+        CHAT_URL,
+        headers={
+            "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "max_tokens": 1000,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            }],
+        },
+        timeout=90,
+    )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"OpenRouter vision analysis {resp.status_code}: {resp.text[:400]}")
+    data = resp.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError(f"OpenRouter returned no choices: {data}")
+    text = choices[0].get("message", {}).get("content", "")
+    return json.loads(text.replace("```json", "").replace("```", "").strip())

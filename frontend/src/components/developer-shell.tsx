@@ -1,14 +1,17 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { type ReactNode } from "react";
+import { LayoutDashboard, Building2, Cpu, Palette, Link2, ShieldCheck, Settings, MessageCircle, type LucideIcon } from "lucide-react";
 import { clearDevToken } from "@/lib/dev-api";
 
-const NAV = [
-  { to: "/developer/overview", label: "Overview", icon: "◆" },
-  { to: "/developer/companies", label: "Companies", icon: "▤" },
-  { to: "/developer/models", label: "Models", icon: "◐" },
-  { to: "/developer/platforms", label: "Platforms", icon: "🔗" },
-  { to: "/developer/moderation", label: "Moderation", icon: "⛊" },
-  { to: "/developer/settings", label: "Settings", icon: "⚙" },
+const NAV: { to: string; label: string; icon: LucideIcon }[] = [
+  { to: "/developer/overview", label: "Overview", icon: LayoutDashboard },
+  { to: "/developer/companies", label: "Companies", icon: Building2 },
+  { to: "/developer/models", label: "Models", icon: Cpu },
+  { to: "/developer/themes", label: "Themes", icon: Palette },
+  { to: "/developer/assistant", label: "Assistant", icon: MessageCircle },
+  { to: "/developer/platforms", label: "Platforms", icon: Link2 },
+  { to: "/developer/moderation", label: "Moderation", icon: ShieldCheck },
+  { to: "/developer/settings", label: "Settings", icon: Settings },
 ];
 
 export function DeveloperShell({ title, children }: { title: ReactNode; children: ReactNode }) {
@@ -40,7 +43,7 @@ export function DeveloperShell({ title, children }: { title: ReactNode; children
                 to={item.to}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition ${active ? "bg-slate-700/40 text-foreground" : "text-muted-foreground hover:bg-slate-700/20 hover:text-foreground"}`}
               >
-                <span className="text-base">{item.icon}</span>
+                <item.icon className="h-4 w-4 shrink-0" strokeWidth={2} />
                 {item.label}
               </Link>
             );

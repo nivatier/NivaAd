@@ -4,6 +4,7 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useRouterState,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
@@ -11,7 +12,8 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
-import { AuthProvider } from "@/hooks/use-auth";
+import { AuthProvider, useAuth } from "@/hooks/use-auth";
+import { RobotMascot } from "@/components/robot-mascot";
 
 function NotFoundComponent() {
   return (
@@ -125,7 +127,20 @@ function RootComponent() {
       <AuthProvider>
         {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
         <Outlet />
+        {/* Mounted here, not inside AppShell — AppShell is re-created by
+            every page's own route component, so a mascot mounted inside
+            it gets unmounted and remounted (state reset, mid-animation
+            snap) on every navigation. AuthGatedMascot below only shows
+            it once someone's actually signed in. */}
+        <AuthGatedMascot />
       </AuthProvider>
     </QueryClientProvider>
   );
+}
+
+function AuthGatedMascot() {
+  const { me } = useAuth();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  if (!me || pathname.startsWith("/developer")) return null;
+  return <RobotMascot />;
 }

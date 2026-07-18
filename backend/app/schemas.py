@@ -254,6 +254,177 @@ class RawModelsIn(BaseModel):
     models: dict
 
 
+class RawThemesOut(BaseModel):
+    """Create Ad's Text Theme Reference chips + Image Theme Reference
+    gallery, unvalidated shape — same bulk-JSON-edit pattern as
+    RawModelsOut/RawModelsIn above."""
+    themes: dict
+
+
+class RawThemesIn(BaseModel):
+    themes: dict
+
+
+class ThemeThumbnailUploadIn(BaseModel):
+    image: str  # base64 data URL
+
+
+class ThemeThumbnailUploadOut(BaseModel):
+    url: str
+
+
+class ImageThemeEditorOut(BaseModel):
+    """Developer > Themes > Image Theme tab — fully visual, no JSON shown.
+    Every style tag and every product-category tag gets its own editable
+    prompt (and, for the image-reference variant, its own thumbnail)."""
+    style_tags: list[str]
+    category_tags: list[str]
+    text_for_image: dict  # {"style": {tag: prompt_str}, "product": {tag: prompt_str}}
+    image_for_image: dict  # {"style": {tag: {"thumbnail": url, "prompt": str}}, "product": {...}}
+
+
+class ImageThemeEditorIn(BaseModel):
+    text_for_image: dict
+    image_for_image: dict
+
+
+class AddThemeTagIn(BaseModel):
+    axis: str  # "style" | "category"
+    tag: str = Field(min_length=1, max_length=60)
+
+
+class ThemeAiVisionModelOut(BaseModel):
+    id: str
+    label: str
+    model: str
+
+
+class ThemeAiSettingsOut(BaseModel):
+    text_model_id: str | None
+    vision_model_id: str | None
+    image_transform_model_id: str | None
+    vision_models: list[ThemeAiVisionModelOut]
+
+
+class ThemeAiSettingsIn(BaseModel):
+    text_model_id: str | None = None
+    vision_model_id: str | None = None
+    image_transform_model_id: str | None = None
+
+
+class AddVisionModelIn(BaseModel):
+    label: str = Field(min_length=1, max_length=100)
+    model: str = Field(min_length=1, max_length=200)
+
+
+class GenerateTagPromptIn(BaseModel):
+    axis: str  # "style" | "category"
+    tag: str
+
+
+class GenerateTagPromptOut(BaseModel):
+    prompt: str
+
+
+class AnalyzeThemeImageIn(BaseModel):
+    image: str  # base64 data URL
+
+
+class AnalyzeThemeImageOut(BaseModel):
+    matched_style_tags: list[str]
+    matched_category_tags: list[str]
+    new_style_tag: str | None
+    new_category_tag: str | None
+    prompt: str
+    thumbnail_url: str
+
+
+class ImageGalleryEntryIn(BaseModel):
+    id: str
+    label: str
+    thumbnail: str
+    style_tags: list[str] = []
+    category_tags: list[str] = []
+    base_prompt: str
+
+
+class GenerateAllMissingOut(BaseModel):
+    editor: ImageThemeEditorOut
+    filled: int
+    skipped: int
+
+
+class TextThemeSelectionOut(BaseModel):
+    """Company-facing (Create Ad) equivalent of the Text for Image editor
+    — same style/product prompt maps, read-only."""
+    style_tags: list[str]
+    category_tags: list[str]
+    style_prompts: dict
+    category_prompts: dict
+
+
+class AssistantHintOut(BaseModel):
+    id: str
+    key: str
+    label: str
+    message: str
+    audio_url: str | None = None
+
+
+
+class AssistantSettingsOut(BaseModel):
+    typing_ms_per_char: int
+    tts_voice: str
+    tts_model: str
+    intro_audio_url: str | None = None
+
+
+class AssistantSettingsIn(BaseModel):
+    typing_ms_per_char: int = Field(ge=8, le=120)
+    tts_voice: str = "nova"
+    tts_model: str = "openai/gpt-audio-mini"
+
+
+class GenerateIntroAudioIn(BaseModel):
+    text: str = Field(min_length=1, max_length=600)
+
+
+class AddAssistantHintIn(BaseModel):
+    key: str = Field(min_length=1, max_length=100)
+    label: str = Field(min_length=1, max_length=100)
+    message: str = Field(min_length=1, max_length=600)
+
+
+class UpdateAssistantHintIn(BaseModel):
+    label: str = Field(min_length=1, max_length=100)
+    message: str = Field(min_length=1, max_length=600)
+
+
+class TextStylePresetOut(BaseModel):
+    id: str
+    label: str
+    font_style: str
+    text_color: str
+    accent_color: str
+    size: str
+
+
+class AddTextStylePresetIn(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    font_style: str = ""
+    text_color: str = ""
+    accent_color: str = ""
+    size: str = ""
+
+
+class UpdateTextStylePresetIn(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    font_style: str = ""
+    text_color: str = ""
+    accent_color: str = ""
+    size: str = ""
+
+
 # ---------- Developer (platform operator) — fully separate from the
 # per-company user/admin system above; never references a User or
 # Company row ----------
@@ -460,6 +631,16 @@ class VideoShotIn(BaseModel):
     duration: int = Field(ge=1, le=60)  # outer sanity bound only — REAL enforcement is against the company's active video tier's min_duration/max_duration, done in the endpoint (services/credits.py: DEFAULT_MODEL_CFG), not here
 
 
+class CarouselSlideThemeIn(BaseModel):
+    """Per-slide Text/Image Theme Reference override for one carousel
+    slide — same shape as the ad-level env/image_scene/text_overlay,
+    just scoped to a single slide. A field left None on a given slide
+    falls back to that ad-level value instead of overriding it."""
+    env: str | None = None
+    image_scene: str | None = None
+    text_overlay: str | None = None
+
+
 class AdCreateIn(BaseModel):
     product_name: str = Field(min_length=1, max_length=200)
     description: str = Field(min_length=10, max_length=3000)
@@ -469,6 +650,7 @@ class AdCreateIn(BaseModel):
     tone: str = "Professional"
     env: str | None = None
     image_scene: str | None = None
+    text_overlay: str | None = None  # positioned text (headline/badge/body etc.) from an Image Theme Reference pick — kept separate from env/image_scene so the prompt builder only renders it once
     product_image: str | None = None
     product_image_url: str | None = None
     tagline: str | None = None
@@ -481,6 +663,7 @@ class AdCreateIn(BaseModel):
     text_prompt_override: str | None = None
     image_prompt_override: str | None = None
     carousel_slides: list[str] | None = None  # per-slide image descriptions, in order — length determines carousel image count (server enforces CAROUSEL_MAX_IMAGES)
+    carousel_theme: list[CarouselSlideThemeIn | None] | None = None  # per-slide Text/Image Theme Reference override — each slide can have its OWN env/image_scene/text_overlay instead of sharing the ad-level one; a null entry (or a shorter list) means that slide falls back to the shared theme above
     video_shots: list[VideoShotIn] | None = None  # one or more {prompt, duration} shots — if more than one, combined into a single timing-marked prompt sent as ONE generation call (server enforces MAX_VIDEO_SHOTS and validates the TOTAL duration against the company's active tier)
     video_prompt_override: str | None = None  # the confirmed/edited prompt from the preview popup — now applies for ANY shot count (not just single-shot), since preview always runs shot review (if configured) before showing it; when present, used directly at generation time instead of rebuilding from video_shots, so review + edits aren't silently redone or lost
     video_frame_image: str | None = None  # raw base64 data URL, freshly uploaded — a DEDICATED image for the video's starting frame, deliberately separate from product_image (used for image generation), so it's always unambiguous whether an image is actually being sent to the video API
@@ -575,6 +758,7 @@ class PromptPreviewIn(BaseModel):
     tone: str = "Professional"
     env: str | None = None
     image_scene: str | None = None
+    text_overlay: str | None = None  # see AdCreateIn.text_overlay
     has_photo: bool = False
     tagline: str | None = None
     platforms: list[str] = Field(min_length=1)
