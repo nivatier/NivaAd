@@ -8,7 +8,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -141,6 +141,21 @@ function RootComponent() {
 function AuthGatedMascot() {
   const { me } = useAuth();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  // Clear the intro guard only when a real logout happens (me goes from
+  // set → null). A page refresh also briefly sets me=null while the auth
+  // request is in flight, but in that case the component re-renders (not
+  // unmounts), so we can detect it here via useEffect.
+  const prevMeRef = useRef<typeof me>(me);
+  useEffect(() => {
+    if (prevMeRef.current && !me) {
+      // me just became null — real logout, not just a refresh load delay
+      sessionStorage.removeItem("novaSessionActive");
+      sessionStorage.removeItem("novaPos");
+    }
+    prevMeRef.current = me;
+  }, [me]);
+
   if (!me || pathname.startsWith("/developer")) return null;
   return <RobotMascot />;
 }

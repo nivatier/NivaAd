@@ -152,6 +152,86 @@ DEFAULT_IMAGE_THEMES = [
 ]
 
 
+DEFAULT_VIDEO_THEMES = [
+    {
+        "id": "cinematic-reveal",
+        "label": "Cinematic Product Reveal",
+        "thumbnail": None,
+        "category_tags": ["General / Any product", "Tech & Gadgets", "Cosmetics & Skincare"],
+        "style_notes": "Dark, dramatic studio lighting. The product emerges from shadow into a single spotlight beam. Premium, high-end commercial feel.",
+        "shots": [
+            {
+                "label": "Opening — emerge from darkness",
+                "duration": 3,
+                "prompt_template": "Cinematic advertising video for {product}. The product starts completely in shadow, then a single spotlight slowly sweeps across it from left to right, revealing its form with dramatic studio rim lighting. Camera holds steady. Smooth, tension-building motion. High-end commercial advertising style, no text overlay.",
+            },
+            {
+                "label": "Hero — slow orbit",
+                "duration": 4,
+                "prompt_template": "Cinematic advertising video for {product}. Slow, smooth 360-degree orbit around the product, positioned on a reflective black surface, soft bokeh background. The camera maintains the same height throughout, pace is calm and premium. High-end commercial advertising style, no text overlay.",
+            },
+        ],
+    },
+    {
+        "id": "fast-social",
+        "label": "Fast-Paced Social Ad",
+        "thumbnail": None,
+        "category_tags": ["Fashion & Apparel", "Food & Beverage", "General / Any product"],
+        "style_notes": "Energetic, quick cuts, vibrant colours. Designed for Instagram Reels and TikTok. Attention-grabbing from the first frame.",
+        "shots": [
+            {
+                "label": "Hook — product close-up snap",
+                "duration": 2,
+                "prompt_template": "High-energy social media ad for {product}. Quick snap zoom into a close-up of the product, bright vibrant studio background, punchy colour grading, dynamic camera shake on impact. Fast-cut advertising style, no text overlay.",
+            },
+            {
+                "label": "Feature — rapid spin",
+                "duration": 2,
+                "prompt_template": "High-energy social media ad for {product}. Product spins rapidly on a colourful gradient pedestal, confetti or light particles bursting outward, bright saturated colours, fast-paced motion. Trendy social media commercial style, no text overlay.",
+            },
+            {
+                "label": "Close — hero freeze",
+                "duration": 2,
+                "prompt_template": "High-energy social media ad for {product}. Product comes to a confident stop in the centre frame, backlight flare, bold graphic background. Final hold shot, energetic commercial look, no text overlay.",
+            },
+        ],
+    },
+    {
+        "id": "luxury-lifestyle",
+        "label": "Luxury Lifestyle",
+        "thumbnail": None,
+        "category_tags": ["Cosmetics & Skincare", "Fashion & Apparel", "Jewellery & Watches"],
+        "style_notes": "Slow, aspirational. Soft natural light, muted gold/cream tones. Evokes premium lifestyle brands. Calm and elegant pacing.",
+        "shots": [
+            {
+                "label": "Ambient setting",
+                "duration": 3,
+                "prompt_template": "Luxury advertising video for {product}. Slow gentle push-in toward the product resting on a marble surface, soft natural morning light from one side, muted cream and warm gold tones, shallow depth of field with bokeh background. Elegant slow pace, no text overlay.",
+            },
+            {
+                "label": "Detail close-up",
+                "duration": 3,
+                "prompt_template": "Luxury advertising video for {product}. Extreme close-up slowly gliding across the product surface, revealing texture and material quality, soft fill light catching premium details. Macro cinematic look, calm premium pace, no text overlay.",
+            },
+        ],
+    },
+    {
+        "id": "clean-studio",
+        "label": "Clean Studio",
+        "thumbnail": None,
+        "category_tags": ["General / Any product", "Tech & Gadgets", "Food & Beverage"],
+        "style_notes": "Minimal, timeless. White or light grey studio, soft even lighting. Works for any product category. Safe, professional default.",
+        "shots": [
+            {
+                "label": "Float & rotate",
+                "duration": 4,
+                "prompt_template": "Clean professional advertising video for {product}. Product floats gently in a pure white studio environment, soft even lighting from above, slowly rotating 360 degrees. Minimal, airy, e-commerce commercial style, no text overlay, no watermark.",
+            },
+        ],
+    },
+]
+
+
 async def get_themes(db) -> dict:
     row = await db.get(ModelConfig, 1)
     stored = (row.config if row and row.config else {}).get("themes") or {}
@@ -165,6 +245,7 @@ async def get_themes(db) -> dict:
     return {
         "image_themes": image_themes,
         "text_themes": stored.get("text_themes", DEFAULT_TEXT_THEMES),
+        "video_themes": stored.get("video_themes", DEFAULT_VIDEO_THEMES),
         "style_tags": stored.get("style_tags", DEFAULT_STYLE_TAGS),
         "category_tags": stored.get("category_tags", DEFAULT_CATEGORY_TAGS),
     }
@@ -324,6 +405,7 @@ async def set_image_theme_editor(db, text_for_image: dict, image_for_image: dict
     themes.setdefault("category_tags", DEFAULT_CATEGORY_TAGS)
     themes.setdefault("text_themes", DEFAULT_TEXT_THEMES)
     themes.setdefault("image_themes", DEFAULT_IMAGE_THEMES)
+    themes.setdefault("video_themes", DEFAULT_VIDEO_THEMES)
     config["themes"] = themes
     row.config = config
     flag_modified(row, "config")

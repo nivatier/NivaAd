@@ -15,7 +15,7 @@ from app.schemas import (
     AdCreateIn, AdCreatedOut, AdListOut, AdOut, AdPatchIn, AdScheduledPostOut, AssistantHintOut,
     AssistantSettingsOut, AvailableModelOut, AvailableModelsOut, PostAdIn, PreviewCostIn, PreviewCostOut,
     PromptPreviewIn, PromptPreviewOut, RawThemesOut, RefineIn, RetentionInfoOut, TextStylePresetOut,
-    TextThemeSelectionOut,
+    TextThemeSelectionOut, VideoThemeOut, VideoThemeShotOut,
 )
 from app.services import credits as credit_svc
 from app.services import linkedin
@@ -101,6 +101,22 @@ async def get_text_style_presets_endpoint(user: User = Depends(get_current_user)
     """Text-overlay style presets for the Headline/Discount badge/Body
     fields (Developer > Themes > Text Styles), read-only here."""
     return [TextStylePresetOut(**p) for p in await themes_svc.get_text_style_presets(db)]
+
+
+@router.get("/video-themes", response_model=list[VideoThemeOut])
+async def get_video_themes(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Video themes for the Create Ad page — each carries pre-written
+    shot prompt templates the user can browse and select instead of
+    typing raw prompts."""
+    themes = await themes_svc.get_themes(db)
+    return [
+        VideoThemeOut(
+            id=t["id"], label=t["label"], thumbnail=t.get("thumbnail"),
+            category_tags=t.get("category_tags", []), style_notes=t.get("style_notes", ""),
+            shots=[VideoThemeShotOut(**s) for s in t.get("shots", [])],
+        )
+        for t in themes.get("video_themes", [])
+    ]
 
 
 @router.get("/assistant-hints", response_model=list[AssistantHintOut])

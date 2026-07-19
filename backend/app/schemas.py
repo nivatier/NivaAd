@@ -273,6 +273,21 @@ class ThemeThumbnailUploadOut(BaseModel):
     url: str
 
 
+class VideoThemeShotOut(BaseModel):
+    label: str
+    duration: int
+    prompt_template: str
+
+
+class VideoThemeOut(BaseModel):
+    id: str
+    label: str
+    thumbnail: str | None = None
+    category_tags: list[str]
+    style_notes: str
+    shots: list[VideoThemeShotOut]
+
+
 class ImageThemeEditorOut(BaseModel):
     """Developer > Themes > Image Theme tab — fully visual, no JSON shown.
     Every style tag and every product-category tag gets its own editable

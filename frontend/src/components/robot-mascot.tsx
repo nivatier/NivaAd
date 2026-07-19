@@ -6,7 +6,27 @@ import { fetchAndCacheAudio, pruneAudioCache } from "@/lib/audio-cache";
  * the header. Expressed as px from the top-right corner of the viewport
  * so it stays put across pages without a ref into a specific DOM node. */
 const DOCK = { top: 30, right: 300 };
-const ROBOT_SIZE = 120;
+const ROBOT_SIZE = 120;      // desktop
+const ROBOT_SIZE_SM = 68;    // tablet / small desktop
+const ROBOT_SIZE_XS = 52;    // mobile
+
+/** Returns the current robot size and dock position based on viewport width.
+ * Called on every render (window.innerWidth is instant, no event needed) so
+ * the mascot automatically repositions when the browser is resized. */
+function getResponsiveLayout() {
+  if (typeof window === "undefined") return { size: ROBOT_SIZE, dockTop: DOCK.top, dockRight: DOCK.right };
+  const vw = window.innerWidth;
+  if (vw < 480) {
+    // Mobile: tiny, bottom-right corner (clear of browser chrome at the top)
+    return { size: ROBOT_SIZE_XS, dockTop: window.innerHeight - ROBOT_SIZE_XS - 72, dockRight: 12 };
+  }
+  if (vw < 1024) {
+    // Tablet: medium, top-right but with a smaller right offset since there's no desktop sidebar
+    return { size: ROBOT_SIZE_SM, dockTop: DOCK.top, dockRight: 16 };
+  }
+  // Desktop: full size, near the account info block
+  return { size: ROBOT_SIZE, dockTop: DOCK.top, dockRight: DOCK.right };
+}
 const GREETING_MS = 650; // wave-hello duration before settling in to explain
 const SLEEP_ANNOUNCE_MS = 1900; // how long the "going to sleep" bubble stays up
 const WAKE_ANNOUNCE_MS = 1600; // how long the "I'm awake!" bubble stays up
@@ -42,9 +62,17 @@ export function RobotMascot() {
   });
   const [phase, setPhase] = useState<Phase>(awake ? "idle" : "asleep");
   const introMsgRef = useRef<string | null>(null); // set while the intro is mid-play, so the fetch can trigger audio if it resolves late
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null); // null = docked
-  const [introSize, setIntroSize] = useState(ROBOT_SIZE); // actual px size during intro — computed from window height at mount
-  const [dialog, setDialog] = useState<{ text: string; top: number; left: number; typed: number } | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(() => {
+    // Restore position from sessionStorage on refresh.
+    // novaSessionActive being set means we've already had a session this tab.
+    if (typeof window === "undefined") return null;
+    if (!sessionStorage.getItem("novaSessionActive")) return null;
+    const stored = sessionStorage.getItem("novaPos");
+    if (!stored) return null;
+    try { return JSON.parse(stored); } catch { return null; }
+  }); // null = docked
+  const [introSize, setIntroSize] = useState(0); // 0 = use baseSize; >0 = big intro face
+  const [dialog, setDialog] = useState<{ text: string; typed: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [fidget, setFidget] = useState<Fidget>(null);
   const [hints, setHints] = useState<Record<string, string>>({});
@@ -127,6 +155,7 @@ export function RobotMascot() {
         // with a null URL and fell back to speech synthesis or silence.
         if (introMsgRef.current) {
           playOrSpeak(introMsgRef.current, s.intro_audio_url);
+          introMsgRef.current = null; // consumed — prevent any further double-play
         }
       }
       if (s.typing_ms_per_char) TYPE_MS_PER_CHAR = s.typing_ms_per_char;
@@ -140,18 +169,45 @@ export function RobotMascot() {
     localStorage.setItem("robotAwake", String(awake));
   }, [awake]);
 
-  // Login intro: Nova's face fills ~50% of the viewport, introduces herself,
-  // then zooms out (CSS transition on width/height) to the dock. Plays once
-  // per mount — since AuthGatedMascot unmounts on logout and remounts on
-  // next login, this fires on every real login.
+  useEffect(() => {
+    if (pos) sessionStorage.setItem("novaPos", JSON.stringify(pos));
+    else sessionStorage.removeItem("novaPos");
+  }, [pos]);
+
+  // novaSessionActive is set when the intro plays and intentionally lives
+  // beyond component unmount — because AuthGatedMascot temporarily unmounts
+  // RobotMascot while me=null (auth loading on page refresh), which is not
+  // a real logout. Clearing on unmount caused the intro to replay on refresh.
+  // Instead we clear it explicitly from __root.tsx on a detected real logout.
+  useEffect(() => {
+    return () => {
+      sessionStorage.removeItem("novaPos");
+      // Stop any playing audio immediately on unmount (logout)
+      window.speechSynthesis?.cancel();
+      if (audioElRef.current) {
+        audioElRef.current.pause();
+        audioElRef.current.currentTime = 0;
+        audioElRef.current = null;
+      }
+      // novaSessionActive NOT cleared here — see above.
+    };
+  }, []);
+
+  // Login intro: plays once per login.
+  // Guard: novaSessionActive absent in sessionStorage = fresh login → play.
+  //        novaSessionActive present = page refresh → skip.
+  // We set it here (not in the mount effect above) so setting it is atomic
+  // with the decision to play — no race between effects.
   useEffect(() => {
     if (!awake || introPlayedRef.current) return;
+    if (sessionStorage.getItem("novaSessionActive")) return; // refresh — skip
     introPlayedRef.current = true;
+    sessionStorage.setItem("novaSessionActive", "1"); // mark session so refresh skips
 
     // Start size: face covers ~50 % of screen height.
     const bigSize = Math.round(window.innerHeight * 0.5);
     const bigLeft = Math.round(window.innerWidth / 2 - bigSize / 2);
-    const bigTop = Math.round(window.innerHeight * 0.05); // 5% from top
+    const bigTop = Math.round(window.innerHeight * 0.05);
 
     const introMsg =
       `Hi there! I'm ${ROBOT_NAME} — your in-app assistant! ` +
@@ -161,33 +217,41 @@ export function RobotMascot() {
 
     introMsgRef.current = introMsg; // mark intro as in-progress
 
-    // Step 1 — appear big and centred immediately (no transition yet).
     setIntroSize(bigSize);
     setPos({ top: bigTop, left: bigLeft });
     setPhase("greeting");
     setDialog({
       text: introMsg,
-      top: bigTop + bigSize + 16,
-      left: Math.max(16, Math.min(bigLeft + bigSize / 2 - 140, window.innerWidth - 290)),
       typed: reducedMotion ? introMsg.length : 0,
     });
 
-    // Step 2 — after a short greeting wave, start typing and play audio.
-    // Use introAudioUrlRef (not the state) so even if the /ads/assistant-settings
-    // fetch resolves AFTER this timer fires, the closure reads the latest URL.
+    // After the greeting wave, start typing.
+    // Do NOT call playOrSpeak here — if the fetch hasn't resolved yet
+    // introAudioUrlRef.current is null, which would make us play speech
+    // synthesis, and then the fetch arriving later would play the stored
+    // audio on top (double audio). Instead, the fetch-resolve handler
+    // (below in the fetch useEffect) calls playOrSpeak as soon as the URL
+    // arrives. If the fetch resolved BEFORE this timer, introAudioUrlRef
+    // already has the URL and we play it now.
     greetTimer.current = window.setTimeout(() => {
       setPhase("explaining");
-      playOrSpeak(introMsg, introAudioUrlRef.current || undefined);
+      if (introAudioUrlRef.current) {
+        // URL already loaded — play now and clear the ref so the fetch-resolve
+        // handler (below) knows not to play it again.
+        playOrSpeak(introMsg, introAudioUrlRef.current);
+        introMsgRef.current = null;
+      }
+      // If no URL yet, introMsgRef.current stays set so the fetch-resolve
+      // handler can trigger audio when the URL arrives.
     }, reducedMotion ? 0 : GREETING_MS);
 
-    // Step 3 — after the message is fully typed + a pause, zoom out to dock.
     const typingMs = reducedMotion ? 0 : introMsg.length * TYPE_MS_PER_CHAR;
     introTimer.current = window.setTimeout(() => {
-      setIntroSize(ROBOT_SIZE);
+      setIntroSize(0);
       setDialog(null);
       setPos(null);
       setPhase("idle");
-      introMsgRef.current = null; // intro done
+      introMsgRef.current = null;
     }, GREETING_MS + typingMs + INTRO_HOLD_MS);
   }, [awake, reducedMotion]);
 
@@ -203,11 +267,13 @@ export function RobotMascot() {
     if (!text) return;
     clearTimers();
     setFidget(null);
+    setIntroSize(0); // collapse from big-intro size immediately if user clicks mid-intro
+    introMsgRef.current = null;
     const rect = el.getBoundingClientRect();
-    const left = Math.min(rect.right + 16, window.innerWidth - ROBOT_SIZE - 8);
-    const top = Math.max(8, rect.top + rect.height / 2 - ROBOT_SIZE / 2);
+    const left = Math.min(rect.right + 16, window.innerWidth - baseSize - 8);
+    const top = Math.max(8, rect.top + rect.height / 2 - baseSize / 2);
     setPos({ top, left });
-    setDialog({ text, top: top + 6, left: Math.min(left + ROBOT_SIZE + 10, window.innerWidth - 260), typed: reducedMotion ? text.length : 0 });
+    setDialog({ text, typed: reducedMotion ? text.length : 0 });
     setPhase("greeting");
     greetTimer.current = window.setTimeout(() => {
       setPhase("explaining");
@@ -217,6 +283,8 @@ export function RobotMascot() {
 
   function goHome() {
     clearTimers();
+    setIntroSize(0); // collapse from big-intro size if user clicks away mid-intro
+    introMsgRef.current = null;
     setDialog(null);
     setPos(null);
     setPhase("idle");
@@ -239,7 +307,7 @@ export function RobotMascot() {
       const target = e.target as HTMLElement;
       const hintEl = target.closest<HTMLElement>("[data-robot-hint-key]");
       if (hintEl) {
-        if (!awake) setAwake(true); // clicking a hinted item always wakes it up, even if it was left asleep from a previous session
+        if (!awake) return; // asleep — ignore all hint clicks until the green button wakes her
         visit(hintEl);
         return;
       }
@@ -295,10 +363,13 @@ export function RobotMascot() {
   function goToSleep() {
     clearTimers();
     setFidget(null);
-    const announceAt = pos ?? { top: DOCK.top, left: dockLeft() };
-    const msg = "Going to sleep now — wake me up by pressing the blue antenna!";
-    setDialog({ text: msg, top: announceAt.top + 6, left: Math.min(announceAt.left + ROBOT_SIZE + 10, window.innerWidth - 260), typed: msg.length });
+    setIntroSize(0);
+    introMsgRef.current = null;
+    const announceAt = pos ?? { top: dockTop, left: dockLeft() };
+    const msg = hints["system:sleep"] || "Going to sleep now — wake me up by pressing the green button!";
+    setDialog({ text: msg, typed: msg.length });
     setPhase("sleep-announce");
+    playOrSpeak(msg, audioMap["system:sleep"]);
     sleepTimer.current = window.setTimeout(() => {
       setAwake(false);
       setDialog(null);
@@ -309,11 +380,14 @@ export function RobotMascot() {
 
   function wakeUp() {
     clearTimers();
+    setIntroSize(0);
+    introMsgRef.current = null;
     setPos(null);
     setAwake(true);
-    const msg = "I'm awake and ready to help!";
-    setDialog({ text: msg, top: DOCK.top + 6, left: Math.min(dockLeft() + ROBOT_SIZE + 10, window.innerWidth - 260), typed: msg.length });
+    const msg = hints["system:wake"] || "I'm awake and ready to help!";
+    setDialog({ text: msg, typed: msg.length });
     setPhase("wake-announce");
+    playOrSpeak(msg, audioMap["system:wake"]);
     wakeTimer.current = window.setTimeout(() => {
       setDialog(null);
       setPhase("idle");
@@ -329,7 +403,7 @@ export function RobotMascot() {
     e.preventDefault();
     const startX = e.clientX;
     const startY = e.clientY;
-    const startTop = pos ? pos.top : DOCK.top;
+    const startTop = pos ? pos.top : dockTop;
     const startLeft = pos ? pos.left : dockLeft(currentSize);
     draggedRef.current = false;
     setFidget(null);
@@ -359,19 +433,20 @@ export function RobotMascot() {
     window.addEventListener("mouseup", onUp);
   }
 
-  function dockLeft(size: number = ROBOT_SIZE) {
-    return window.innerWidth - DOCK.right - size;
+  const { size: baseSize, dockTop, dockRight } = getResponsiveLayout();
+  function dockLeft(size: number = baseSize) {
+    return window.innerWidth - dockRight - size;
   }
 
-  const currentSize = introSize; // during intro: bigSize; otherwise ROBOT_SIZE
+  const currentSize = introSize > 0 ? introSize : baseSize; // during intro: bigSize; otherwise responsive size
 
   const effectiveStyle: React.CSSProperties = pos
     ? { top: pos.top, left: pos.left }
-    : { top: DOCK.top, left: dockLeft(currentSize) };
+    : { top: dockTop, left: dockLeft(currentSize) };
 
   const antennaStyle: React.CSSProperties = pos
     ? { top: pos.top + currentSize * 0.65, left: pos.left + currentSize / 2 - 7 }
-    : { top: DOCK.top + currentSize * 0.65, left: dockLeft(currentSize) + currentSize / 2 - 7 };
+    : { top: dockTop + currentSize * 0.65, left: dockLeft(currentSize) + currentSize / 2 - 7 };
 
   const stillTyping = !!dialog && dialog.typed < dialog.text.length;
   const svgMode: "asleep" | "greeting" | "talking" | "idle" | "spin" | "flap" | "sad" | "excited" =
@@ -424,31 +499,68 @@ export function RobotMascot() {
             awake ? "bg-blue-400 shadow-[0_0_6px_2px_rgba(96,165,250,0.55)]" : "bg-green-400 shadow-[0_0_6px_2px_rgba(74,222,128,0.55)]"
           }`}
         />
-        {/* Mute toggle — small speaker icon below the sleep button */}
+      </div>
+
+      {/* Mute button — independently positioned ABOVE the robot.
+          Adjust the top/left offsets on line 519 (top) and line 520 (left)
+          to fine-tune placement. Currently: 36px above the robot top, centered. */}
+      <div
+        data-robot-ui
+        className={`fixed z-[201] transition-[top,left] ${instant ? "duration-0" : "duration-700"} ease-in-out`}
+        style={{
+          top:  (pos ? pos.top : dockTop) - 36,
+          left: (pos ? pos.left : dockLeft(currentSize)) + currentSize / 2 - 12,
+        }}
+      >
         <button
           type="button"
           title={muted ? "Unmute Nova" : "Mute Nova"}
           aria-label={muted ? "Unmute assistant" : "Mute assistant"}
           onClick={() => setMuted((m) => !m)}
-          className="h-3 w-3 rounded-full bg-white/20 text-[7px] leading-none flex items-center justify-center hover:bg-white/40 transition-colors"
-          style={{ fontSize: 7 }}
+          className={`h-6 w-6 rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-md ${
+            muted
+              ? "bg-slate-600/80 text-slate-300"
+              : "bg-slate-700/80 text-cyan-300"
+          }`}
         >
-          {muted ? "🔇" : "🔊"}
+          {muted ? (
+            <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+              <path d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z" />
+              <line x1="3" y1="3" x2="17" y2="17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+              <path d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0017 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.415z" />
+            </svg>
+          )}
         </button>
       </div>
 
-      {dialog && (
-        <div
-          data-robot-ui
-          className={`fixed z-[200] rounded-xl border px-3 py-2 text-xs leading-relaxed shadow-lg backdrop-blur ${currentSize > ROBOT_SIZE ? "max-w-[320px]" : "max-w-[240px]"} ${
-            phase === "sleep-announce" ? "border-blue-400/50 bg-card/95 text-foreground" : "border-primary/40 bg-card/95 text-foreground"
-          }`}
-          style={{ top: dialog.top, left: dialog.left }}
-        >
-          {dialog.text.slice(0, dialog.typed)}
-          {dialog.typed < dialog.text.length && <span className="animate-pulse">▍</span>}
-        </div>
-      )}
+      {dialog && (() => {
+        // Compute dialog position live from the robot's CURRENT position
+        // (pos state updates on every drag mousemove), so the bubble tracks
+        // the robot while being dragged instead of staying at its original spot.
+        const robotTop  = pos ? pos.top  : dockTop;
+        const robotLeft = pos ? pos.left : dockLeft(currentSize);
+        const dialogTop  = introSize > 0
+          ? robotTop + currentSize + 16                                        // intro: below the big face
+          : robotTop + 6;                                                      // normal: beside the robot
+        const dialogLeft = introSize > 0
+          ? Math.max(16, Math.min(robotLeft + currentSize / 2 - 140, window.innerWidth - 290))
+          : Math.min(robotLeft + currentSize + 10, window.innerWidth - 260);
+        return (
+          <div
+            data-robot-ui
+            className={`fixed z-[200] rounded-xl border px-3 py-2 text-xs leading-relaxed shadow-lg backdrop-blur ${introSize > 0 ? "max-w-[320px]" : "max-w-[240px]"} ${
+              phase === "sleep-announce" ? "border-blue-400/50 bg-card/95 text-foreground" : "border-primary/40 bg-card/95 text-foreground"
+            }`}
+            style={{ top: dialogTop, left: dialogLeft }}
+          >
+            {dialog.text.slice(0, dialog.typed)}
+            {dialog.typed < dialog.text.length && <span className="animate-pulse">▍</span>}
+          </div>
+        );
+      })()}
     </>
   );
 }

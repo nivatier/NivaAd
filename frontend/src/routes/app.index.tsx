@@ -7,6 +7,7 @@ import { TimezoneSelect } from "@/components/timezone-picker";
 import { detectedTimeZone, zonedWallTimeToUtcNaiveIso } from "@/lib/timezone";
 import { api, type AvailableModelsOut } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
+import { NovaHint } from "@/components/nova-hint";
 
 export const Route = createFileRoute("/app/")({
   component: CreateAd,
@@ -297,6 +298,11 @@ function CreateAd() {
   const [liveVideoCredits, setLiveVideoCredits] = useState<number | null>(null);
   const [liveTextCredits, setLiveTextCredits] = useState<number | null>(null);
   const [videoShots, setVideoShots] = useState<{ prompt: string; duration: number }[]>([{ prompt: "", duration: 6 }]);
+  const [videoThemes, setVideoThemes] = useState<{ id: string; label: string; thumbnail: string | null; category_tags: string[]; style_notes: string; shots: { label: string; duration: number; prompt_template: string }[] }[]>([]);
+  const [selectedVideoThemeId, setSelectedVideoThemeId] = useState<string | null>(null);
+  const [videoRefMode, setVideoRefMode] = useState<"custom" | "theme">("custom");
+  const [showVideoThemeModal, setShowVideoThemeModal] = useState(false);
+  const [videoModalFilterCategory, setVideoModalFilterCategory] = useState("All");
   const [refineVideoPrompt, setRefineVideoPrompt] = useState(false);
   const [refineVideoFrame, setRefineVideoFrame] = useState(false);
 
@@ -528,7 +534,10 @@ function CreateAd() {
         setVideoResolution(models.video[0].resolutions?.[0] ?? null);
         setVideoShots([{ prompt: "", duration: models.video[0].min_duration ?? 6 }]);
       }
-    }).catch(() => { /* non-fatal — dropdowns just won't have options until this loads, generation will be blocked with a clear message until then */ });
+    }).catch(() => {});
+    api("/ads/video-themes").then((themes: typeof videoThemes) => {
+      setVideoThemes(themes);
+    }).catch(() => {});
   }, []);
 
   // Pre-fill the brief when arriving from Products → "New ad" (see app.products.tsx).
@@ -796,21 +805,21 @@ function CreateAd() {
           </div>
 
           <h2 className="mt-6 font-display text-xl font-bold text-foreground">Tick what you need generated</h2>
-          <p className="mt-1 text-xs text-muted-foreground">Ad Text is always available. You can generate an AI Image OR an AI Video for this ad, not both — ticking one turns the other off.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Ad Text is always included. You can also generate an AI Image OR an AI Video — not both at once.</p>
 
           <div className="mt-4 grid gap-4 md:grid-cols-3">
             {/* ===== AD TEXT ===== */}
-            <div className={`rounded-xl border p-4 ${outputs.text ? "border-primary bg-primary/5" : "border-border"}`}>
-              <button onClick={() => setOutputs((o) => ({ ...o, text: !o.text }))} className="flex w-full items-center justify-between text-left">
+            <div className="rounded-xl border border-primary bg-primary/5 p-4">
+              <div className="flex w-full items-center justify-between">
                 <div>
-                  <div className="text-sm font-semibold text-foreground">{outputs.text ? "☑" : "☐"} ✍️ Ad Text</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">~1 credit</div>
+                  <div className="text-sm font-semibold text-foreground">✅ ✍️ Ad Text</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">~1 credit · always included</div>
                 </div>
-              </button>
+              </div>
               {outputs.text && (
                 <div className="mt-4 space-y-4">
                   <div>
-                    <div className="text-xs font-semibold text-foreground mb-2">Text Model</div>
+                    <div className="text-xs font-semibold text-foreground mb-2">Text Model <NovaHint hintKey="field:text-model" /></div>
                     <select
                       value={textModelId || ""}
                       onChange={(e) => setTextModelId(e.target.value)}
@@ -823,7 +832,7 @@ function CreateAd() {
                     </select>
                   </div>
                   <div>
-                    <div className="text-xs font-semibold text-foreground mb-2">Variations</div>
+                    <div className="text-xs font-semibold text-foreground mb-2">Variations <NovaHint hintKey="field:variations" /></div>
                     <div className="flex gap-2">
                       {[[1, "1 version"], [3, "3 variations ×2cr"]].map(([v, l]) => (
                         <button key={v as number} onClick={() => setVariations(v as number)} className={`rounded-full border px-4 py-2 text-xs ${variations === v ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>{l}</button>
@@ -850,7 +859,7 @@ function CreateAd() {
                     <Input placeholder="e.g. 20% off launch week, free shipping" value={offer} onChange={(e) => setOffer(e.target.value)} />
                   </Field>
                   <div>
-                    <div className="text-sm font-medium text-foreground">Campaign goal & tone</div>
+                    <div className="text-sm font-medium text-foreground">Campaign goal & tone <NovaHint hintKey="field:campaign-goal-tone" /></div>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {GOALS.map((g) => <Chip key={g} active={goal === g} onClick={() => setGoal(g)}>{g}</Chip>)}
                     </div>
@@ -865,19 +874,17 @@ function CreateAd() {
             {/* ===== AI IMAGE ===== */}
             <div className={`rounded-xl border p-4 ${outputs.image ? "border-primary bg-primary/5" : outputs.video ? "border-border opacity-40" : "border-border"}`}>
               <button
-              disabled={outputs.video}
-              onClick={() => setOutputs((o) => ({ ...o, image: !o.image }))}
-              className="flex w-full items-center justify-between text-left disabled:cursor-not-allowed"
+              onClick={() => setOutputs((o) => ({ ...o, image: !o.image, video: o.image ? o.video : false }))}
+              className="flex w-full items-center justify-between text-left"
             >
               <div>
                 <div className="text-sm font-semibold text-foreground">{outputs.image ? "☑" : "☐"} 🖼️ AI Image</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{outputs.video ? "Turn off AI Video to pick this instead" : "~2 credits"}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">~2 credits</div>
               </div>
             </button>
-            {outputs.image && (
-              <div className="mt-4 space-y-4">
+            <div className={`mt-4 space-y-4 transition-opacity ${outputs.image ? "" : "opacity-40 pointer-events-none select-none"}`}>
                 <div>
-                  <div className="text-xs font-semibold text-foreground mb-2">Image Model</div>
+                  <div className="text-xs font-semibold text-foreground mb-2">Image Model <NovaHint hintKey="field:image-model" /></div>
                   <select
                     value={imageModelId || ""}
                     onChange={(e) => setImageModelId(e.target.value)}
@@ -891,10 +898,7 @@ function CreateAd() {
                 </div>
 
                 <div className="rounded-xl border border-border/60 bg-background/40 p-4">
-                  <div className="text-xs font-semibold text-foreground">Reference image (optional)</div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    If attached, the image generates around this exact photo. If not, it falls back to your product photo from Step 1 (if any), or is fully AI-imagined from your description.
-                  </p>
+                  <div className="text-xs font-semibold text-foreground">Reference image (optional) <NovaHint hintKey="field:image-reference" /></div>
                   {imageReferenceImage ? (
                     <div className="mt-3 flex items-center gap-3">
                       <img src={imageReferenceImage} alt="image reference" className="h-16 w-16 rounded-lg border border-border object-cover" />
@@ -913,7 +917,7 @@ function CreateAd() {
                 </div>
 
                 <div>
-                  <div className="text-xs font-semibold text-foreground mb-2">Image format</div>
+                  <div className="text-xs font-semibold text-foreground mb-2">Image format <NovaHint hintKey="field:image-format" /></div>
                   <div className="flex gap-2">
                     {[["single", "🖼 Single"], ["carousel", "🎠 Carousel"]].map(([f, l]) => (
                       <button key={f} onClick={() => setFormat(f)}
@@ -945,16 +949,16 @@ function CreateAd() {
                 )}
 
                 <div className="rounded-xl border border-border/60 bg-background/40 p-4">
-                  <label className="text-xs font-semibold text-foreground">{imageReferenceImage ? "Product placement & surroundings" : "Describe how the AI-generated image should look"}</label>
+                  <label className="text-xs font-semibold text-foreground">{imageReferenceImage ? "Product placement & surroundings" : "Describe how the AI-generated image should look"} <NovaHint hintKey="field:image-describe" /></label>
                   <div className="text-[11px] text-muted-foreground mt-1 mb-2">
                     {imageReferenceImage ? "💡 Describe how to place YOUR product and what should surround it. Pick a quick style below, or write your own in the box — whatever you type there is always what's actually used." : "💡 No photo uploaded — describe the background/environment for a fully AI-generated image."}
                   </div>
 
                   <div className="flex gap-2 mb-3">
                     {([["text", "✏️ Text Theme Reference", "field:text-theme-reference"], ["image", "🖼 Image Theme Reference", "field:image-theme-reference"]] as const).map(([m, l, hintKey]) => (
-                      <button key={m} type="button" data-robot-hint-key={hintKey} onClick={() => setRefMode(m)}
+                      <button key={m} type="button" onClick={() => setRefMode(m)}
                         className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${refMode === m ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
-                        {l}
+                        {l} <NovaHint hintKey={hintKey} />
                       </button>
                     ))}
                   </div>
@@ -1061,25 +1065,22 @@ function CreateAd() {
                   )}
                 </div>
               </div>
-            )}
           </div>
 
           {/* ===== AI VIDEO ===== */}
           <div className={`rounded-xl border p-4 ${outputs.video ? "border-primary bg-primary/5" : outputs.image ? "border-border opacity-40" : "border-border"}`}>
             <button
-              disabled={outputs.image}
-              onClick={() => setOutputs((o) => ({ ...o, video: !o.video }))}
-              className="flex w-full items-center justify-between text-left disabled:cursor-not-allowed"
+              onClick={() => setOutputs((o) => ({ ...o, video: !o.video, image: o.video ? o.image : false }))}
+              className="flex w-full items-center justify-between text-left"
             >
               <div>
                 <div className="text-sm font-semibold text-foreground">{outputs.video ? "☑" : "☐"} 🎬 AI Video</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{outputs.image ? "Turn off AI Image to pick this instead" : "~5 credits · takes a few minutes"}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">~5 credits · takes a few minutes</div>
               </div>
             </button>
-            {outputs.video && (
-              <div className="mt-4 space-y-4">
+            <div className={`mt-4 space-y-4 transition-opacity ${outputs.video ? "" : "opacity-40 pointer-events-none select-none"}`}>
                 <div>
-                  <div className="text-xs font-semibold text-foreground mb-2">Video Model</div>
+                  <div className="text-xs font-semibold text-foreground mb-2">Video Model <NovaHint hintKey="field:video-model" /></div>
                   <select
                     value={videoModelId || ""}
                     onChange={(e) => {
@@ -1132,10 +1133,7 @@ function CreateAd() {
                 </div>
 
                 <div className="rounded-xl border border-border/60 bg-background/40 p-4">
-                  <div className="text-xs font-semibold text-foreground">Reference image for the video (optional)</div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    If attached, the video opens on this exact photo (image-to-video). If not, the video is fully AI-generated from your prompt (text-to-video) — no image is sent either way unless you attach one here, deliberately separate from the image section's reference above.
-                  </p>
+                  <div className="text-xs font-semibold text-foreground">Reference image for the video (optional) <NovaHint hintKey="field:video-reference" /></div>
                   {selectedVideoModel?.supports_last_frame && (
                     <div className="mt-3 flex gap-2">
                       <button onClick={() => setVideoMode("single_reference")} className={`rounded-full border px-3 py-1.5 text-[11px] ${videoMode === "single_reference" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
@@ -1192,73 +1190,143 @@ function CreateAd() {
                 </div>
 
                 <div className="rounded-xl border border-border/60 bg-background/40 p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold text-foreground">Video shots</div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setVideoShots((s) => s.length > 1 ? s.slice(0, -1) : s)}
-                        disabled={videoShots.length <= 1}
-                        className="grid h-7 w-7 place-items-center rounded-full border border-border text-sm text-foreground hover:border-primary/40 disabled:opacity-40"
-                      >−</button>
-                      <span className="w-6 text-center text-sm font-semibold text-foreground">{videoShots.length}</span>
-                      <button
-                        onClick={() => setVideoShots((s) => s.length < MAX_VIDEO_SHOTS ? [...s, { prompt: "", duration: 6 }] : s)}
-                        disabled={videoShots.length >= MAX_VIDEO_SHOTS}
-                        className="grid h-7 w-7 place-items-center rounded-full border border-border text-sm text-foreground hover:border-primary/40 disabled:opacity-40"
-                      >＋</button>
-                    </div>
+                  {/* Two-tab switcher — mirrors Text/Image Theme Reference */}
+                  <div className="flex gap-2 mb-3">
+                    {([["custom", "✏️ Custom shots"], ["theme", "🎬 Video Theme Reference"]] as const).map(([m, l]) => (
+                      <button key={m} type="button" onClick={() => setVideoRefMode(m)}
+                        className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${videoRefMode === m ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
+                        {l}
+                      </button>
+                    ))}
+                    <NovaHint hintKey="field:video-theme" />
                   </div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    {videoShots.length > 1
-                      ? `Up to ${MAX_VIDEO_SHOTS} shots — combined into ONE continuous video (a single real generation, one flat cost), with each shot's own direction and timing followed in sequence.`
-                      : "One continuous shot — add more to describe several scenes within one video."}
-                    {selectedVideoModel && (
-                      selectedVideoModel.duration_options
-                        ? <> "<b className="text-foreground">{selectedVideoModel.label}</b>" only supports these exact total lengths: {selectedVideoModel.duration_options.map((d) => `${d}s`).join(", ")}.</>
-                        : <> "<b className="text-foreground">{selectedVideoModel.label}</b>" allows a total of {selectedVideoModel.min_duration}–{selectedVideoModel.max_duration}s across all shots.</>
-                    )}
-                  </p>
-                  <label className="mt-2 flex items-center gap-1.5 text-[11px] text-foreground">
-                    <input type="checkbox" checked={refineVideoPrompt} onChange={(e) => setRefineVideoPrompt(e.target.checked)} />
-                    ✨ Refine my shot wording with AI before generating (optional — your own wording is used as-is unless this is checked)
-                  </label>
-                  <div className="mt-3 space-y-3">
-                    {videoShots.map((shot, i) => (
-                      <div key={i} className="rounded-lg border border-border/60 bg-card/40 p-2.5">
+
+                  {videoRefMode === "theme" ? (
+                    <div className="mb-3">
+                      {/* Selected theme summary — mirrors image theme selected state */}
+                      {selectedVideoThemeId ? (() => {
+                        const theme = videoThemes.find((t) => t.id === selectedVideoThemeId)!;
+                        return (
+                          <div className="flex items-center gap-3 rounded-lg border border-primary/40 bg-primary/5 p-2 mb-3">
+                            {theme.thumbnail ? (
+                              <img src={theme.thumbnail} alt={theme.label} className="h-16 w-16 rounded-md object-cover shrink-0" />
+                            ) : (
+                              <div className="h-16 w-16 rounded-md bg-primary/10 flex items-center justify-center shrink-0 text-2xl">🎬</div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-semibold text-foreground">{theme.label}</div>
+                              <div className="text-[11px] text-muted-foreground">{theme.shots.length} shot{theme.shots.length > 1 ? "s" : ""} · {theme.shots.reduce((s, x) => s + x.duration, 0)}s total</div>
+                              <div className="text-[11px] text-muted-foreground truncate">{theme.style_notes}</div>
+                            </div>
+                            <button type="button" onClick={() => setShowVideoThemeModal(true)}
+                              className="shrink-0 rounded-full border border-primary/50 px-3 py-1.5 text-xs text-primary hover:bg-primary/10">
+                              Change theme
+                            </button>
+                          </div>
+                        );
+                      })() : (
+                        <button type="button" onClick={() => setShowVideoThemeModal(true)}
+                          className="w-full mb-3 rounded-lg border border-dashed border-primary/50 px-4 py-4 text-xs text-primary hover:bg-primary/5 flex items-center justify-center gap-2">
+                          🎬 Browse video themes
+                        </button>
+                      )}
+
+                      {/* Editable shots from selected theme */}
+                      {selectedVideoThemeId && (
+                        <div className="space-y-2">
+                          <div className="text-[11px] text-muted-foreground">Shot prompts — edit if needed:</div>
+                          {videoShots.map((shot, i) => {
+                            const themeShot = videoThemes.find((t) => t.id === selectedVideoThemeId)?.shots[i];
+                            return (
+                              <div key={i} className="rounded-lg border border-border/60 bg-card/40 p-2.5">
+                                <div className="flex items-start gap-2">
+                                  <span className="shrink-0 w-5 text-[11px] text-muted-foreground mt-0.5">#{i + 1}</span>
+                                  <div className="flex-1 min-w-0">
+                                    {themeShot && <div className="text-[10px] text-primary font-medium mb-1">{themeShot.label}</div>}
+                                    <textarea rows={2} value={shot.prompt}
+                                      onChange={(e) => setVideoShots((s) => s.map((x, idx) => idx === i ? { ...x, prompt: e.target.value } : x))}
+                                      className="w-full rounded-lg border border-input bg-input/40 px-3 py-1.5 text-[11px] text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" />
+                                  </div>
+                                  <span className="shrink-0 text-[11px] text-muted-foreground mt-1">{shot.duration}s</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* Custom shots tab */
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-[11px] text-muted-foreground">Shots</div>
                         <div className="flex items-center gap-2">
-                          <span className="w-5 shrink-0 text-[11px] text-muted-foreground">#{i + 1}</span>
-                          <input
-                            placeholder={videoShots.length > 1 ? `Describe shot ${i + 1} — style, angle, action (e.g. "slow orbit around the bottle")` : `Describe this shot (optional — e.g. "slow push-in on the product")`}
-                            value={shot.prompt}
-                            onChange={(e) => setVideoShots((s) => s.map((x, idx) => idx === i ? { ...x, prompt: e.target.value } : x))}
-                            className="w-full rounded-lg border border-input bg-input/40 px-3 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                          />
-                          <input
-                            type="number"
-                            value={shot.duration}
-                            disabled={!!(selectedVideoModel?.duration_options && videoShots.length === 1)}
-                            onChange={(e) => setVideoShots((s) => s.map((x, idx) => idx === i ? { ...x, duration: Number(e.target.value) || 0 } : x))}
-                            title={selectedVideoModel?.duration_options && videoShots.length === 1 ? "This model only supports exact lengths — use the buttons above instead" : undefined}
-                            className="w-16 shrink-0 rounded-lg border border-input bg-input/40 px-2 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
-                          />
-                          <span className="shrink-0 text-[11px] text-muted-foreground">sec</span>
+                          <button onClick={() => setVideoShots((s) => s.length > 1 ? s.slice(0, -1) : s)} disabled={videoShots.length <= 1}
+                            className="grid h-7 w-7 place-items-center rounded-full border border-border text-sm text-foreground hover:border-primary/40 disabled:opacity-40">−</button>
+                          <span className="w-6 text-center text-sm font-semibold text-foreground">{videoShots.length}</span>
+                          <button onClick={() => setVideoShots((s) => s.length < MAX_VIDEO_SHOTS ? [...s, { prompt: "", duration: 6 }] : s)} disabled={videoShots.length >= MAX_VIDEO_SHOTS}
+                            className="grid h-7 w-7 place-items-center rounded-full border border-border text-sm text-foreground hover:border-primary/40 disabled:opacity-40">＋</button>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                      <div className="space-y-2">
+                        {videoShots.map((shot, i) => (
+                          <div key={i} className="rounded-lg border border-border/60 bg-card/40 p-2.5">
+                            <div className="flex items-center gap-2">
+                              <span className="w-5 shrink-0 text-[11px] text-muted-foreground">#{i + 1}</span>
+                              <input
+                                placeholder={videoShots.length > 1 ? `Shot ${i + 1} — style, angle, action` : `Describe this shot (optional)`}
+                                value={shot.prompt}
+                                onChange={(e) => setVideoShots((s) => s.map((x, idx) => idx === i ? { ...x, prompt: e.target.value } : x))}
+                                className="w-full rounded-lg border border-input bg-input/40 px-3 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                              />
+                              <input type="number" value={shot.duration}
+                                disabled={!!(selectedVideoModel?.duration_options && videoShots.length === 1)}
+                                onChange={(e) => setVideoShots((s) => s.map((x, idx) => idx === i ? { ...x, duration: Number(e.target.value) || 0 } : x))}
+                                className="w-16 shrink-0 rounded-lg border border-input bg-input/40 px-2 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                              />
+                              <span className="shrink-0 text-[11px] text-muted-foreground">sec</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedVideoModel?.duration_options && videoShots.length === 1 && (
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-muted-foreground">Length:</span>
+                      {selectedVideoModel.duration_options.map((d) => (
+                        <button key={d} onClick={() => setVideoShots((s) => [{ ...s[0], duration: d }])}
+                          className={`rounded-full border px-2.5 py-1 text-[11px] ${videoTotalDuration === d ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
+                          {d}s
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <label className="mt-3 flex items-center gap-1.5 text-[11px] text-foreground">
+                    <input type="checkbox" checked={refineVideoPrompt} onChange={(e) => setRefineVideoPrompt(e.target.checked)} />
+                    ✨ Refine shot wording with AI before generating
+                  </label>
+
                   <div className="mt-2 flex items-center justify-between text-[11px]">
-                    <span className="text-muted-foreground">Total length: {videoTotalDuration}s</span>
+                    <span className="text-muted-foreground">Total: {videoTotalDuration}s</span>
+                    {selectedVideoModel && (
+                      <span className="text-muted-foreground">
+                        {selectedVideoModel.duration_options
+                          ? `Allowed: ${selectedVideoModel.duration_options.map((d) => `${d}s`).join(", ")}`
+                          : `Allowed: ${selectedVideoModel.min_duration}–${selectedVideoModel.max_duration}s`}
+                      </span>
+                    )}
                   </div>
                   {!videoShotsValid && selectedVideoModel && (
                     <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/5 px-2.5 py-1.5 text-[11px] text-destructive">
                       ⚠ {videoTotalDuration}s total is outside what "{selectedVideoModel.label}" allows ({selectedVideoModel.min_duration}–{selectedVideoModel.max_duration}s total).
-                      Pick a different video option above, or adjust your shot durations.
                     </div>
                   )}
                 </div>
               </div>
-            )}
-          </div>
+            </div>
           </div>
 
           {(brandTagline || brandLogoUrl) && (
@@ -1502,6 +1570,68 @@ function CreateAd() {
                 )}
                 <div className="rounded-xl border border-dashed border-border flex items-center justify-center text-[11px] text-muted-foreground px-3 py-8 text-center">
                   More themes coming soon
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {showVideoThemeModal && (() => {
+        const categoryOpts = ["All", ...Array.from(new Set(videoThemes.flatMap((t) => t.category_tags)))];
+        const visible = videoThemes.filter((t) =>
+          videoModalFilterCategory === "All" || t.category_tags.includes(videoModalFilterCategory)
+        );
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowVideoThemeModal(false)}>
+            <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-2xl border border-border bg-background p-5" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <div className="text-sm font-semibold text-foreground">Choose a video theme</div>
+                <button type="button" onClick={() => setShowVideoThemeModal(false)} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+              </div>
+
+              <div className="mb-4">
+                <div className="text-[11px] font-semibold text-muted-foreground mb-1.5">Product category</div>
+                <div className="flex flex-wrap gap-2">
+                  {categoryOpts.map((tag) => (
+                    <button key={tag} type="button" onClick={() => setVideoModalFilterCategory(tag)}
+                      className={`rounded-full border px-3 py-1.5 text-xs ${videoModalFilterCategory === tag ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                {visible.map((t) => (
+                  <button key={t.id} type="button"
+                    onClick={() => {
+                      setSelectedVideoThemeId(t.id);
+                      const resolved = t.shots.map((s) => ({
+                        prompt: s.prompt_template.replace(/\{product\}/g, productName.trim() || "the product"),
+                        duration: s.duration,
+                      }));
+                      setVideoShots(resolved);
+                      setShowVideoThemeModal(false);
+                    }}
+                    className={`rounded-xl border overflow-hidden text-left transition ${selectedVideoThemeId === t.id ? "border-primary ring-2 ring-primary" : "border-border hover:border-primary/50"}`}>
+                    {t.thumbnail ? (
+                      <img src={t.thumbnail} alt={t.label} className="h-40 w-full object-cover" />
+                    ) : (
+                      <div className="h-40 w-full bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center text-4xl">🎬</div>
+                    )}
+                    <div className="p-2">
+                      <div className="text-xs font-semibold text-foreground">{t.label}</div>
+                      <div className="text-[11px] text-muted-foreground">{t.shots.length} shot{t.shots.length > 1 ? "s" : ""} · {t.shots.reduce((s, x) => s + x.duration, 0)}s</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">{t.style_notes}</div>
+                    </div>
+                  </button>
+                ))}
+                {visible.length === 0 && (
+                  <div className="col-span-full text-center text-xs text-muted-foreground py-8">No themes match that filter.</div>
+                )}
+                <div className="rounded-xl border border-dashed border-border flex items-center justify-center text-[11px] text-muted-foreground px-3 py-8 text-center">
+                  More video themes coming soon
                 </div>
               </div>
             </div>

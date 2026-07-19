@@ -42,6 +42,18 @@ DEFAULT_ASSISTANT_HINTS = [
     {"id": "nav-admin",       "key": "nav:admin",                   "label": "Nav — Admin",                 "message": "Admin-only controls for managing your company's users and permissions.",                                                                                                  "audio_url": None},
     {"id": "field-text-theme","key": "field:text-theme-reference",  "label": "Field — Text Theme Reference","message": "Pick a Style and a Product category here — their prompts combine to describe the AI-generated background. No product photo needed for this one.",                        "audio_url": None},
     {"id": "field-img-theme", "key": "field:image-theme-reference", "label": "Field — Image Theme Reference","message": "Choose a real reference image whose look you want to match — its style and tags shape the generated scene around your product.",                                        "audio_url": None},
+    {"id": "system-sleep",    "key": "system:sleep",                "label": "System — Going to sleep",     "message": "Going to sleep now — wake me up by pressing the green button!",                                                                                                          "audio_url": None},
+    {"id": "system-wake",     "key": "system:wake",                 "label": "System — Waking up",          "message": "I'm awake and ready to help!",                                                                                                                                           "audio_url": None},
+    {"id": "field-text-model",   "key": "field:text-model",         "label": "Field — Text Model",          "message": "This is the AI model that writes your ad copy. Different models have different styles and costs — higher-tier models tend to write sharper, more persuasive text.",                                   "audio_url": None},
+    {"id": "field-variations",   "key": "field:variations",         "label": "Field — Variations",          "message": "Choose 1 version for a single polished ad, or 3 variations to A/B test different angles and see which one resonates most with your audience.",                                                       "audio_url": None},
+    {"id": "field-goal-tone",    "key": "field:campaign-goal-tone", "label": "Field — Campaign Goal & Tone","message": "Goal shapes what the ad tries to achieve — driving sales, building awareness, or getting clicks. Tone shapes how it sounds — professional, playful, urgent, and so on.",                             "audio_url": None},
+    {"id": "field-image-model",  "key": "field:image-model",        "label": "Field — Image Model",         "message": "The AI model that generates your ad image. Some models are photorealistic, others more illustrative — pick the one that suits your brand style.",                                                    "audio_url": None},
+    {"id": "field-img-ref",      "key": "field:image-reference",    "label": "Field — Reference Image",     "message": "Upload your actual product photo here and the AI will generate a scene around it — keeping your product front and centre. Skip this for a fully imagined background.",                               "audio_url": None},
+    {"id": "field-img-format",   "key": "field:image-format",       "label": "Field — Image Format",        "message": "Single gives you one polished image. Carousel generates multiple images as a swipeable sequence — great for showing different angles or telling a story.",                                            "audio_url": None},
+    {"id": "field-img-describe", "key": "field:image-describe",     "label": "Field — Describe the Image",  "message": "Describe the mood, setting, and style you want — or pick a theme reference below to use a pre-built style. The more specific you are, the closer the result matches your vision.",                  "audio_url": None},
+    {"id": "field-video-model",  "key": "field:video-model",         "label": "Field — Video Model",         "message": "The AI model that generates your video. Different models support different lengths, resolutions, and whether you can supply a starting frame — check the options below after selecting.",        "audio_url": None},
+    {"id": "field-video-ref",    "key": "field:video-reference",     "label": "Field — Video Reference Image","message": "Upload a photo to use as the video's opening frame — the AI animates outward from it. Skip this for a fully AI-generated video described entirely by your prompt.",                              "audio_url": None},
+    {"id": "field-video-theme",  "key": "field:video-theme",          "label": "Field — Video Theme",          "message": "Choose a pre-built video theme — each one includes professionally written shot directions and timings that the AI follows. You can still edit the shot prompts after selecting a theme, or choose Custom to write your own from scratch.",  "audio_url": None},
 ]
 
 
@@ -86,6 +98,12 @@ async def get_assistant_hints(db) -> list[dict]:
     # Backfill audio_url for hints saved before this field existed.
     for h in hints:
         h.setdefault("audio_url", None)
+    # Backfill any new default entries whose key isn't in the stored list yet
+    # (e.g. system:sleep and system:wake added after DB was already populated).
+    stored_keys = {h["key"] for h in hints}
+    for default in DEFAULT_ASSISTANT_HINTS:
+        if default["key"] not in stored_keys:
+            hints.append(dict(default))
     return hints
 
 
