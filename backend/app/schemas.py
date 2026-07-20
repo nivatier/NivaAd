@@ -288,6 +288,40 @@ class VideoThemeOut(BaseModel):
     shots: list[VideoThemeShotOut]
 
 
+class VideoThemeShotIn(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    duration: int = Field(ge=1, le=30)
+    prompt_template: str = Field(min_length=1, max_length=1200)
+
+
+class SaveVideoThemeIn(BaseModel):
+    id: str = Field(min_length=1, max_length=80)
+    label: str = Field(min_length=1, max_length=80)
+    thumbnail: str | None = None
+    category_tags: list[str] = []
+    style_notes: str = Field(default="", max_length=500)
+    shots: list[VideoThemeShotIn] = Field(min_length=1)
+
+
+class GenerateVideoThemeDraftIn(BaseModel):
+    brief: str = Field(min_length=1, max_length=400)
+    category_tags: list[str] = []
+
+
+class GenerateVideoThemeDraftOut(BaseModel):
+    label: str
+    style_notes: str
+    shots: list[VideoThemeShotOut]
+
+
+class GenerateVideoThemeThumbnailIn(BaseModel):
+    prompt: str = Field(min_length=1, max_length=1200)
+
+
+class GenerateVideoThemeThumbnailOut(BaseModel):
+    url: str
+
+
 class ImageThemeEditorOut(BaseModel):
     """Developer > Themes > Image Theme tab — fully visual, no JSON shown.
     Every style tag and every product-category tag gets its own editable
@@ -388,13 +422,16 @@ class AssistantHintOut(BaseModel):
 
 
 class AssistantSettingsOut(BaseModel):
+    assistant_name: str = "Nova"
     typing_ms_per_char: int
     tts_voice: str
     tts_model: str
     intro_audio_url: str | None = None
+    intro_text: str | None = None
 
 
 class AssistantSettingsIn(BaseModel):
+    assistant_name: str = Field(default="Nova", min_length=1, max_length=40)
     typing_ms_per_char: int = Field(ge=8, le=120)
     tts_voice: str = "nova"
     tts_model: str = "openai/gpt-audio-mini"
@@ -452,6 +489,31 @@ class DeveloperLoginIn(BaseModel):
 class DeveloperTokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    is_owner: bool = True
+    permissions: dict[str, bool] = {}
+
+
+class DeveloperTeamUserOut(BaseModel):
+    id: str
+    email: str
+    full_name: str
+    permissions: dict[str, bool]
+    status: str
+    created_at: datetime
+
+
+class AddDeveloperTeamUserIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    full_name: str = Field(default="", max_length=200)
+    password: str = Field(min_length=8, max_length=100)
+    permissions: dict[str, bool] = {}
+
+
+class UpdateDeveloperTeamUserIn(BaseModel):
+    full_name: str | None = Field(default=None, max_length=200)
+    permissions: dict[str, bool] | None = None
+    status: str | None = None
+    password: str | None = Field(default=None, min_length=8, max_length=100)
 
 
 class CompanyAdminOut(BaseModel):

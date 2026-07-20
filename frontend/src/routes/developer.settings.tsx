@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { DeveloperShell } from "@/components/developer-shell";
-import { useRequireDeveloperAuth, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
+import { useRequireDeveloperPermission, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
 import { devApi } from "@/lib/dev-api";
 
 export const Route = createFileRoute("/developer/settings")({
@@ -354,7 +354,7 @@ function ThemeAiSettingsCard() {
 }
 
 function DeveloperSettings() {
-  const allowed = useRequireDeveloperAuth();
+  const allowed = useRequireDeveloperPermission("settings");
   if (!allowed) return null;
 
   return (

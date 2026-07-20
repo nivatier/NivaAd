@@ -23,38 +23,22 @@ from app.models import ModelConfig
 from app.services.storage import upload_bytes
 
 DEFAULT_ASSISTANT_SETTINGS = {
+    "assistant_name": "Nova",       # mascot's display name — used in its own intro speech and the developer panel; fully developer-editable
     "typing_ms_per_char": 22,      # ms per character — higher = slower typing
     "tts_voice": "nova",            # OpenAI audio voice: alloy, echo, fable, onyx, nova, shimmer
     "tts_model": "openai/gpt-audio-mini",  # OpenRouter model slug
 }
 
-DEFAULT_ASSISTANT_HINTS = [
-    {"id": "nav-create-ad",   "key": "nav:create-ad",               "label": "Nav — Create Ad",             "message": "This is where you generate a new ad — write a product description, pick platforms, and choose what to generate: text, image, or video.",                                     "audio_url": None},
-    {"id": "nav-campaigns",   "key": "nav:campaigns",               "label": "Nav — Campaigns",             "message": "Campaigns let you plan a multi-phase launch — teaser, launch, and follow-up ads — all linked together and scheduled as one sequence.",                                   "audio_url": None},
-    {"id": "nav-my-ads",      "key": "nav:my-ads",                  "label": "Nav — My Ads",                "message": "Every ad you've generated lives here — status, schedule, and quick actions like repost or delete, all in one list.",                                                       "audio_url": None},
-    {"id": "nav-calendar",    "key": "nav:calendar",                "label": "Nav — Calendar",              "message": "See everything scheduled or posted this month, laid out by week, so gaps in your posting schedule jump right out.",                                                        "audio_url": None},
-    {"id": "nav-products",    "key": "nav:products",                "label": "Nav — Products",              "message": "Group your ads by product line — Create Ad and My Ads can then filter and tag things automatically.",                                                                     "audio_url": None},
-    {"id": "nav-brand-kit",   "key": "nav:brand-kit",               "label": "Nav — Brand Kit",             "message": "Set your brand's colors, logo, and padding styles here so generated images stay on-brand across every platform and aspect ratio.",                                        "audio_url": None},
-    {"id": "nav-connections", "key": "nav:connections",             "label": "Nav — Connections",           "message": "Connect your social platform accounts here so ads can actually be posted or scheduled, not just generated.",                                                              "audio_url": None},
-    {"id": "nav-moderation",  "key": "nav:moderation",              "label": "Nav — Moderation",            "message": "Review flagged content and manage the guardrail rules that keep generated ads compliant.",                                                                                "audio_url": None},
-    {"id": "nav-settings",    "key": "nav:settings",                "label": "Nav — Settings",              "message": "Manage your team, billing, and account-level preferences here.",                                                                                                         "audio_url": None},
-    {"id": "nav-analytics",   "key": "nav:analytics",               "label": "Nav — Analytics",             "message": "Track how your posted ads are performing across platforms.",                                                                                                              "audio_url": None},
-    {"id": "nav-admin",       "key": "nav:admin",                   "label": "Nav — Admin",                 "message": "Admin-only controls for managing your company's users and permissions.",                                                                                                  "audio_url": None},
-    {"id": "field-text-theme","key": "field:text-theme-reference",  "label": "Field — Text Theme Reference","message": "Pick a Style and a Product category here — their prompts combine to describe the AI-generated background. No product photo needed for this one.",                        "audio_url": None},
-    {"id": "field-img-theme", "key": "field:image-theme-reference", "label": "Field — Image Theme Reference","message": "Choose a real reference image whose look you want to match — its style and tags shape the generated scene around your product.",                                        "audio_url": None},
-    {"id": "system-sleep",    "key": "system:sleep",                "label": "System — Going to sleep",     "message": "Going to sleep now — wake me up by pressing the green button!",                                                                                                          "audio_url": None},
-    {"id": "system-wake",     "key": "system:wake",                 "label": "System — Waking up",          "message": "I'm awake and ready to help!",                                                                                                                                           "audio_url": None},
-    {"id": "field-text-model",   "key": "field:text-model",         "label": "Field — Text Model",          "message": "This is the AI model that writes your ad copy. Different models have different styles and costs — higher-tier models tend to write sharper, more persuasive text.",                                   "audio_url": None},
-    {"id": "field-variations",   "key": "field:variations",         "label": "Field — Variations",          "message": "Choose 1 version for a single polished ad, or 3 variations to A/B test different angles and see which one resonates most with your audience.",                                                       "audio_url": None},
-    {"id": "field-goal-tone",    "key": "field:campaign-goal-tone", "label": "Field — Campaign Goal & Tone","message": "Goal shapes what the ad tries to achieve — driving sales, building awareness, or getting clicks. Tone shapes how it sounds — professional, playful, urgent, and so on.",                             "audio_url": None},
-    {"id": "field-image-model",  "key": "field:image-model",        "label": "Field — Image Model",         "message": "The AI model that generates your ad image. Some models are photorealistic, others more illustrative — pick the one that suits your brand style.",                                                    "audio_url": None},
-    {"id": "field-img-ref",      "key": "field:image-reference",    "label": "Field — Reference Image",     "message": "Upload your actual product photo here and the AI will generate a scene around it — keeping your product front and centre. Skip this for a fully imagined background.",                               "audio_url": None},
-    {"id": "field-img-format",   "key": "field:image-format",       "label": "Field — Image Format",        "message": "Single gives you one polished image. Carousel generates multiple images as a swipeable sequence — great for showing different angles or telling a story.",                                            "audio_url": None},
-    {"id": "field-img-describe", "key": "field:image-describe",     "label": "Field — Describe the Image",  "message": "Describe the mood, setting, and style you want — or pick a theme reference below to use a pre-built style. The more specific you are, the closer the result matches your vision.",                  "audio_url": None},
-    {"id": "field-video-model",  "key": "field:video-model",         "label": "Field — Video Model",         "message": "The AI model that generates your video. Different models support different lengths, resolutions, and whether you can supply a starting frame — check the options below after selecting.",        "audio_url": None},
-    {"id": "field-video-ref",    "key": "field:video-reference",     "label": "Field — Video Reference Image","message": "Upload a photo to use as the video's opening frame — the AI animates outward from it. Skip this for a fully AI-generated video described entirely by your prompt.",                              "audio_url": None},
-    {"id": "field-video-theme",  "key": "field:video-theme",          "label": "Field — Video Theme",          "message": "Choose a pre-built video theme — each one includes professionally written shot directions and timings that the AI follows. You can still edit the shot prompts after selecting a theme, or choose Custom to write your own from scratch.",  "audio_url": None},
-]
+# NOTE: There are intentionally no hardcoded default hints here. All hint
+# messages live exclusively in ModelConfig(id=1).config["assistant_hints"],
+# managed entirely from Developer > Assistant. If that list is empty, no
+# hints exist yet and the mascot simply won't have anything to say for any
+# UI element until the developer adds some from the panel.
+#
+# `scripts/seed_assistant_hints.py` contains a one-time, run-it-yourself seed
+# of the original starter set (nav items, Create Ad fields, etc.) for anyone
+# bootstrapping a fresh environment — it is NOT imported or run automatically
+# from application code.
 
 
 DEPRECATED_MODEL_SLUGS = {
@@ -75,7 +59,7 @@ async def get_assistant_settings(db) -> dict:
     return merged
 
 
-async def set_assistant_settings(db, typing_ms_per_char: int, tts_voice: str = "nova", tts_model: str = "openai/gpt-audio-mini") -> dict:
+async def set_assistant_settings(db, typing_ms_per_char: int, tts_voice: str = "nova", tts_model: str = "openai/gpt-audio-mini", assistant_name: str = "Nova") -> dict:
     row = await db.get(ModelConfig, 1)
     if row is None:
         row = ModelConfig(id=1, config={})
@@ -83,7 +67,12 @@ async def set_assistant_settings(db, typing_ms_per_char: int, tts_voice: str = "
         await db.flush()
     config = dict(row.config or {})
     existing = dict(config.get("assistant_settings") or {})
-    existing.update({"typing_ms_per_char": typing_ms_per_char, "tts_voice": tts_voice, "tts_model": tts_model})
+    existing.update({
+        "typing_ms_per_char": typing_ms_per_char,
+        "tts_voice": tts_voice,
+        "tts_model": tts_model,
+        "assistant_name": (assistant_name or "Nova").strip() or "Nova",
+    })
     config["assistant_settings"] = existing
     row.config = config
     flag_modified(row, "config")
@@ -92,18 +81,15 @@ async def set_assistant_settings(db, typing_ms_per_char: int, tts_voice: str = "
 
 
 async def get_assistant_hints(db) -> list[dict]:
+    """Returns exactly what's stored under assistant_hints in the DB — no
+    code-side defaults are merged in. An empty/missing list simply means the
+    developer hasn't added any hints yet from Developer > Assistant."""
     row = await db.get(ModelConfig, 1)
     stored = (row.config if row and row.config else {}).get("assistant_hints")
-    hints = stored if stored is not None else list(DEFAULT_ASSISTANT_HINTS)
+    hints = stored if stored is not None else []
     # Backfill audio_url for hints saved before this field existed.
     for h in hints:
         h.setdefault("audio_url", None)
-    # Backfill any new default entries whose key isn't in the stored list yet
-    # (e.g. system:sleep and system:wake added after DB was already populated).
-    stored_keys = {h["key"] for h in hints}
-    for default in DEFAULT_ASSISTANT_HINTS:
-        if default["key"] not in stored_keys:
-            hints.append(dict(default))
     return hints
 
 
@@ -259,7 +245,7 @@ async def generate_hint_audio(db, hint_id: str) -> list[dict]:
     # Persist the corrected model slug back to DB if it was stale
     if s["tts_model"] in DEPRECATED_MODEL_SLUGS:
         s["tts_model"] = DEPRECATED_MODEL_SLUGS[s["tts_model"]]
-        await set_assistant_settings(db, s["typing_ms_per_char"], s["tts_voice"], s["tts_model"])
+        await set_assistant_settings(db, s["typing_ms_per_char"], s["tts_voice"], s["tts_model"], s.get("assistant_name", "Nova"))
     mp3 = await _generate_audio_via_openrouter(hint["message"], s["tts_voice"], s["tts_model"])
     url = await asyncio.to_thread(upload_bytes, mp3, "audio/wav", "wav", "nova-audio")
     hint["audio_url"] = url
@@ -270,7 +256,7 @@ async def generate_intro_audio(db, text: str) -> str:
     s = await get_assistant_settings(db)
     if s["tts_model"] in DEPRECATED_MODEL_SLUGS:
         s["tts_model"] = DEPRECATED_MODEL_SLUGS[s["tts_model"]]
-        await set_assistant_settings(db, s["typing_ms_per_char"], s["tts_voice"], s["tts_model"])
+        await set_assistant_settings(db, s["typing_ms_per_char"], s["tts_voice"], s["tts_model"], s.get("assistant_name", "Nova"))
     wav = await _generate_audio_via_openrouter(text, s["tts_voice"], s["tts_model"])
     url = await asyncio.to_thread(upload_bytes, wav, "audio/wav", "wav", "nova-audio")
     row = await db.get(ModelConfig, 1)
@@ -281,6 +267,12 @@ async def generate_intro_audio(db, text: str) -> str:
     config = dict(row.config or {})
     blob = dict(config.get("assistant_settings") or {})
     blob["intro_audio_url"] = url
+    # The text is stored alongside the audio so the frontend types out exactly
+    # what was spoken — previously the mascot's on-screen intro text was a
+    # separate hardcoded string in robot-mascot.tsx and never matched what was
+    # typed into the developer panel, so a new voice/text pair silently fell
+    # out of sync with what actually displayed to users.
+    blob["intro_text"] = text
     config["assistant_settings"] = blob
     row.config = config
     flag_modified(row, "config")

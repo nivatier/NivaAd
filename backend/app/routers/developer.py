@@ -15,21 +15,22 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
 from app.database import get_db
-from app.deps import require_developer
+from app.deps import require_developer, require_developer_permission
 from app.models import Ad, Campaign, Company, CreditLedger, FlaggedContent, GuardrailRule, ModelConfig, Subscription, User
 from app.schemas import (
-    AddAssistantHintIn, AddModelIn, AddPlatformIntegrationIn, AddTextStylePresetIn, AddThemeTagIn, AddVideoRatioIn,
-    AddVisionModelIn, AnalyzeThemeImageIn, AnalyzeThemeImageOut, AssistantHintOut, AssistantSettingsIn,
-    AssistantSettingsOut, CompanyAdminOut, DeveloperLoginIn, DeveloperModelOut, DeveloperModelsOut,
-    DeveloperTokenOut, GenerateAllMissingOut, GenerateIntroAudioIn, GenerateTagPromptIn, GenerateTagPromptOut,
-    GuardrailRuleCreateIn, GuardrailRuleOut, ImageGalleryEntryIn, ImageThemeEditorIn, ImageThemeEditorOut,
-    MarkupMultiplierIn, MarkupMultiplierOut, MaxExtraUsersIn, MaxExtraUsersOut, OpenRouterCatalogModelOut,
-    OpenRouterCreditsOut, PlatformIntegrationOut, PlatformOverviewOut, PostRetentionMonthsIn,
-    PostRetentionMonthsOut, RatioUsageOut, RawModelsIn, RawModelsOut, RawThemesIn, RawThemesOut, ReorderModelsIn,
-    RetentionMonthsIn, RetentionMonthsOut, TextStylePresetOut, ThemeAiSettingsIn, ThemeAiSettingsOut,
-    ThemeThumbnailUploadIn, ThemeThumbnailUploadOut, UpdateAssistantHintIn, UpdateModelIn,
-    UpdatePlatformIntegrationIn, UpdateTextStylePresetIn, VideoPrepSettingsIn, VideoPrepSettingsOut,
-    VideoRatiosOut,
+    AddAssistantHintIn, AddDeveloperTeamUserIn, AddModelIn, AddPlatformIntegrationIn, AddTextStylePresetIn,
+    AddThemeTagIn, AddVideoRatioIn, AddVisionModelIn, AnalyzeThemeImageIn, AnalyzeThemeImageOut, AssistantHintOut,
+    AssistantSettingsIn, AssistantSettingsOut, CompanyAdminOut, DeveloperLoginIn, DeveloperModelOut,
+    DeveloperModelsOut, DeveloperTeamUserOut, DeveloperTokenOut, GenerateAllMissingOut, GenerateIntroAudioIn,
+    GenerateTagPromptIn, GenerateTagPromptOut, GenerateVideoThemeDraftIn, GenerateVideoThemeDraftOut,
+    GenerateVideoThemeThumbnailIn, GenerateVideoThemeThumbnailOut, GuardrailRuleCreateIn, GuardrailRuleOut,
+    ImageGalleryEntryIn, ImageThemeEditorIn, ImageThemeEditorOut, MarkupMultiplierIn, MarkupMultiplierOut,
+    MaxExtraUsersIn, MaxExtraUsersOut, OpenRouterCatalogModelOut, OpenRouterCreditsOut, PlatformIntegrationOut,
+    PlatformOverviewOut, PostRetentionMonthsIn, PostRetentionMonthsOut, RatioUsageOut, RawModelsIn, RawModelsOut,
+    RawThemesIn, RawThemesOut, ReorderModelsIn, RetentionMonthsIn, RetentionMonthsOut, SaveVideoThemeIn,
+    TextStylePresetOut, ThemeAiSettingsIn, ThemeAiSettingsOut, ThemeThumbnailUploadIn, ThemeThumbnailUploadOut,
+    UpdateAssistantHintIn, UpdateDeveloperTeamUserIn, UpdateModelIn, UpdatePlatformIntegrationIn,
+    UpdateTextStylePresetIn, VideoPrepSettingsIn, VideoPrepSettingsOut, VideoRatiosOut, VideoThemeOut,
 )
 from app.security import create_developer_token
 from app.services import credits as credit_svc
@@ -38,6 +39,7 @@ from app.services import pricing as pricing_svc
 from app.services import retention as retention_svc
 from app.services import team_limits as team_limits_svc
 from app.services import assistant_hints as assistant_hints_svc
+from app.services import developer_team as developer_team_svc
 from app.services import theme_ai as theme_ai_svc
 from app.services import themes as themes_svc
 from app.services import video_prep as video_prep_svc
@@ -55,15 +57,70 @@ TIER_MONTHLY_USD = {"free": 0, "starter": 29, "growth": 79, "pro": 199}
 
 
 @router.post("/login", response_model=DeveloperTokenOut)
-async def developer_login(data: DeveloperLoginIn):
-    if not settings.DEVELOPER_EMAIL or not settings.DEVELOPER_PASSWORD:
-        raise HTTPException(503, "Developer login is not configured on this server (DEVELOPER_EMAIL/DEVELOPER_PASSWORD unset in .env).")
-    # Plain comparison, deliberately — this credential lives in .env
-    # alongside JWT_SECRET and STRIPE_SECRET_KEY, which are already the
-    # trust boundary for this whole app. No database round-trip at all.
-    if data.email != settings.DEVELOPER_EMAIL or data.password != settings.DEVELOPER_PASSWORD:
-        raise HTTPException(401, "Invalid developer credentials")
-    return DeveloperTokenOut(access_token=create_developer_token())
+async def developer_login(data: DeveloperLoginIn, db: AsyncSession = Depends(get_db)):
+    # Owner path — plain .env comparison, deliberately: this credential
+    # lives alongside JWT_SECRET and STRIPE_SECRET_KEY, which are already
+    # the trust boundary for this whole app. No database round-trip.
+    if settings.DEVELOPER_EMAIL and settings.DEVELOPER_PASSWORD and data.email == settings.DEVELOPER_EMAIL and data.password == settings.DEVELOPER_PASSWORD:
+        return DeveloperTokenOut(access_token=create_developer_token(), is_owner=True, permissions={k: True for k in developer_team_svc.PERMISSION_KEYS})
+
+    # Team-member path — checks developer_team_users. Tried second (not
+    # instead of) so the owner login keeps working with zero DB access
+    # even if the database is briefly unavailable.
+    team_user = await developer_team_svc.authenticate_team_user(db, data.email, data.password)
+    if team_user:
+        permissions = {**developer_team_svc.DEFAULT_PERMISSIONS, **(team_user.permissions or {})}
+        return DeveloperTokenOut(
+            access_token=create_developer_token(str(team_user.id), permissions),
+            is_owner=False, permissions=permissions,
+        )
+
+    raise HTTPException(401, "Invalid developer credentials")
+
+
+@router.get("/team", response_model=list[DeveloperTeamUserOut])
+async def list_developer_team(_: str = Depends(require_developer_permission("team")), db: AsyncSession = Depends(get_db)):
+    """Every additional developer team member (never includes the .env
+    owner login — that one isn't a database row)."""
+    return [DeveloperTeamUserOut(**u) for u in await developer_team_svc.list_team_users(db)]
+
+
+@router.get("/team/permission-keys")
+async def list_developer_permission_keys(_: str = Depends(require_developer)):
+    """The full set of grantable sections + human-readable labels, for
+    Developer > Team's permission checkboxes — any developer can read
+    this (needed just to render their OWN read-only permission list),
+    but only /team itself (list/add/edit) requires the "team" permission."""
+    return {"keys": developer_team_svc.PERMISSION_KEYS, "labels": developer_team_svc.PERMISSION_LABELS}
+
+
+@router.post("/team", response_model=DeveloperTeamUserOut)
+async def add_developer_team_user(data: AddDeveloperTeamUserIn, _: str = Depends(require_developer_permission("team")), db: AsyncSession = Depends(get_db)):
+    try:
+        created = await developer_team_svc.create_team_user(db, data.email, data.full_name, data.password, data.permissions)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return DeveloperTeamUserOut(**created)
+
+
+@router.put("/team/{user_id}", response_model=DeveloperTeamUserOut)
+async def update_developer_team_user(user_id: uuid.UUID, data: UpdateDeveloperTeamUserIn, _: str = Depends(require_developer_permission("team")), db: AsyncSession = Depends(get_db)):
+    try:
+        updated = await developer_team_svc.update_team_user(
+            db, user_id, full_name=data.full_name, permissions=data.permissions, status=data.status, password=data.password,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    return DeveloperTeamUserOut(**updated)
+
+
+@router.delete("/team/{user_id}")
+async def delete_developer_team_user(user_id: uuid.UUID, _: str = Depends(require_developer_permission("team")), db: AsyncSession = Depends(get_db)):
+    try:
+        await developer_team_svc.delete_team_user(db, user_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    return {"ok": True}
 
 
 @router.get("/overview", response_model=PlatformOverviewOut)
@@ -103,7 +160,7 @@ async def platform_overview(_: str = Depends(require_developer), db: AsyncSessio
 
 
 @router.get("/openrouter-credits", response_model=OpenRouterCreditsOut)
-async def get_openrouter_credits(_: str = Depends(require_developer)):
+async def get_openrouter_credits(_: str = Depends(require_developer_permission("models"))):
     """Live balance on the actual OpenRouter account every company's
     image/video generation draws from — this is what a 402 "Insufficient
     credits" error means when a company's generation fails, so it's
@@ -128,7 +185,7 @@ async def get_openrouter_credits(_: str = Depends(require_developer)):
 
 
 @router.get("/openrouter-catalog", response_model=list[OpenRouterCatalogModelOut])
-async def browse_openrouter_catalog(kind: str, _: str = Depends(require_developer)):
+async def browse_openrouter_catalog(kind: str, _: str = Depends(require_developer_permission("models"))):
     """Live browse of OpenRouter's own model catalog, filtered to image
     or video generation models — powers the 'Fetch from OpenRouter'
     popup in Developer > Models, so adding a model means clicking a real
@@ -217,7 +274,7 @@ async def browse_openrouter_catalog(kind: str, _: str = Depends(require_develope
 
 
 @router.get("/companies", response_model=list[CompanyAdminOut])
-async def list_companies(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def list_companies(_: str = Depends(require_developer_permission("companies")), db: AsyncSession = Depends(get_db)):
     companies = (await db.scalars(select(Company).order_by(Company.created_at.desc()))).all()
     if not companies:
         return []
@@ -263,7 +320,7 @@ async def list_companies(_: str = Depends(require_developer), db: AsyncSession =
 
 
 @router.get("/models", response_model=DeveloperModelsOut)
-async def get_global_models(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_global_models(_: str = Depends(require_developer_permission("models")), db: AsyncSession = Depends(get_db)):
     """The full model list WITH real model slugs — this is the only
     place they're ever exposed; the company-facing endpoint
     (/ads/available-models) never includes them at all."""
@@ -290,7 +347,7 @@ async def _save_models(db: AsyncSession, models: dict) -> None:
 
 
 @router.post("/models", response_model=DeveloperModelsOut, status_code=201)
-async def add_model(data: AddModelIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def add_model(data: AddModelIn, _: str = Depends(require_developer_permission("models")), db: AsyncSession = Depends(get_db)):
     """Adds a new model to the open-ended list for a kind — no fixed
     count anymore (replaces the old low/medium/best/super tier system);
     add as many as you want."""
@@ -316,7 +373,7 @@ async def add_model(data: AddModelIn, _: str = Depends(require_developer), db: A
 
 
 @router.put("/models/reorder", response_model=DeveloperModelsOut)
-async def reorder_models(data: ReorderModelsIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def reorder_models(data: ReorderModelsIn, _: str = Depends(require_developer_permission("models")), db: AsyncSession = Depends(get_db)):
     """Sets the display order for one kind's model list — the SAME order
     then shows in Create Ad's dropdown, since both read this same
     stored list in sequence."""
@@ -331,7 +388,7 @@ async def reorder_models(data: ReorderModelsIn, _: str = Depends(require_develop
 
 
 @router.get("/models/raw", response_model=RawModelsOut)
-async def get_models_raw(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_models_raw(_: str = Depends(require_developer_permission("models")), db: AsyncSession = Depends(get_db)):
     """The entire text/image/video model list as one JSON blob, exactly
     as stored — for bulk editing in one shot instead of one field at a
     time through the form UI. Addresses the real pain of a pricing JSON
@@ -343,7 +400,7 @@ async def get_models_raw(_: str = Depends(require_developer), db: AsyncSession =
 
 
 @router.put("/models/raw", response_model=DeveloperModelsOut)
-async def update_models_raw(data: RawModelsIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def update_models_raw(data: RawModelsIn, _: str = Depends(require_developer_permission("models")), db: AsyncSession = Depends(get_db)):
     """Replaces the ENTIRE model list at once. Validates structurally
     (every entry must be a valid DeveloperModelOut shape, ids unique
     within each kind) before saving anything — a malformed paste
@@ -372,7 +429,7 @@ async def update_models_raw(data: RawModelsIn, _: str = Depends(require_develope
 
 
 @router.get("/themes", response_model=RawThemesOut)
-async def get_themes(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_themes(_: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     """Create Ad's Text Theme Reference chips + Image Theme Reference
     gallery, exactly as stored — bulk-edited as one JSON blob, same
     pattern as /models/raw above."""
@@ -380,7 +437,7 @@ async def get_themes(_: str = Depends(require_developer), db: AsyncSession = Dep
 
 
 @router.put("/themes", response_model=RawThemesOut)
-async def update_themes(data: RawThemesIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def update_themes(data: RawThemesIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     """Replaces the ENTIRE themes blob at once. Validates structurally
     before saving anything, same all-or-nothing behavior as /models/raw:
     a malformed paste rejects cleanly instead of partially corrupting
@@ -444,7 +501,7 @@ async def update_themes(data: RawThemesIn, _: str = Depends(require_developer), 
 
 
 @router.post("/themes/thumbnail", response_model=ThemeThumbnailUploadOut)
-async def upload_theme_thumbnail(data: ThemeThumbnailUploadIn, _: str = Depends(require_developer)):
+async def upload_theme_thumbnail(data: ThemeThumbnailUploadIn, _: str = Depends(require_developer_permission("themes"))):
     """Uploads a thumbnail image directly — used inline by the Image Theme
     tab's per-tag editor (pick a file, it uploads and fills the thumbnail
     right there; no separate JSON paste step)."""
@@ -456,7 +513,7 @@ async def upload_theme_thumbnail(data: ThemeThumbnailUploadIn, _: str = Depends(
 
 
 @router.get("/themes/image-theme", response_model=ImageThemeEditorOut)
-async def get_image_theme_editor(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_image_theme_editor(_: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     """Powers the Image Theme tab's fully visual editor — every style tag
     and every product-category tag, each with its own editable prompt (and,
     for the image-reference variant, its own thumbnail). No JSON shown."""
@@ -464,7 +521,7 @@ async def get_image_theme_editor(_: str = Depends(require_developer), db: AsyncS
 
 
 @router.put("/themes/image-theme", response_model=ImageThemeEditorOut)
-async def update_image_theme_editor(data: ImageThemeEditorIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def update_image_theme_editor(data: ImageThemeEditorIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     """Saves the whole Image Theme editor state at once — still one atomic
     write under the hood (same ModelConfig blob), but the developer never
     sees or edits raw JSON; the frontend sends this after each field edit."""
@@ -478,7 +535,7 @@ async def update_image_theme_editor(data: ImageThemeEditorIn, _: str = Depends(r
 
 
 @router.post("/themes/tags", response_model=ImageThemeEditorOut)
-async def add_theme_tag(data: AddThemeTagIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def add_theme_tag(data: AddThemeTagIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     """Adds a brand-new Style or Product Category tag — it shows up with an
     empty prompt slot immediately, ready to fill in."""
     if data.axis not in ("style", "category"):
@@ -487,7 +544,7 @@ async def add_theme_tag(data: AddThemeTagIn, _: str = Depends(require_developer)
 
 
 @router.get("/themes/text-style-presets", response_model=list[TextStylePresetOut])
-async def list_text_style_presets(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def list_text_style_presets(_: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     """Text-overlay style presets (font style, text color, accent color,
     size) for the Headline/Discount badge/Body fields — "Standard (fits
     the image)" is the default no-override option and can't be deleted."""
@@ -495,13 +552,13 @@ async def list_text_style_presets(_: str = Depends(require_developer), db: Async
 
 
 @router.post("/themes/text-style-presets", response_model=list[TextStylePresetOut])
-async def add_text_style_preset(data: AddTextStylePresetIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def add_text_style_preset(data: AddTextStylePresetIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     presets = await themes_svc.add_text_style_preset(db, data.label, data.font_style, data.text_color, data.accent_color, data.size)
     return [TextStylePresetOut(**p) for p in presets]
 
 
 @router.put("/themes/text-style-presets/{preset_id}", response_model=list[TextStylePresetOut])
-async def update_text_style_preset(preset_id: str, data: UpdateTextStylePresetIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def update_text_style_preset(preset_id: str, data: UpdateTextStylePresetIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     try:
         presets = await themes_svc.update_text_style_preset(db, preset_id, data.label, data.font_style, data.text_color, data.accent_color, data.size)
     except ValueError as exc:
@@ -510,7 +567,7 @@ async def update_text_style_preset(preset_id: str, data: UpdateTextStylePresetIn
 
 
 @router.delete("/themes/text-style-presets/{preset_id}", response_model=list[TextStylePresetOut])
-async def delete_text_style_preset(preset_id: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def delete_text_style_preset(preset_id: str, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     try:
         presets = await themes_svc.delete_text_style_preset(db, preset_id)
     except ValueError as exc:
@@ -519,7 +576,7 @@ async def delete_text_style_preset(preset_id: str, _: str = Depends(require_deve
 
 
 @router.get("/assistant-hints", response_model=list[AssistantHintOut])
-async def list_assistant_hints(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def list_assistant_hints(_: str = Depends(require_developer_permission("assistant")), db: AsyncSession = Depends(get_db)):
     """Explanation messages the assistant mascot shows when a company
     user clicks a hinted nav item or field. `key` must match a real
     `data-robot-hint-key` in the frontend to actually do anything — the
@@ -528,7 +585,7 @@ async def list_assistant_hints(_: str = Depends(require_developer), db: AsyncSes
 
 
 @router.post("/assistant-hints", response_model=list[AssistantHintOut])
-async def add_assistant_hint(data: AddAssistantHintIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def add_assistant_hint(data: AddAssistantHintIn, _: str = Depends(require_developer_permission("assistant")), db: AsyncSession = Depends(get_db)):
     try:
         hints = await assistant_hints_svc.add_assistant_hint(db, data.key.strip(), data.label.strip(), data.message.strip())
     except ValueError as exc:
@@ -537,7 +594,7 @@ async def add_assistant_hint(data: AddAssistantHintIn, _: str = Depends(require_
 
 
 @router.put("/assistant-hints/{hint_id}", response_model=list[AssistantHintOut])
-async def update_assistant_hint(hint_id: str, data: UpdateAssistantHintIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def update_assistant_hint(hint_id: str, data: UpdateAssistantHintIn, _: str = Depends(require_developer_permission("assistant")), db: AsyncSession = Depends(get_db)):
     try:
         hints = await assistant_hints_svc.update_assistant_hint(db, hint_id, data.label.strip(), data.message.strip())
     except ValueError as exc:
@@ -546,26 +603,26 @@ async def update_assistant_hint(hint_id: str, data: UpdateAssistantHintIn, _: st
 
 
 @router.delete("/assistant-hints/{hint_id}", response_model=list[AssistantHintOut])
-async def delete_assistant_hint(hint_id: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def delete_assistant_hint(hint_id: str, _: str = Depends(require_developer_permission("assistant")), db: AsyncSession = Depends(get_db)):
     hints = await assistant_hints_svc.delete_assistant_hint(db, hint_id)
     return [AssistantHintOut(**h) for h in hints]
 
 
 @router.get("/assistant-settings", response_model=AssistantSettingsOut)
-async def get_assistant_settings(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_assistant_settings(_: str = Depends(require_developer_permission("assistant")), db: AsyncSession = Depends(get_db)):
     """Typing speed, TTS voice, TTS model, and stored intro audio URL."""
     s = await assistant_hints_svc.get_assistant_settings(db)
     return AssistantSettingsOut(**{**s, "intro_audio_url": s.get("intro_audio_url")})
 
 
 @router.put("/assistant-settings", response_model=AssistantSettingsOut)
-async def update_assistant_settings(data: AssistantSettingsIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
-    s = await assistant_hints_svc.set_assistant_settings(db, data.typing_ms_per_char, data.tts_voice, data.tts_model)
+async def update_assistant_settings(data: AssistantSettingsIn, _: str = Depends(require_developer_permission("assistant")), db: AsyncSession = Depends(get_db)):
+    s = await assistant_hints_svc.set_assistant_settings(db, data.typing_ms_per_char, data.tts_voice, data.tts_model, data.assistant_name)
     return AssistantSettingsOut(**{**s, "intro_audio_url": s.get("intro_audio_url")})
 
 
 @router.post("/assistant-hints/{hint_id}/generate-audio", response_model=list[AssistantHintOut])
-async def generate_hint_audio(hint_id: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def generate_hint_audio(hint_id: str, _: str = Depends(require_developer_permission("assistant")), db: AsyncSession = Depends(get_db)):
     """Generates TTS audio for one hint via openai/gpt-4o-mini-audio-preview
     on OpenRouter (same key, no extra setup), uploads to MinIO, stores URL."""
     try:
@@ -578,7 +635,7 @@ async def generate_hint_audio(hint_id: str, _: str = Depends(require_developer),
 
 
 @router.post("/assistant-intro/generate-audio", response_model=AssistantSettingsOut)
-async def generate_intro_audio(data: GenerateIntroAudioIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def generate_intro_audio(data: GenerateIntroAudioIn, _: str = Depends(require_developer_permission("assistant")), db: AsyncSession = Depends(get_db)):
     """Generates and stores TTS for Nova's intro speech."""
     try:
         await assistant_hints_svc.generate_intro_audio(db, data.text)
@@ -589,7 +646,7 @@ async def generate_intro_audio(data: GenerateIntroAudioIn, _: str = Depends(requ
 
 
 @router.get("/theme-ai/settings", response_model=ThemeAiSettingsOut)
-async def get_theme_ai_settings(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_theme_ai_settings(_: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     """Dedicated model settings for theme AI assistance (Developer >
     Settings) — separate from the video shot-review model, since these
     serve a different purpose. text_model_id/image_transform_model_id
@@ -600,24 +657,24 @@ async def get_theme_ai_settings(_: str = Depends(require_developer), db: AsyncSe
 
 
 @router.put("/theme-ai/settings", response_model=ThemeAiSettingsOut)
-async def update_theme_ai_settings(data: ThemeAiSettingsIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def update_theme_ai_settings(data: ThemeAiSettingsIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     return ThemeAiSettingsOut(**await theme_ai_svc.set_theme_ai_settings(
         db, data.text_model_id, data.vision_model_id, data.image_transform_model_id,
     ))
 
 
 @router.post("/theme-ai/vision-models", response_model=ThemeAiSettingsOut)
-async def add_vision_model(data: AddVisionModelIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def add_vision_model(data: AddVisionModelIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     return ThemeAiSettingsOut(**await theme_ai_svc.add_vision_model(db, data.label, data.model))
 
 
 @router.delete("/theme-ai/vision-models/{model_id}", response_model=ThemeAiSettingsOut)
-async def delete_vision_model(model_id: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def delete_vision_model(model_id: str, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     return ThemeAiSettingsOut(**await theme_ai_svc.delete_vision_model(db, model_id))
 
 
 @router.post("/themes/image-theme/generate-prompt", response_model=GenerateTagPromptOut)
-async def generate_tag_prompt(data: GenerateTagPromptIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def generate_tag_prompt(data: GenerateTagPromptIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     """Text for Image: called automatically right after a new Style/Product
     tag is added — writes a draft prompt into that tag's textarea for the
     developer to review/edit before saving (never auto-saved)."""
@@ -633,7 +690,7 @@ async def generate_tag_prompt(data: GenerateTagPromptIn, _: str = Depends(requir
 
 
 @router.post("/themes/image-theme/generate-all-missing", response_model=GenerateAllMissingOut)
-async def generate_all_missing_prompts(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def generate_all_missing_prompts(_: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     """Fills in a draft prompt for every currently-empty Style/Product tag
     in one go — for backfilling all the tags that existed before this AI
     assistance was added."""
@@ -643,7 +700,7 @@ async def generate_all_missing_prompts(_: str = Depends(require_developer), db: 
 
 
 @router.post("/themes/image-gallery/analyze", response_model=AnalyzeThemeImageOut)
-async def analyze_theme_image(data: AnalyzeThemeImageIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def analyze_theme_image(data: AnalyzeThemeImageIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     """Image for Image: the full AI pipeline for a newly-uploaded reference
     — vision tagging + image-model transform (so a reference sourced from
     the open web never appears verbatim in the app). Returns a draft only;
@@ -660,7 +717,7 @@ async def analyze_theme_image(data: AnalyzeThemeImageIn, _: str = Depends(requir
 
 
 @router.post("/themes/image-gallery", response_model=RawThemesOut)
-async def save_image_gallery_entry(data: ImageGalleryEntryIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def save_image_gallery_entry(data: ImageGalleryEntryIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     """Confirms an AI-analyzed (or manually filled) gallery entry —
     creates it if the id is new, overwrites it if the id already exists.
     Stored in the same image_themes list Create Ad's Image Theme
@@ -680,15 +737,76 @@ async def save_image_gallery_entry(data: ImageGalleryEntryIn, _: str = Depends(r
 
 
 @router.delete("/themes/image-gallery/{entry_id}", response_model=RawThemesOut)
-async def delete_image_gallery_entry(entry_id: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def delete_image_gallery_entry(entry_id: str, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
     themes = await themes_svc.get_themes(db)
     themes["image_themes"] = [t for t in themes["image_themes"] if t["id"] != entry_id]
     saved = await themes_svc.set_themes(db, themes)
     return RawThemesOut(themes=saved)
 
 
+@router.get("/themes/video-themes", response_model=list[VideoThemeOut])
+async def list_video_themes(_: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    """Video Theme gallery, developer-facing — same list Create Ad reads
+    from (GET /ads/video-themes), just with the developer auth guard."""
+    themes = await themes_svc.get_themes(db)
+    return [VideoThemeOut(**t) for t in themes["video_themes"]]
+
+
+@router.post("/themes/video-gallery", response_model=list[VideoThemeOut])
+async def save_video_theme(data: SaveVideoThemeIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    """Creates or overwrites one Video Theme card by id — same
+    upsert-by-id behavior as /themes/image-gallery. Stored in the same
+    video_themes list Create Ad's Video Theme Reference tab reads from."""
+    themes = await themes_svc.get_themes(db)
+    video_themes = [t for t in themes["video_themes"] if t["id"] != data.id]
+    video_themes.append({
+        "id": data.id, "label": data.label, "thumbnail": data.thumbnail,
+        "category_tags": data.category_tags, "style_notes": data.style_notes,
+        "shots": [s.model_dump() for s in data.shots],
+    })
+    themes["video_themes"] = video_themes
+    saved = await themes_svc.set_themes(db, themes)
+    return [VideoThemeOut(**t) for t in saved["video_themes"]]
+
+
+@router.delete("/themes/video-gallery/{theme_id}", response_model=list[VideoThemeOut])
+async def delete_video_theme(theme_id: str, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    themes = await themes_svc.get_themes(db)
+    themes["video_themes"] = [t for t in themes["video_themes"] if t["id"] != theme_id]
+    saved = await themes_svc.set_themes(db, themes)
+    return [VideoThemeOut(**t) for t in saved["video_themes"]]
+
+
+@router.post("/themes/video-gallery/generate-draft", response_model=GenerateVideoThemeDraftOut)
+async def generate_video_theme_draft(data: GenerateVideoThemeDraftIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    """Drafts a label, style notes, and a small shot list from a short
+    brief — reviewed/edited before saving, never auto-saved. Reuses the
+    theme text model (Developer > Settings > Theme AI models)."""
+    try:
+        result = await theme_ai_svc.generate_video_theme_draft(db, data.brief, data.category_tags)
+    except RuntimeError as exc:
+        raise HTTPException(422, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"AI draft generation failed: {exc}")
+    return GenerateVideoThemeDraftOut(**result)
+
+
+@router.post("/themes/video-gallery/generate-thumbnail", response_model=GenerateVideoThemeThumbnailOut)
+async def generate_video_theme_thumbnail(data: GenerateVideoThemeThumbnailIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    """Renders a single still "hero frame" image (via the theme image
+    model) from one of the theme's shot prompts, to use as its gallery
+    thumbnail — not an actual video render."""
+    try:
+        url = await theme_ai_svc.generate_video_theme_thumbnail(db, data.prompt)
+    except RuntimeError as exc:
+        raise HTTPException(422, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"AI thumbnail generation failed: {exc}")
+    return GenerateVideoThemeThumbnailOut(url=url)
+
+
 @router.put("/models/{model_id}", response_model=DeveloperModelsOut)
-async def update_model(model_id: str, data: UpdateModelIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def update_model(model_id: str, data: UpdateModelIn, _: str = Depends(require_developer_permission("models")), db: AsyncSession = Depends(get_db)):
     """Edits an existing entry by id — only overwrites fields explicitly
     provided (fixes a real bug from the old tier system, where an edit
     that only changed credits would silently wipe out a previously-set
@@ -735,7 +853,7 @@ async def update_model(model_id: str, data: UpdateModelIn, _: str = Depends(requ
 
 
 @router.delete("/models/{model_id}", response_model=DeveloperModelsOut)
-async def delete_model(model_id: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def delete_model(model_id: str, _: str = Depends(require_developer_permission("models")), db: AsyncSession = Depends(get_db)):
     """Removes an entry — guarded against leaving a kind with zero
     options at all, since Create Ad's dropdown needs at least one to
     function for that kind."""
@@ -752,7 +870,7 @@ async def delete_model(model_id: str, _: str = Depends(require_developer), db: A
 
 
 @router.get("/moderation-defaults", response_model=list[GuardrailRuleOut])
-async def get_moderation_defaults(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_moderation_defaults(_: str = Depends(require_developer_permission("guardrails")), db: AsyncSession = Depends(get_db)):
     """The platform-wide default blocklist terms EVERY company inherits
     (shown read-only to company admins in Admin > Moderation) — this is
     the only place they're actually editable. A company's own custom
@@ -763,7 +881,7 @@ async def get_moderation_defaults(_: str = Depends(require_developer), db: Async
 
 
 @router.post("/moderation-defaults", response_model=GuardrailRuleOut, status_code=201)
-async def add_moderation_default(data: GuardrailRuleCreateIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def add_moderation_default(data: GuardrailRuleCreateIn, _: str = Depends(require_developer_permission("guardrails")), db: AsyncSession = Depends(get_db)):
     phrase = data.phrase.strip().lower()
     if not phrase:
         raise HTTPException(422, "Rule text cannot be empty")
@@ -778,7 +896,7 @@ async def add_moderation_default(data: GuardrailRuleCreateIn, _: str = Depends(r
 
 
 @router.delete("/moderation-defaults/{rule_id}", status_code=204)
-async def delete_moderation_default(rule_id: uuid.UUID, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def delete_moderation_default(rule_id: uuid.UUID, _: str = Depends(require_developer_permission("guardrails")), db: AsyncSession = Depends(get_db)):
     rule = await db.get(GuardrailRule, rule_id)
     if rule is None or rule.company_id is not None:
         # company_id NOT NULL means it's a company's own custom rule,
@@ -800,12 +918,12 @@ def _to_out(p: dict) -> PlatformIntegrationOut:
 
 
 @router.get("/platforms", response_model=list[PlatformIntegrationOut])
-async def list_platform_integrations(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def list_platform_integrations(_: str = Depends(require_developer_permission("platforms")), db: AsyncSession = Depends(get_db)):
     return [_to_out(p) for p in await platform_config.get_platform_integrations(db)]
 
 
 @router.post("/platforms", response_model=list[PlatformIntegrationOut], status_code=201)
-async def add_platform_integration(data: AddPlatformIntegrationIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def add_platform_integration(data: AddPlatformIntegrationIn, _: str = Depends(require_developer_permission("platforms")), db: AsyncSession = Depends(get_db)):
     platforms = await platform_config.get_platform_integrations(db)
     if any(p["id"] == data.id for p in platforms):
         raise HTTPException(409, f"A platform with id \"{data.id}\" already exists — edit it instead of adding a duplicate.")
@@ -823,7 +941,7 @@ async def add_platform_integration(data: AddPlatformIntegrationIn, _: str = Depe
 
 
 @router.put("/platforms/{platform_id}", response_model=list[PlatformIntegrationOut])
-async def update_platform_integration(platform_id: str, data: UpdatePlatformIntegrationIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def update_platform_integration(platform_id: str, data: UpdatePlatformIntegrationIn, _: str = Depends(require_developer_permission("platforms")), db: AsyncSession = Depends(get_db)):
     platforms = await platform_config.get_platform_integrations(db)
     if data.video_ratio is not None:
         valid_ratios = await video_ratios_svc.get_video_ratios(db)
@@ -854,7 +972,7 @@ async def update_platform_integration(platform_id: str, data: UpdatePlatformInte
 
 
 @router.delete("/platforms/{platform_id}", response_model=list[PlatformIntegrationOut])
-async def delete_platform_integration(platform_id: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def delete_platform_integration(platform_id: str, _: str = Depends(require_developer_permission("platforms")), db: AsyncSession = Depends(get_db)):
     platforms = await platform_config.get_platform_integrations(db)
     remaining = [p for p in platforms if p["id"] != platform_id]
     if len(remaining) == len(platforms):
@@ -864,7 +982,7 @@ async def delete_platform_integration(platform_id: str, _: str = Depends(require
 
 
 @router.get("/pricing/markup", response_model=MarkupMultiplierOut)
-async def get_markup(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_markup(_: str = Depends(require_developer_permission("pricing")), db: AsyncSession = Depends(get_db)):
     """The single global markup applied to every dynamically-priced
     model's real OpenRouter cost before converting to credits — see
     services/pricing.py. Agreed target: 1.6-1.8x nets a 20% margin
@@ -874,13 +992,13 @@ async def get_markup(_: str = Depends(require_developer), db: AsyncSession = Dep
 
 
 @router.put("/pricing/markup", response_model=MarkupMultiplierOut)
-async def update_markup(data: MarkupMultiplierIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def update_markup(data: MarkupMultiplierIn, _: str = Depends(require_developer_permission("pricing")), db: AsyncSession = Depends(get_db)):
     await pricing_svc.set_markup_multiplier(db, data.markup_multiplier)
     return MarkupMultiplierOut(markup_multiplier=data.markup_multiplier)
 
 
 @router.get("/team-limits", response_model=MaxExtraUsersOut)
-async def get_team_limit(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_team_limit(_: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     """Global cap on non-admin team members per company — see
     services/team_limits.py. Same one number for every company, not a
     per-company override."""
@@ -888,13 +1006,13 @@ async def get_team_limit(_: str = Depends(require_developer), db: AsyncSession =
 
 
 @router.put("/team-limits", response_model=MaxExtraUsersOut)
-async def update_team_limit(data: MaxExtraUsersIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def update_team_limit(data: MaxExtraUsersIn, _: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     await team_limits_svc.set_max_extra_users(db, data.max_extra_users)
     return MaxExtraUsersOut(max_extra_users=data.max_extra_users)
 
 
 @router.get("/retention", response_model=RetentionMonthsOut)
-async def get_retention(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_retention(_: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     """How many months a generated ad's media (images/videos) stays in
     storage before automatic cleanup — see services/retention.py.
     Option B: only the files go away, the ad record/caption/analytics
@@ -905,13 +1023,13 @@ async def get_retention(_: str = Depends(require_developer), db: AsyncSession = 
 
 
 @router.put("/retention", response_model=RetentionMonthsOut)
-async def update_retention(data: RetentionMonthsIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def update_retention(data: RetentionMonthsIn, _: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     await retention_svc.set_retention_months(db, data.retention_months)
     return RetentionMonthsOut(retention_months=data.retention_months)
 
 
 @router.get("/post-retention", response_model=PostRetentionMonthsOut)
-async def get_post_retention(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_post_retention(_: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     """How many months an ad's ENTIRE RECORD (not just its media) stays
     in the database before being permanently deleted — separate from
     and much longer than media-only retention above. See
@@ -920,24 +1038,24 @@ async def get_post_retention(_: str = Depends(require_developer), db: AsyncSessi
 
 
 @router.put("/post-retention", response_model=PostRetentionMonthsOut)
-async def update_post_retention(data: PostRetentionMonthsIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def update_post_retention(data: PostRetentionMonthsIn, _: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     await retention_svc.set_post_retention_months(db, data.post_retention_months)
     return PostRetentionMonthsOut(post_retention_months=data.post_retention_months)
 
 
 @router.get("/video-prep", response_model=VideoPrepSettingsOut)
-async def get_video_prep(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_video_prep(_: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     return VideoPrepSettingsOut(**await video_prep_svc.get_video_prep_settings(db))
 
 
 @router.put("/video-prep", response_model=VideoPrepSettingsOut)
-async def update_video_prep(data: VideoPrepSettingsIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def update_video_prep(data: VideoPrepSettingsIn, _: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     await video_prep_svc.set_video_prep_settings(db, data.prompt_review_model_id, data.image_model_id)
     return VideoPrepSettingsOut(prompt_review_model_id=data.prompt_review_model_id, image_model_id=data.image_model_id)
 
 
 @router.get("/video-ratios", response_model=VideoRatiosOut)
-async def get_video_ratios(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_video_ratios(_: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     """The developer-managed list of available aspect ratios — just the
     ratio strings, not fixed pixel sizes (see services/video_ratios.py
     and services/reframe.py, which computes real dimensions from each
@@ -946,13 +1064,13 @@ async def get_video_ratios(_: str = Depends(require_developer), db: AsyncSession
 
 
 @router.post("/video-ratios", response_model=VideoRatiosOut, status_code=201)
-async def add_video_ratio(data: AddVideoRatioIn, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def add_video_ratio(data: AddVideoRatioIn, _: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     ratios = await video_ratios_svc.add_video_ratio(db, data.ratio)
     return VideoRatiosOut(ratios=ratios)
 
 
 @router.get("/video-ratios/{ratio}/usage", response_model=RatioUsageOut)
-async def get_ratio_usage(ratio: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def get_ratio_usage(ratio: str, _: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     """Called before a delete is confirmed — shows what's currently
     referencing this ratio, so the developer can make an informed
     choice. Deletion itself is never blocked, only warned about."""
@@ -961,7 +1079,7 @@ async def get_ratio_usage(ratio: str, _: str = Depends(require_developer), db: A
 
 
 @router.delete("/video-ratios/{ratio}", response_model=VideoRatiosOut)
-async def delete_video_ratio(ratio: str, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+async def delete_video_ratio(ratio: str, _: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     """Not blocked even if still in use — per the agreed design, the
     frontend shows a warning (via the usage endpoint above) and lets
     the developer confirm anyway. Anything still referencing this ratio

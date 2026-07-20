@@ -30,11 +30,11 @@ function getResponsiveLayout() {
 const GREETING_MS = 650; // wave-hello duration before settling in to explain
 const SLEEP_ANNOUNCE_MS = 1900; // how long the "going to sleep" bubble stays up
 const WAKE_ANNOUNCE_MS = 1600; // how long the "I'm awake!" bubble stays up
-const ROBOT_NAME = "Nova";
+let ROBOT_NAME = "Nova"; // fallback only, shown briefly before /ads/assistant-settings resolves; fully developer-editable from Developer > Assistant
 // Intro zoom — the face starts at ~50 % of viewport height and CSS-transitions
 // down to the docked size, giving a cinematic "zooms out from you to its corner"
 // read. We compute the start size dynamically from window height at mount time.
-const INTRO_HOLD_MS = 3200; // how long Nova holds the big-face before zooming out
+const INTRO_HOLD_MS = 3200; // how long the mascot holds the big-face before zooming out
 let TYPE_MS_PER_CHAR = 22; // default; overridden by /ads/assistant-settings on mount
 const IDLE_FIDGET_MIN_MS = 7000;
 const IDLE_FIDGET_MAX_MS = 13000;
@@ -80,6 +80,11 @@ export function RobotMascot() {
   const [introAudioUrl, setIntroAudioUrl] = useState<string | null>(null);
   const introAudioUrlRef = useRef<string | null>(null); // ref so intro timer closure always reads latest URL
   const [muted, setMuted] = useState<boolean>(() => localStorage.getItem("novaMuted") === "true");
+  // Gates the login intro so it always types out the actual developer-configured
+  // intro text (and matches whatever audio was generated for it) instead of a
+  // hardcoded fallback string that could silently drift out of sync with it.
+  const [settingsReady, setSettingsReady] = useState(false);
+  const introTextRef = useRef<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem("novaMuted", String(muted));
@@ -159,9 +164,26 @@ export function RobotMascot() {
         }
       }
       if (s.typing_ms_per_char) TYPE_MS_PER_CHAR = s.typing_ms_per_char;
+      if (s.assistant_name && s.assistant_name.trim()) ROBOT_NAME = s.assistant_name.trim();
+      // Use the developer-configured intro text verbatim (it's what the intro
+      // audio was actually generated from). Only fall back to a generic
+      // template if the developer has never set one.
+      introTextRef.current = (s.intro_text && s.intro_text.trim())
+        ? s.intro_text.trim()
+        : `Hi there! I'm ${ROBOT_NAME} — your in-app assistant! ` +
+          `I'll guide you around, just click anything you'd like to know more about and I'll come right over and explain it. ` +
+          `The blue button puts me to sleep when you need some space, and the green button wakes me back up whenever you need me. ` +
+          `I'm always here for you! 🤖`;
+      setSettingsReady(true);
       // Prune IndexedDB entries whose URL is no longer active (audio regenerated)
       pruneAudioCache(activeUrls).catch(() => {});
-    }).catch(() => {});
+    }).catch(() => {
+      if (cancelled) return;
+      // Offline/error — still let the intro play with a generic fallback
+      // rather than hang forever waiting for settings that will never arrive.
+      introTextRef.current = `Hi there! I'm ${ROBOT_NAME} — your in-app assistant!`;
+      setSettingsReady(true);
+    });
     return () => { cancelled = true; };
   }, []);
 
@@ -201,6 +223,7 @@ export function RobotMascot() {
   useEffect(() => {
     if (!awake || introPlayedRef.current) return;
     if (sessionStorage.getItem("novaSessionActive")) return; // refresh — skip
+    if (!settingsReady) return; // wait for the real intro text (and any audio URL) to arrive
     introPlayedRef.current = true;
     sessionStorage.setItem("novaSessionActive", "1"); // mark session so refresh skips
 
@@ -209,11 +232,7 @@ export function RobotMascot() {
     const bigLeft = Math.round(window.innerWidth / 2 - bigSize / 2);
     const bigTop = Math.round(window.innerHeight * 0.05);
 
-    const introMsg =
-      `Hi there! I'm ${ROBOT_NAME} — your in-app assistant! ` +
-      `I'll guide you around, just click anything you'd like to know more about and I'll come right over and explain it. ` +
-      `The blue button puts me to sleep when you need some space, and the green button wakes me back up whenever you need me. ` +
-      `I'm always here for you! 🤖`;
+    const introMsg = introTextRef.current || `Hi there! I'm ${ROBOT_NAME} — your in-app assistant!`;
 
     introMsgRef.current = introMsg; // mark intro as in-progress
 
@@ -253,7 +272,7 @@ export function RobotMascot() {
       setPhase("idle");
       introMsgRef.current = null;
     }, GREETING_MS + typingMs + INTRO_HOLD_MS);
-  }, [awake, reducedMotion]);
+  }, [awake, reducedMotion, settingsReady]);
 
   function clearTimers() {
     [greetTimer, sleepTimer, wakeTimer, introTimer].forEach((r) => {
@@ -514,7 +533,7 @@ export function RobotMascot() {
       >
         <button
           type="button"
-          title={muted ? "Unmute Nova" : "Mute Nova"}
+          title={muted ? `Unmute ${ROBOT_NAME}` : `Mute ${ROBOT_NAME}`}
           aria-label={muted ? "Unmute assistant" : "Mute assistant"}
           onClick={() => setMuted((m) => !m)}
           className={`h-6 w-6 rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-md ${

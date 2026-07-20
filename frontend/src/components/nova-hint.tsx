@@ -14,8 +14,8 @@ export function NovaHint({ hintKey }: { hintKey: string }) {
       data-robot-hint-key={hintKey}
       role="button"
       tabIndex={0}
-      title="Ask Nova about this"
-      aria-label="Ask Nova about this field"
+      title="Ask the assistant about this"
+      aria-label="Ask the assistant about this field"
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.currentTarget.click(); }}
       className="inline-flex items-center justify-center w-4 h-4 ml-1.5 rounded-full cursor-pointer select-none align-middle relative top-[-1px] transition-transform hover:scale-110 active:scale-95"
       style={{ verticalAlign: "middle" }}

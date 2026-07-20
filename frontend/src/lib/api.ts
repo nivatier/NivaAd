@@ -66,6 +66,38 @@ export async function api(path: string, opts: { method?: string; body?: unknown 
   }
 }
 
+async function rawDownload(path: string, token?: string): Promise<Blob> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    let msg = `Request failed (${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.detail) msg = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+    } catch { /* not JSON */ }
+    throw new ApiError(msg, res.status);
+  }
+  return res.blob();
+}
+
+/** For endpoints that return a raw file (e.g. the ad ZIP export) instead of
+ * JSON — same auth/refresh-and-retry behavior as `api()`, but resolves to a
+ * Blob. Caller is responsible for triggering the actual browser download. */
+export async function apiDownload(path: string): Promise<Blob> {
+  const tokens = getTokens();
+  try {
+    return await rawDownload(path, tokens?.access_token);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401 && tokens?.refresh_token) {
+      const fresh = await rawRequest("/auth/refresh", { method: "POST", body: { refresh_token: tokens.refresh_token } });
+      setTokens(fresh);
+      return await rawDownload(path, fresh.access_token);
+    }
+    throw err;
+  }
+}
+
 export type ProductOut = {
   id: string;
   name: string;

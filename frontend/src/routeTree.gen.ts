@@ -17,6 +17,7 @@ import { Route as AcceptInviteRouteImport } from './routes/accept-invite'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as DeveloperThemesRouteImport } from './routes/developer.themes'
+import { Route as DeveloperTeamRouteImport } from './routes/developer.team'
 import { Route as DeveloperSettingsRouteImport } from './routes/developer.settings'
 import { Route as DeveloperPlatformsRouteImport } from './routes/developer.platforms'
 import { Route as DeveloperOverviewRouteImport } from './routes/developer.overview'
@@ -74,6 +75,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const DeveloperThemesRoute = DeveloperThemesRouteImport.update({
   id: '/developer/themes',
   path: '/developer/themes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DeveloperTeamRoute = DeveloperTeamRouteImport.update({
+  id: '/developer/team',
+  path: '/developer/team',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DeveloperSettingsRoute = DeveloperSettingsRouteImport.update({
@@ -192,6 +198,7 @@ export interface FileRoutesByFullPath {
   '/developer/overview': typeof DeveloperOverviewRoute
   '/developer/platforms': typeof DeveloperPlatformsRoute
   '/developer/settings': typeof DeveloperSettingsRoute
+  '/developer/team': typeof DeveloperTeamRoute
   '/developer/themes': typeof DeveloperThemesRoute
   '/app/': typeof AppIndexRoute
 }
@@ -220,6 +227,7 @@ export interface FileRoutesByTo {
   '/developer/overview': typeof DeveloperOverviewRoute
   '/developer/platforms': typeof DeveloperPlatformsRoute
   '/developer/settings': typeof DeveloperSettingsRoute
+  '/developer/team': typeof DeveloperTeamRoute
   '/developer/themes': typeof DeveloperThemesRoute
   '/app': typeof AppIndexRoute
 }
@@ -249,6 +257,7 @@ export interface FileRoutesById {
   '/developer/overview': typeof DeveloperOverviewRoute
   '/developer/platforms': typeof DeveloperPlatformsRoute
   '/developer/settings': typeof DeveloperSettingsRoute
+  '/developer/team': typeof DeveloperTeamRoute
   '/developer/themes': typeof DeveloperThemesRoute
   '/app/': typeof AppIndexRoute
 }
@@ -279,6 +288,7 @@ export interface FileRouteTypes {
     | '/developer/overview'
     | '/developer/platforms'
     | '/developer/settings'
+    | '/developer/team'
     | '/developer/themes'
     | '/app/'
   fileRoutesByTo: FileRoutesByTo
@@ -307,6 +317,7 @@ export interface FileRouteTypes {
     | '/developer/overview'
     | '/developer/platforms'
     | '/developer/settings'
+    | '/developer/team'
     | '/developer/themes'
     | '/app'
   id:
@@ -335,6 +346,7 @@ export interface FileRouteTypes {
     | '/developer/overview'
     | '/developer/platforms'
     | '/developer/settings'
+    | '/developer/team'
     | '/developer/themes'
     | '/app/'
   fileRoutesById: FileRoutesById
@@ -364,6 +376,7 @@ export interface RootRouteChildren {
   DeveloperOverviewRoute: typeof DeveloperOverviewRoute
   DeveloperPlatformsRoute: typeof DeveloperPlatformsRoute
   DeveloperSettingsRoute: typeof DeveloperSettingsRoute
+  DeveloperTeamRoute: typeof DeveloperTeamRoute
   DeveloperThemesRoute: typeof DeveloperThemesRoute
   AppIndexRoute: typeof AppIndexRoute
 }
@@ -424,6 +437,13 @@ declare module '@tanstack/react-router' {
       path: '/developer/themes'
       fullPath: '/developer/themes'
       preLoaderRoute: typeof DeveloperThemesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/developer/team': {
+      id: '/developer/team'
+      path: '/developer/team'
+      fullPath: '/developer/team'
+      preLoaderRoute: typeof DeveloperTeamRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/developer/settings': {
@@ -580,6 +600,7 @@ const rootRouteChildren: RootRouteChildren = {
   DeveloperOverviewRoute: DeveloperOverviewRoute,
   DeveloperPlatformsRoute: DeveloperPlatformsRoute,
   DeveloperSettingsRoute: DeveloperSettingsRoute,
+  DeveloperTeamRoute: DeveloperTeamRoute,
   DeveloperThemesRoute: DeveloperThemesRoute,
   AppIndexRoute: AppIndexRoute,
 }

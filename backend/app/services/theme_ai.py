@@ -195,7 +195,64 @@ async def analyze_and_transform_image(db, image_data_url: str, style_tags: list[
     }
 
 
-async def generate_all_missing_prompts(db, style_tags: list[str], category_tags: list[str]) -> dict:
+async def generate_video_theme_draft(db, brief: str, category_tags: list[str]) -> dict:
+    """Drafts a new Video Theme's label + style notes + a small shot list
+    from a short developer brief — reviewed/edited before saving, same as
+    the tag-prompt draft flow for Image Theme. Reuses the theme text model
+    (Developer > Settings), not the separate video shot-review model."""
+    settings_ = await get_theme_ai_settings(db)
+    slug = await _resolve_model_slug(db, "text", settings_["text_model_id"])
+    if not slug:
+        raise RuntimeError("No text model is set for theme prompt generation — pick one in Developer > Settings first.")
+
+    tags_hint = f" Intended for these product categories: {', '.join(category_tags)}." if category_tags else ""
+    prompt = (
+        "You are drafting a new Video Theme for an AI ad-video generator's theme library. "
+        f'Brief from the developer: "{brief}".{tags_hint}\n'
+        "Write:\n"
+        "1. A short, catchy theme label (3-5 words).\n"
+        "2. One or two sentences of style notes describing the overall look/mood/pacing.\n"
+        "3. Between 2 and 4 shots, each with a short label, a duration in whole seconds (2-4 typical), and a "
+        'prompt_template for an AI video generator. Every prompt_template MUST include the literal placeholder '
+        '"{product}" exactly once (it gets replaced with the real product name at generation time), end with '
+        '"no text overlay", and describe camera movement, lighting, and mood as a single advertising video '
+        "generation prompt.\n"
+        'Respond ONLY with raw JSON, no markdown fences: {"label": "...", "style_notes": "...", '
+        '"shots": [{"label": "...", "duration": 3, "prompt_template": "..."}]}'
+    )
+    result = await asyncio.to_thread(text_gen.generate_text, prompt, slug)
+    cleaned_shots = []
+    for s in (result.get("shots") or []):
+        if not isinstance(s, dict):
+            continue
+        cleaned_shots.append({
+            "label": (s.get("label") or "").strip() or "Shot",
+            "duration": int(s.get("duration") or 3),
+            "prompt_template": (s.get("prompt_template") or "").strip(),
+        })
+    return {
+        "label": (result.get("label") or "").strip(),
+        "style_notes": (result.get("style_notes") or "").strip(),
+        "shots": cleaned_shots,
+    }
+
+
+async def generate_video_theme_thumbnail(db, prompt: str) -> str:
+    """Renders one representative still image (via the theme image model,
+    Developer > Settings) to use as a Video Theme gallery-card thumbnail —
+    a single "hero frame" rather than an actual video render, which would
+    be far slower/costlier for what's just a browsing thumbnail. `prompt`
+    is normally one of the theme's own shot prompt_templates."""
+    settings_ = await get_theme_ai_settings(db)
+    image_model_slug = await _resolve_model_slug(db, "image", settings_["image_transform_model_id"])
+    if not image_model_slug:
+        raise RuntimeError("No image model is set for theme image generation — pick one in Developer > Settings first.")
+    still_prompt = (
+        prompt.replace("{product}", "a generic product") +
+        " Single still frame, high-end commercial product photography, no text overlay, no watermark."
+    )
+    img_bytes, ext = await asyncio.to_thread(generate_image, still_prompt, image_model_slug)
+    return upload_data_url(f"data:image/{ext};base64,{base64.b64encode(img_bytes).decode()}", prefix="theme-thumbnails")
     """Loops every Style and Product tag that currently has an empty
     prompt in the Text for Image editor and drafts one via the text
     model — the bulk "fill in everything" action, so the developer isn't

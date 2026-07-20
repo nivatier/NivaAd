@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { DeveloperShell } from "@/components/developer-shell";
-import { useRequireDeveloperAuth, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
+import { useRequireDeveloperPermission, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
 import { devApi } from "@/lib/dev-api";
 
 export const Route = createFileRoute("/developer/themes")({
@@ -16,6 +16,10 @@ type ImageThemeEditor = {
   text_for_image: { style: Record<string, string>; product: Record<string, string> };
   image_for_image: { style: Record<string, ImageForImageEntry>; product: Record<string, ImageForImageEntry> };
 };
+
+type VideoThemeShot = { label: string; duration: number; prompt_template: string };
+type VideoTheme = { id: string; label: string; thumbnail: string | null; category_tags: string[]; style_notes: string; shots: VideoThemeShot[] };
+type VideoThemeDraft = Omit<VideoTheme, "thumbnail"> & { thumbnail: string };
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -439,6 +443,287 @@ function ImageThemeTab() {
   );
 }
 
+/** Video Theme gallery — deliberately mirrors the Image Theme Reference
+ * gallery's card model (thumbnail + label + tags + prompt content), just
+ * with a repeatable shots[] list instead of one base_prompt. Thumbnails can
+ * be uploaded manually OR AI-generated as a still "hero frame" from one of
+ * the theme's own shot prompts — developer's choice per entry. */
+function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [entries, setEntries] = useState<VideoTheme[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<VideoThemeDraft | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [thumbBusy, setThumbBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const [showBrief, setShowBrief] = useState(false);
+  const [brief, setBrief] = useState("");
+  const [briefTags, setBriefTags] = useState<string[]>([]);
+  const [drafting, setDrafting] = useState(false);
+
+  async function load() {
+    try {
+      setEntries(await devApi("/developer/themes/video-themes"));
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not load video themes");
+    }
+  }
+  useEffect(() => { load(); }, []);
+
+  function selectExisting(id: string) {
+    const entry = entries.find((e) => e.id === id);
+    if (!entry) return;
+    setSelectedId(id);
+    setDraft({ ...entry, thumbnail: entry.thumbnail || "", shots: entry.shots.map((s) => ({ ...s })) });
+    setErr("");
+  }
+
+  function startNewBlank() {
+    setSelectedId(null);
+    setDraft({ id: `video-${Date.now()}`, label: "", thumbnail: "", category_tags: [], style_notes: "", shots: [{ label: "Shot 1", duration: 3, prompt_template: "" }] });
+    setErr("");
+  }
+
+  async function generateFromBrief() {
+    if (!brief.trim()) return;
+    setDrafting(true); setErr("");
+    try {
+      const r: { label: string; style_notes: string; shots: VideoThemeShot[] } =
+        await devApi("/developer/themes/video-gallery/generate-draft", { method: "POST", body: { brief: brief.trim(), category_tags: briefTags } });
+      setSelectedId(null);
+      setDraft({
+        id: `video-${Date.now()}`, label: r.label || "Untitled", thumbnail: "",
+        category_tags: briefTags, style_notes: r.style_notes,
+        shots: r.shots.length ? r.shots : [{ label: "Shot 1", duration: 3, prompt_template: "" }],
+      });
+      setShowBrief(false); setBrief(""); setBriefTags([]);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "AI draft failed — check Developer > Settings has a text model set, or write the theme manually.");
+    }
+    setDrafting(false);
+  }
+
+  async function handleThumbnailUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f || !draft) return;
+    const dataUrl = await fileToDataUrl(f);
+    setThumbBusy(true); setErr("");
+    try {
+      const r: { url: string } = await devApi("/developer/themes/thumbnail", { method: "POST", body: { image: dataUrl } });
+      setDraft({ ...draft, thumbnail: r.url });
+    } catch (ex: any) {
+      if (!handleAuthError(ex)) setErr(ex.message || "Upload failed");
+    }
+    setThumbBusy(false);
+    e.target.value = "";
+  }
+
+  async function generateThumbnailFromShot() {
+    if (!draft || !draft.shots[0]?.prompt_template.trim()) {
+      setErr("Add a shot prompt first — the thumbnail is generated from your first shot's prompt.");
+      return;
+    }
+    setThumbBusy(true); setErr("");
+    try {
+      const r: { url: string } = await devApi("/developer/themes/video-gallery/generate-thumbnail", { method: "POST", body: { prompt: draft.shots[0].prompt_template } });
+      setDraft({ ...draft, thumbnail: r.url });
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "AI thumbnail generation failed — check Developer > Settings has an image model set, or upload one manually.");
+    }
+    setThumbBusy(false);
+  }
+
+  function toggleTag(tag: string) {
+    if (!draft) return;
+    const current = draft.category_tags;
+    setDraft({ ...draft, category_tags: current.includes(tag) ? current.filter((t) => t !== tag) : [...current, tag] });
+  }
+
+  function updateShot(i: number, patch: Partial<VideoThemeShot>) {
+    if (!draft) return;
+    const shots = draft.shots.map((s, idx) => (idx === i ? { ...s, ...patch } : s));
+    setDraft({ ...draft, shots });
+  }
+  function addShot() {
+    if (!draft) return;
+    setDraft({ ...draft, shots: [...draft.shots, { label: `Shot ${draft.shots.length + 1}`, duration: 3, prompt_template: "" }] });
+  }
+  function removeShot(i: number) {
+    if (!draft || draft.shots.length <= 1) return;
+    setDraft({ ...draft, shots: draft.shots.filter((_, idx) => idx !== i) });
+  }
+
+  async function saveDraft() {
+    if (!draft) return;
+    if (!draft.label.trim() || draft.shots.some((s) => !s.label.trim() || !s.prompt_template.trim())) {
+      setErr("Label and every shot's label + prompt are required before saving.");
+      return;
+    }
+    setSaving(true); setErr("");
+    try {
+      const saved_: VideoTheme[] = await devApi("/developer/themes/video-gallery", {
+        method: "POST",
+        body: { id: draft.id, label: draft.label.trim(), thumbnail: draft.thumbnail || null, category_tags: draft.category_tags, style_notes: draft.style_notes.trim(), shots: draft.shots },
+      });
+      setEntries(saved_);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      setSelectedId(draft.id);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not save");
+    }
+    setSaving(false);
+  }
+
+  async function deleteEntry(id: string) {
+    if (!confirm("Delete this video theme? Companies using it will fall back silently.")) return;
+    setErr("");
+    try {
+      setEntries(await devApi(`/developer/themes/video-gallery/${id}`, { method: "DELETE" }));
+      setDraft(null); setSelectedId(null);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not delete");
+    }
+  }
+
+  return (
+    <div className="flex gap-4">
+      <div className="w-64 shrink-0 space-y-2">
+        <button onClick={startNewBlank}
+          className="block w-full rounded-lg border border-dashed border-slate-700/50 px-3 py-2 text-center text-[11px] text-muted-foreground hover:border-primary/50 hover:text-primary">
+          + New theme (blank)
+        </button>
+        {showBrief ? (
+          <div className="rounded-lg border border-primary/40 bg-card/60 p-2.5 space-y-2">
+            <textarea value={brief} onChange={(e) => setBrief(e.target.value)} rows={3} placeholder="e.g. Slow-motion unboxing with warm autumn light…"
+              className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2 py-1.5 text-[11px] leading-relaxed text-foreground focus:border-slate-500 focus:outline-none" />
+            <div className="flex flex-wrap gap-1">
+              {categoryTags.map((tag) => (
+                <button key={tag} onClick={() => setBriefTags((t) => t.includes(tag) ? t.filter((x) => x !== tag) : [...t, tag])}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] ${briefTags.includes(tag) ? "border-primary bg-primary/10 text-primary" : "border-slate-700/50 text-muted-foreground"}`}>
+                  {tag}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button onClick={generateFromBrief} disabled={drafting || !brief.trim()}
+                className="rounded-full bg-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+                {drafting ? "Drafting…" : "Generate"}
+              </button>
+              <button onClick={() => setShowBrief(false)} className="rounded-full border border-slate-700/50 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground">Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setShowBrief(true)}
+            className="block w-full rounded-lg border border-dashed border-primary/50 px-3 py-2 text-center text-[11px] text-primary hover:bg-primary/5">
+            ✨ Draft from a brief
+          </button>
+        )}
+        <div className="grid grid-cols-2 gap-2 pt-1">
+          {entries.map((entry) => (
+            <button key={entry.id} onClick={() => selectExisting(entry.id)}
+              className={`overflow-hidden rounded-lg border text-left ${selectedId === entry.id ? "border-primary ring-2 ring-primary" : "border-slate-700/50 hover:border-primary/40"}`}>
+              {entry.thumbnail ? (
+                <img src={entry.thumbnail} alt={entry.label} className="h-16 w-full object-cover" />
+              ) : (
+                <div className="flex h-16 w-full items-center justify-center bg-slate-800/40 text-[9px] text-muted-foreground">No thumbnail</div>
+              )}
+              <div className="truncate px-1.5 py-1 text-[10px] text-foreground">{entry.label}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex-1 rounded-xl border border-slate-700/50 bg-card/60 p-4">
+        {!draft ? (
+          <div className="text-xs text-muted-foreground">Select a theme on the left, start a blank one, or draft one from a brief.</div>
+        ) : (
+          <>
+            <div className="mb-3 flex items-start gap-3">
+              {draft.thumbnail ? (
+                <img src={draft.thumbnail} alt={draft.label} className="h-24 w-24 rounded-lg object-cover border border-slate-700/50" />
+              ) : (
+                <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-dashed border-slate-700/50 text-[10px] text-muted-foreground text-center px-1">No thumbnail</div>
+              )}
+              <div className="flex-1">
+                <label className="text-[11px] text-muted-foreground">Label</label>
+                <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+                  className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none mb-2" />
+                <div className="flex items-center gap-2 flex-wrap">
+                  <label className="cursor-pointer rounded-full border border-slate-700/50 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground">
+                    Upload thumbnail
+                    <input type="file" accept="image/*" onChange={handleThumbnailUpload} disabled={thumbBusy} className="hidden" />
+                  </label>
+                  <button onClick={generateThumbnailFromShot} disabled={thumbBusy}
+                    className="rounded-full border border-primary/50 px-2.5 py-1 text-[11px] text-primary hover:bg-primary/10 disabled:opacity-50">
+                    {thumbBusy ? "…" : "✨ Generate from first shot"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="mb-3">
+              <div className="text-[11px] font-semibold text-muted-foreground mb-1">Product categories</div>
+              <div className="flex flex-wrap gap-1.5">
+                {categoryTags.map((tag) => (
+                  <button key={tag} onClick={() => toggleTag(tag)}
+                    className={`rounded-full border px-2.5 py-1 text-[11px] ${draft.category_tags.includes(tag) ? "border-primary bg-primary/10 text-primary" : "border-slate-700/50 text-muted-foreground"}`}>
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <label className="text-[11px] text-muted-foreground">Style notes</label>
+            <textarea value={draft.style_notes} onChange={(e) => setDraft({ ...draft, style_notes: e.target.value })} rows={2}
+              placeholder="Overall look, mood, and pacing shown to companies browsing this theme…"
+              className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-3 py-2 text-xs leading-relaxed text-foreground focus:border-slate-500 focus:outline-none mb-3" />
+
+            <div className="mb-1 flex items-center justify-between">
+              <div className="text-[11px] font-semibold text-muted-foreground">Shots</div>
+              <button onClick={addShot} className="rounded-full border border-dashed border-primary/50 px-2.5 py-0.5 text-[11px] text-primary hover:bg-primary/5">+ Add shot</button>
+            </div>
+            <div className="space-y-2 mb-3">
+              {draft.shots.map((shot, i) => (
+                <div key={i} className="rounded-lg border border-slate-700/50 p-2.5">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <input value={shot.label} onChange={(e) => updateShot(i, { label: e.target.value })} placeholder="Shot label"
+                      className="flex-1 rounded-lg border border-slate-700/50 bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-slate-500 focus:outline-none" />
+                    <input type="number" min={1} max={30} value={shot.duration} onChange={(e) => updateShot(i, { duration: Number(e.target.value) })}
+                      className="w-16 rounded-lg border border-slate-700/50 bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-slate-500 focus:outline-none" />
+                    <span className="text-[10px] text-muted-foreground shrink-0">sec</span>
+                    {draft.shots.length > 1 && (
+                      <button onClick={() => removeShot(i)} className="shrink-0 rounded-full border border-destructive/50 px-2 py-0.5 text-[10px] text-destructive hover:bg-destructive/10">Remove</button>
+                    )}
+                  </div>
+                  <textarea value={shot.prompt_template} onChange={(e) => updateShot(i, { prompt_template: e.target.value })} rows={2}
+                    placeholder="Video generation prompt — must include {product} exactly once…"
+                    className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2 py-1.5 text-[11px] leading-relaxed text-foreground focus:border-slate-500 focus:outline-none font-mono" />
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button onClick={saveDraft} disabled={saving} className="rounded-full bg-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+                {saving ? "Saving…" : "Save theme"}
+              </button>
+              {selectedId && (
+                <button onClick={() => deleteEntry(selectedId)} className="rounded-full border border-destructive/50 px-4 py-1.5 text-xs text-destructive hover:bg-destructive/10">
+                  Delete
+                </button>
+              )}
+              {saved && <span className="text-xs text-emerald-400">✓ Saved</span>}
+            </div>
+            {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 type TextStylePreset = { id: string; label: string; font_style: string; text_color: string; accent_color: string; size: string };
 const SIZE_OPTIONS = [["small", "Small"], ["medium", "Medium"], ["large", "Large"], ["xlarge", "Extra large"]] as const;
 
@@ -600,8 +885,13 @@ function TextStylesTab() {
 }
 
 function DeveloperThemes() {
-  const allowed = useRequireDeveloperAuth();
+  const allowed = useRequireDeveloperPermission("themes");
   const [tab, setTab] = useState<"text" | "image" | "video" | "styles">("image");
+  const [categoryTags, setCategoryTags] = useState<string[]>([]);
+
+  useEffect(() => {
+    devApi("/developer/themes").then((r) => setCategoryTags(r.themes.category_tags)).catch(() => {});
+  }, []);
 
   if (!allowed) return null;
 
@@ -609,8 +899,8 @@ function DeveloperThemes() {
     <DeveloperShell title="Themes">
       <p className="mb-6 max-w-2xl text-xs text-muted-foreground">
         Manages the theme references companies see in Create Ad — Text Theme Reference chips, the Image Theme
-        Reference gallery, text-overlay style presets, and (soon) Video Theme. Changes here appear for every
-        company immediately.
+        Reference gallery, the Video Theme Reference gallery, and text-overlay style presets. Changes here appear
+        for every company immediately.
       </p>
 
       <div className="mb-6 flex gap-2 border-b border-slate-700/50 pb-3">
@@ -627,9 +917,7 @@ function DeveloperThemes() {
       )}
       {tab === "image" && <ImageThemeTab />}
       {tab === "styles" && <TextStylesTab />}
-      {tab === "video" && (
-        <div className="text-xs text-muted-foreground">Video Theme (Text for Video / Image for Video) is coming next.</div>
-      )}
+      {tab === "video" && <VideoThemeTab categoryTags={categoryTags} />}
     </DeveloperShell>
   );
 }

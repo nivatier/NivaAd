@@ -44,6 +44,25 @@ class User(Base):
     company: Mapped["Company"] = relationship(back_populates="users")
 
 
+class DeveloperTeamUser(Base):
+    """Platform-operator team accounts — entirely separate from the
+    per-company User table above. The actual "owner" developer login
+    (DEVELOPER_EMAIL/DEVELOPER_PASSWORD in .env) is NOT a row here and
+    always has every permission implicitly; this table is only for
+    additional team members the owner explicitly invites from
+    Developer > Team, each with their own password and a configurable
+    set of section permissions (see services/developer_team.py)."""
+    __tablename__ = "developer_team_users"
+    __table_args__ = (UniqueConstraint("email"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    full_name: Mapped[str] = mapped_column(String(200), default="")
+    permissions: Mapped[dict] = mapped_column(JSON, default=dict)  # {"models": true, "themes": false, ...} — see PERMISSION_KEYS
+    status: Mapped[str] = mapped_column(String(20), default="active")  # "active" | "disabled"
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Subscription(Base):
     __tablename__ = "subscriptions"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)

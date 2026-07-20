@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { DeveloperShell } from "@/components/developer-shell";
-import { useRequireDeveloperAuth, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
+import { useRequireDeveloperPermission, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
 import { devApi, type PlatformIntegration } from "@/lib/dev-api";
 
 export const Route = createFileRoute("/developer/platforms")({
@@ -142,7 +142,7 @@ function AddPlatformForm({ onAdd, ratios }: { onAdd: (body: Record<string, unkno
 }
 
 function DeveloperPlatforms() {
-  const allowed = useRequireDeveloperAuth();
+  const allowed = useRequireDeveloperPermission("platforms");
   const handleAuthError = useDevAuthErrorHandler();
 
   const [platforms, setPlatforms] = useState<PlatformIntegration[] | null>(null);

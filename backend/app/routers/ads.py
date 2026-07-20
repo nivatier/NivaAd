@@ -1,8 +1,11 @@
 import asyncio
+import io
 import uuid
+import zipfile
 from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -25,6 +28,7 @@ from app.services import assistant_hints as assistant_hints_svc
 from app.services import themes as themes_svc
 from app.services import video_prep as video_prep_svc
 from app.services.guardrails import check_text
+from app.services import storage
 from app.services.storage import upload_data_url
 from app.services.token_crypto import decrypt_token
 from app.tasks import _build_prompt, _image_prompt, _multi_shot_video_prompt, _review_shot_prompt, _video_prompt
@@ -639,6 +643,85 @@ async def get_ad(ad_id: uuid.UUID, user: User = Depends(get_current_user), db: A
         ad, error, campaign_name, has_pending_schedule=bool(scheduled_posts),
         next_scheduled_at=scheduled_posts[0].scheduled_at if scheduled_posts else None,
         scheduled_posts=scheduled_posts,
+    )
+
+
+def _url_ext(url: str, default: str) -> str:
+    path = url.split("?")[0]
+    if "." in path.rsplit("/", 1)[-1]:
+        ext = "." + path.rsplit(".", 1)[-1]
+        if 1 < len(ext) <= 5:
+            return ext
+    return default
+
+
+@router.get("/{ad_id}/export")
+async def export_ad_zip(ad_id: uuid.UUID, variant: int = 0, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Downloads this ad as a ZIP — the caption/hashtags "script" for every
+    platform (plus the video shot prompts, if this was a video ad) under
+    scripts/, and every image/video actually generated for the selected
+    variant under media/. Powers the 💾 Save button in Preview & repost."""
+    ad = await db.get(Ad, ad_id)
+    if ad is None or ad.company_id != user.company_id:
+        raise HTTPException(404, "Ad not found")
+
+    variants = (ad.results or {}).get("variants") or [{}]
+    idx = variant if 0 <= variant < len(variants) else 0
+    v = variants[idx] or {}
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # --- scripts: the actual caption + hashtags per platform ---
+        lines = []
+        for p in ad.platforms:
+            pdata = v.get(p) or {}
+            caption = (pdata.get("caption") or "").strip()
+            hashtags = pdata.get("hashtags") or []
+            lines.append(f"=== {p} ===")
+            lines.append(caption or "(no caption)")
+            if hashtags:
+                lines.append(" ".join(hashtags))
+            lines.append("")
+        zf.writestr("scripts/captions.txt", "\n".join(lines))
+
+        # --- scripts: video shot prompts, if this ad generated a video ---
+        shots = (ad.brief or {}).get("video_shots")
+        if shots:
+            shot_lines = []
+            for i, shot in enumerate(shots, 1):
+                shot_lines.append(f"Shot {i} ({shot.get('duration', '?')}s):")
+                shot_lines.append((shot.get("prompt") or "").strip() or "(auto-continued from previous shot)")
+                shot_lines.append("")
+            zf.writestr("scripts/video_shot_prompts.txt", "\n".join(shot_lines))
+
+        # --- media: every image/video URL this variant actually produced ---
+        media: list[tuple[str, str]] = []
+        if v.get("image_url"):
+            media.append(("media/image" + _url_ext(v["image_url"], ".jpg"), v["image_url"]))
+        for i, u in enumerate(v.get("image_urls") or [], 1):
+            media.append((f"media/slide-{i}" + _url_ext(u, ".jpg"), u))
+        if v.get("video_url"):
+            media.append(("media/video" + _url_ext(v["video_url"], ".mp4"), v["video_url"]))
+
+        if media:
+            for name, url in media:
+                try:
+                    # storage.fetch_bytes reads directly via the internal
+                    # S3_ENDPOINT_URL (container-to-container, always
+                    # reachable) — NOT the public URL these are stored as,
+                    # which only resolves from the user's own browser (e.g.
+                    # http://localhost:9000 in dev) and would silently fail
+                    # every fetch from inside this server process.
+                    data, _content_type = await asyncio.to_thread(storage.fetch_bytes, url)
+                    zf.writestr(name, data)
+                except Exception:  # noqa: BLE001 — one bad/expired file shouldn't kill the whole export
+                    continue
+
+    buf.seek(0)
+    filename = f"ad-{str(ad_id)[:8]}.zip"
+    return StreamingResponse(
+        buf, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

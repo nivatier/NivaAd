@@ -7,6 +7,9 @@
 // never touches the User/Company tables at all).
 const BASE = "http://localhost:8000";
 const DEV_TOKEN_KEY = "nivaad_dev_token";
+const DEV_IDENTITY_KEY = "nivaad_dev_identity";
+
+export type DevIdentity = { is_owner: boolean; permissions: Record<string, boolean> };
 
 export function getDevToken(): string | null {
   if (typeof window === "undefined") return null; // SSR — localStorage doesn't exist server-side; this hook runs during the initial server render before hydration
@@ -19,6 +22,26 @@ export function setDevToken(token: string | null) {
 }
 export function clearDevToken() {
   setDevToken(null);
+  setDevIdentity(null);
+}
+
+/** Owner vs team member + which sections a team member was granted —
+ * stored alongside the token at login so every page can gate itself
+ * without an extra round-trip. Owner (is_owner: true) always passes
+ * every check regardless of what's in `permissions`. */
+export function getDevIdentity(): DevIdentity {
+  if (typeof window === "undefined") return { is_owner: true, permissions: {} };
+  try {
+    const raw = localStorage.getItem(DEV_IDENTITY_KEY);
+    return raw ? (JSON.parse(raw) as DevIdentity) : { is_owner: true, permissions: {} };
+  } catch {
+    return { is_owner: true, permissions: {} };
+  }
+}
+export function setDevIdentity(identity: DevIdentity | null) {
+  if (typeof window === "undefined") return;
+  if (identity) localStorage.setItem(DEV_IDENTITY_KEY, JSON.stringify(identity));
+  else localStorage.removeItem(DEV_IDENTITY_KEY);
 }
 
 class DevApiError extends Error {
@@ -84,10 +107,13 @@ export type OpenRouterCatalogModel = { slug: string; name: string; description?:
 export type PlatformIntegration = { id: string; label: string; client_id: string; has_secret: boolean; scope?: string; redirect_uri?: string; enabled: boolean; built: boolean; video_ratio: string };
 export type GuardrailRuleOut = { id: string; phrase: string; created_at: string };
 
+export type DeveloperTeamUser = { id: string; email: string; full_name: string; permissions: Record<string, boolean>; status: string; created_at: string };
+
 export const devAuthApi = {
   async login(email: string, password: string) {
     const res = await devApi("/developer/login", { method: "POST", body: { email, password } });
     setDevToken(res.access_token);
+    setDevIdentity({ is_owner: res.is_owner, permissions: res.permissions || {} });
     return res;
   },
   logout() {

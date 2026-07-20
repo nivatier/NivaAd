@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { DeveloperShell } from "@/components/developer-shell";
-import { useRequireDeveloperAuth, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
+import { useRequireDeveloperPermission, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
 import { devApi, type DeveloperModel, type DeveloperModelsOut, type OpenRouterCatalogModel } from "@/lib/dev-api";
 
 export const Route = createFileRoute("/developer/models")({
@@ -433,7 +433,7 @@ function RawJsonEditor({ onSaved }: { onSaved: () => void }) {
 }
 
 function DeveloperModels() {
-  const allowed = useRequireDeveloperAuth();
+  const allowed = useRequireDeveloperPermission("models");
   const handleAuthError = useDevAuthErrorHandler();
 
   const [models, setModels] = useState<DeveloperModelsOut | null>(null);

@@ -1,27 +1,39 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { type ReactNode } from "react";
-import { LayoutDashboard, Building2, Cpu, Palette, Link2, ShieldCheck, Settings, MessageCircle, type LucideIcon } from "lucide-react";
+import { LayoutDashboard, Building2, Cpu, Palette, Link2, ShieldCheck, Settings, MessageCircle, Users, type LucideIcon } from "lucide-react";
 import { clearDevToken } from "@/lib/dev-api";
+import { useDevIdentity } from "@/hooks/use-developer-auth";
 
-const NAV: { to: string; label: string; icon: LucideIcon }[] = [
-  { to: "/developer/overview", label: "Overview", icon: LayoutDashboard },
-  { to: "/developer/companies", label: "Companies", icon: Building2 },
-  { to: "/developer/models", label: "Models", icon: Cpu },
-  { to: "/developer/themes", label: "Themes", icon: Palette },
-  { to: "/developer/assistant", label: "Assistant", icon: MessageCircle },
-  { to: "/developer/platforms", label: "Platforms", icon: Link2 },
-  { to: "/developer/moderation", label: "Moderation", icon: ShieldCheck },
-  { to: "/developer/settings", label: "Settings", icon: Settings },
+// `section` is the permission key that gates each link for a team member
+// (see services/developer_team.py PERMISSION_KEYS on the backend) — null
+// means always visible (Overview is intentionally ungated for anyone
+// logged in at all).
+const NAV: { to: string; label: string; icon: LucideIcon; section: string | null }[] = [
+  { to: "/developer/overview", label: "Overview", icon: LayoutDashboard, section: null },
+  { to: "/developer/companies", label: "Companies", icon: Building2, section: "companies" },
+  { to: "/developer/models", label: "Models", icon: Cpu, section: "models" },
+  { to: "/developer/themes", label: "Themes", icon: Palette, section: "themes" },
+  { to: "/developer/assistant", label: "Assistant", icon: MessageCircle, section: "assistant" },
+  { to: "/developer/platforms", label: "Platforms", icon: Link2, section: "platforms" },
+  { to: "/developer/moderation", label: "Moderation", icon: ShieldCheck, section: "guardrails" },
+  { to: "/developer/settings", label: "Settings", icon: Settings, section: "settings" },
+  { to: "/developer/team", label: "Team", icon: Users, section: "team" },
 ];
 
 export function DeveloperShell({ title, children }: { title: ReactNode; children: ReactNode }) {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const identity = useDevIdentity();
 
   function logout() {
     clearDevToken();
     navigate({ to: "/developer-login" });
   }
+
+  // Before identity has loaded client-side, show every link (matches SSR,
+  // avoids a flash of an empty sidebar) — the actual page content is what's
+  // really gated (useRequireDeveloperPermission), this is just nav display.
+  const visibleNav = NAV.filter((item) => !item.section || !identity || identity.is_owner || identity.permissions[item.section]);
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
@@ -35,7 +47,7 @@ export function DeveloperShell({ title, children }: { title: ReactNode; children
         </div>
 
         <nav className="flex-1 space-y-1 px-3">
-          {NAV.map((item) => {
+          {visibleNav.map((item) => {
             const active = pathname === item.to;
             return (
               <Link
@@ -52,7 +64,9 @@ export function DeveloperShell({ title, children }: { title: ReactNode; children
 
         <div className="m-3 rounded-xl border border-slate-700/50 bg-card/60 p-4">
           <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Session</div>
-          <div className="mt-1 text-xs text-foreground">Developer / platform operator</div>
+          <div className="mt-1 text-xs text-foreground">
+            {identity?.is_owner === false ? "Developer team member" : "Developer / platform operator"}
+          </div>
           <button onClick={logout} className="mt-3 w-full rounded-lg border border-slate-700/50 py-2 text-xs text-muted-foreground hover:border-slate-500 hover:text-foreground">
             Log out
           </button>

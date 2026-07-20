@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, type AdOut } from "@/lib/api";
+import { api, apiDownload, type AdOut } from "@/lib/api";
 import { PLATFORMS, PostPreviewCard } from "@/components/create-ad-parts";
 import { TimezoneSelect } from "@/components/timezone-picker";
 import { detectedTimeZone, formatInTimeZone, zonedWallTimeToUtcNaiveIso } from "@/lib/timezone";
@@ -27,7 +27,7 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
   const [selected, setSelected] = useState<Record<string, boolean>>(
     Object.fromEntries(ad.platforms.map((p) => [p, !ad.posted_platforms.includes(p)]))
   );
-  const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [posting, setPosting] = useState(false);
   const [scheduling, setScheduling] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
@@ -107,18 +107,31 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
     return { variants: reordered };
   }
 
-  async function saveCaptions() {
-    setSaving(true); setErr("");
+  async function downloadZip() {
+    setDownloading(true); setErr("");
     try {
+      // Persist any unsaved caption edits first so the export matches what's
+      // shown on screen. buildResultsForAction() reorders variants so the
+      // one being acted on becomes index 0 — so after this save, that's
+      // always the variant to export, regardless of which tab was active.
       await api(`/ads/${ad.id}`, { method: "PATCH", body: { results: buildResultsForAction() } });
+      const blob = await apiDownload(`/ads/${ad.id}/export?variant=0`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ad-${ad.id.slice(0, 8)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
       setSavedMsg("✓ Saved");
       setTimeout(() => setSavedMsg(""), 2000);
       setEditMode(false);
       onUpdated();
     } catch (e: any) {
-      setErr(e.message || "Could not save changes");
+      setErr(e.message || "Could not download");
     }
-    setSaving(false);
+    setDownloading(false);
   }
 
   async function postSelected() {
@@ -258,8 +271,8 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
 
         <div className="sticky bottom-0 border-t border-border bg-card/95 backdrop-blur-xl">
           <div className="flex items-center gap-3 px-5 py-4">
-            <button onClick={saveCaptions} disabled={saving} className="rounded-full border border-primary/50 px-4 py-2 text-xs text-primary disabled:opacity-50">
-              {saving ? "Saving…" : "💾 Save"}
+            <button onClick={downloadZip} disabled={downloading} className="rounded-full border border-primary/50 px-4 py-2 text-xs text-primary disabled:opacity-50">
+              {downloading ? "Saving…" : "💾 Save"}
             </button>
             {savedMsg && <span className="text-xs text-emerald-400">{savedMsg}</span>}
             <button

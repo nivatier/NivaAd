@@ -44,11 +44,21 @@ def decode_token(token: str) -> dict:
     return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
 
 
-def create_developer_token() -> str:
+def create_developer_token(dev_user_id: str | None = None, permissions: dict | None = None) -> str:
     """Fully separate from the user/company access token — different
     "type" claim ("developer_access" vs "access"), no user_id/company_id
     at all. This is deliberate: the developer dependency (deps.py) never
     touches the User/Company tables, so there's no way this token could
     ever be confused with, or grant access via, the normal per-company
-    auth path."""
-    return _create_token("developer", "developer_access", timedelta(hours=12))
+    auth path.
+
+    dev_user_id is omitted entirely for the .env owner login (who always
+    has every permission implicitly) and set to the DeveloperTeamUser's id
+    for a team-member login, whose granted permissions are embedded in the
+    token itself (see services/developer_team.py) so require_developer_
+    permission can check them without a DB round-trip on every request."""
+    extra = {}
+    if dev_user_id:
+        extra["dev_user_id"] = dev_user_id
+        extra["dev_permissions"] = permissions or {}
+    return _create_token("developer", "developer_access", timedelta(hours=12), extra or None)

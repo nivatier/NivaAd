@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { DeveloperShell } from "@/components/developer-shell";
-import { useRequireDeveloperAuth, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
+import { useRequireDeveloperPermission, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
 import { devApi, type CompanyAdminOut } from "@/lib/dev-api";
 
 export const Route = createFileRoute("/developer/companies")({
@@ -18,7 +18,7 @@ const TIER_COLOR: Record<string, string> = {
 };
 
 function DeveloperCompanies() {
-  const allowed = useRequireDeveloperAuth();
+  const allowed = useRequireDeveloperPermission("companies");
   const handleAuthError = useDevAuthErrorHandler();
 
   const [companies, setCompanies] = useState<CompanyAdminOut[] | null>(null);
