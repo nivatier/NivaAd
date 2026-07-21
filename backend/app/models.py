@@ -313,6 +313,18 @@ class CompanyModelConfig(Base):
     config: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class CompanyAgentSettings(Base):
+    """Per-company Agent Niva policy — Quick Start mode, event approval
+    mode, and credit-spend cap. One row per company; falls back to
+    DEFAULT_AGENT_SETTINGS (services/agent_settings.py) if the company
+    has never customised it. Mirrors CompanyModelConfig's shape exactly:
+    unique company_id FK + JSON config column."""
+    __tablename__ = "company_agent_settings"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), unique=True)
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
 class RoleCapability(Base):
     """Per-company configuration of what the 'editor' and 'poster' roles
     can do — admin always has every capability implicitly (not stored,
@@ -364,6 +376,7 @@ class AgentRecommendation(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")  # "pending" | "created" | "dismissed"
     title: Mapped[str] = mapped_column(String(200), default="")
     description: Mapped[str] = mapped_column(Text, default="")
+    audience: Mapped[str] = mapped_column(String(300), default="")  # suggested target audience, pre-fills Create Ad's audience field
     platforms: Mapped[list] = mapped_column(JSON, default=list)
     created_ad_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ads.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -379,6 +392,7 @@ class AgentScrapeJob(Base):
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
     url: Mapped[str] = mapped_column(String(500))
     count: Mapped[int] = mapped_column(Integer, default=5)
+    focus: Mapped[str | None] = mapped_column(String(500), nullable=True)  # optional subject/topic the customer wants to focus on
     status: Mapped[str] = mapped_column(String(20), default="queued")  # "queued" | "running" | "ready" | "failed"
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

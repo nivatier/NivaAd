@@ -1383,9 +1383,16 @@ def generate_quick_start_recommendations(self, job_id: str):
                 f"website. Based ONLY on what's actually there (don't invent products or claims that aren't "
                 f"implied by the content), recommend exactly {job.count} distinct, concrete social media ad ideas "
                 f"this company could run.\n\n"
-                f"Respond with ONLY a JSON array (no markdown fences, no preamble), each item shaped exactly as:\n"
-                f'{{"title": "short internal name for this ad idea", "description": "2-3 sentence ad description/angle, '
-                f'written as if briefing a copywriter", "platforms": ["facebook","instagram"]}}\n'
+                + (
+                    f"The customer has asked you to focus specifically on: \"{job.focus}\". "
+                    f"All {job.count} ideas should be directly relevant to that subject — don't recommend unrelated angles.\n\n"
+                    if job.focus else ""
+                )
+                + f"Respond with ONLY a JSON array (no markdown fences, no preamble), each item shaped exactly as:\n"
+                f'{{"title": "short internal name for this ad idea", '
+                f'"description": "2-3 sentence ad description/angle, written as if briefing a copywriter", '
+                f'"audience": "who this ad should target — age range, interests, lifestyle in one short sentence", '
+                f'"platforms": ["facebook","instagram"]}}\n'
                 f'Valid platform values: facebook, instagram, linkedin, x, tiktok. Pick 1-3 sensible platforms per idea.\n\n'
                 f"Website content:\n{site_text}"
             )
@@ -1399,6 +1406,7 @@ def generate_quick_start_recommendations(self, job_id: str):
                     company_id=job.company_id, source_url=job.url, status="pending",
                     title=(idea.get("title") or "Untitled idea")[:200],
                     description=idea.get("description") or "",
+                    audience=(idea.get("audience") or "")[:300],
                     platforms=[p for p in (idea.get("platforms") or []) if p in ("facebook", "instagram", "linkedin", "x", "tiktok")] or ["facebook", "instagram"],
                 ))
             job.status = "ready"
@@ -1462,10 +1470,6 @@ def check_agent_events(self):
     only in framing to the customer, not in what's stored)."""
     with Session(sync_engine) as db:
         today = date.today()
-        settings_ = get_agent_settings_sync(db)
-        mode = settings_.get("event_approval_mode", "draft_only")
-        budget_mode = settings_.get("credit_cap_mode", "monthly_budget")
-        monthly_budget = settings_.get("monthly_credit_budget", 200)
 
         events = db.scalars(select(AgentEvent).where(AgentEvent.enabled == True)).all()  # noqa: E712
         fired = 0
@@ -1473,6 +1477,14 @@ def check_agent_events(self):
         for ev in events:
             if ev.last_run_year == today.year or today.year in (ev.skipped_years or []):
                 continue
+            # Fetch this company's own Agent Niva settings — each company can
+            # have a different policy, so we load inside the loop rather than
+            # once globally.  get_agent_settings_sync falls back to defaults
+            # if the company hasn't customised anything yet.
+            settings_ = get_agent_settings_sync(db, ev.company_id)
+            mode = settings_.get("event_approval_mode", "draft_only")
+            budget_mode = settings_.get("credit_cap_mode", "monthly_budget")
+            monthly_budget = settings_.get("monthly_credit_budget", 200)
             try:
                 trigger_date = date(today.year, ev.month, ev.day) - timedelta(days=ev.lead_days)
             except ValueError:

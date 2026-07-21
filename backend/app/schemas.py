@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class RegisterIn(BaseModel):
@@ -1186,6 +1186,7 @@ class AgentSettingsUpdateIn(BaseModel):
 class QuickStartIn(BaseModel):
     url: str = Field(min_length=3, max_length=500)
     count: int = Field(default=5, ge=1, le=10)
+    focus: str | None = Field(default=None, max_length=500)  # optional subject focus, e.g. "our summer sale" or "the new iOS app"
 
 
 class AgentScrapeJobOut(BaseModel):
@@ -1196,8 +1197,12 @@ class AgentScrapeJobOut(BaseModel):
     error: str | None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def coerce_id(cls, v):
+        return str(v)
 
 
 class AgentRecommendationOut(BaseModel):
@@ -1206,6 +1211,7 @@ class AgentRecommendationOut(BaseModel):
     status: str
     title: str
     description: str
+    audience: str = ""
     platforms: list[str]
     created_ad_id: str | None = None
     created_at: datetime

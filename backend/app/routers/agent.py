@@ -5,11 +5,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.deps import get_current_user, require_capability
+from app.deps import get_current_user, require_capability, require_role
 from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, GenerationJob, User
 from app.schemas import (
     AdCreateIn, AgentEventIn, AgentEventOut, AgentRecommendationOut,
-    AgentScrapeJobOut, QuickStartIn,
+    AgentScrapeJobOut, AgentSettingsOut, AgentSettingsUpdateIn, QuickStartIn,
 )
 from app.services import agent_settings as agent_settings_svc
 from app.services import credits as credit_svc
@@ -46,7 +46,7 @@ def _event_out(ev: AgentEvent) -> AgentEventOut:
 
 @router.post("/quick-start", response_model=AgentScrapeJobOut)
 async def start_quick_start(data: QuickStartIn, user: User = Depends(require_capability("create_ads")), db: AsyncSession = Depends(get_db)):
-    job = AgentScrapeJob(company_id=user.company_id, url=data.url, count=data.count, status="queued")
+    job = AgentScrapeJob(company_id=user.company_id, url=data.url, count=data.count, focus=data.focus or None, status="queued")
     db.add(job)
     await db.flush()
     job_id = job.id
@@ -71,6 +71,7 @@ async def list_recommendations(user: User = Depends(get_current_user), db: Async
     return [
         AgentRecommendationOut(
             id=str(r.id), source_url=r.source_url, status=r.status, title=r.title, description=r.description,
+            audience=r.audience or "",
             platforms=r.platforms or [], created_ad_id=str(r.created_ad_id) if r.created_ad_id else None, created_at=r.created_at,
         )
         for r in rows
@@ -91,7 +92,7 @@ async def create_ad_from_recommendation(rec_id: str, user: User = Depends(requir
     if rec.status != "pending":
         raise HTTPException(409, f"This recommendation is already {rec.status}.")
 
-    settings_ = await agent_settings_svc.get_agent_settings(db)
+    settings_ = await agent_settings_svc.get_agent_settings(db, user.company_id)
     if settings_.get("credit_cap_mode") == "monthly_budget":
         month_start = datetime(datetime.utcnow().year, datetime.utcnow().month, 1)
         spent = await db.scalar(
@@ -103,10 +104,23 @@ async def create_ad_from_recommendation(rec_id: str, user: User = Depends(requir
         if spent >= budget:
             raise HTTPException(402, f"This month's Agent Niva credit budget ({budget}) has been reached. Ask your developer to raise it, or create this ad manually from Create Ad instead.")
 
+    # Resolve the first enabled text and image models — create_ad requires
+    # explicit model IDs (same validation Create Ad's own form enforces).
+    # Agent-generated ads always use the platform's first enabled option.
+    available = await credit_svc.get_available_models(db)
+    text_models = [m for m in available.get("text", []) if m.get("enabled", True)]
+    image_models = [m for m in available.get("image", []) if m.get("enabled", True)]
+    if not text_models:
+        raise HTTPException(422, "No enabled text model configured — ask your developer to add one under Developer > Models.")
+    if not image_models:
+        raise HTTPException(422, "No enabled image model configured — ask your developer to add one under Developer > Models.")
+
     payload = AdCreateIn(
         product_name=rec.title, description=rec.description or rec.title,
         platforms=rec.platforms or ["facebook", "instagram"],
         outputs={"text": True, "image": True, "video": False},
+        text_model_id=text_models[0]["id"],
+        image_model_id=image_models[0]["id"],
     )
     result = await create_ad(data=payload, user=user, db=db)
     ad_id = result.ad_id
@@ -132,6 +146,7 @@ async def dismiss_recommendation(rec_id: str, user: User = Depends(require_capab
     return [
         AgentRecommendationOut(
             id=str(r.id), source_url=r.source_url, status=r.status, title=r.title, description=r.description,
+            audience=r.audience or "",
             platforms=r.platforms or [], created_ad_id=str(r.created_ad_id) if r.created_ad_id else None, created_at=r.created_at,
         )
         for r in rows
@@ -213,3 +228,21 @@ async def delete_event(event_id: str, user: User = Depends(require_capability("c
     await db.commit()
     rows = (await db.scalars(select(AgentEvent).where(AgentEvent.company_id == user.company_id).order_by(AgentEvent.month, AgentEvent.day))).all()
     return [_event_out(e) for e in rows]
+
+
+# ── Agent Niva settings (company-admin only) ──────────────────────────
+
+@router.get("/settings", response_model=AgentSettingsOut)
+async def get_company_agent_settings(user: User = Depends(require_role("admin")), db: AsyncSession = Depends(get_db)):
+    """Returns this company's Agent Niva policy — Quick Start mode,
+    event approval mode, and credit spend cap. Falls back to platform
+    defaults for any key the company hasn't explicitly set yet."""
+    return AgentSettingsOut(**await agent_settings_svc.get_agent_settings(db, user.company_id))
+
+
+@router.put("/settings", response_model=AgentSettingsOut)
+async def update_company_agent_settings(data: AgentSettingsUpdateIn, user: User = Depends(require_role("admin")), db: AsyncSession = Depends(get_db)):
+    """Updates this company's Agent Niva policy. Admin-only — editors
+    and posters can use Agent Niva but can't change how it behaves."""
+    updated = await agent_settings_svc.update_agent_settings(db, user.company_id, data.model_dump())
+    return AgentSettingsOut(**updated)

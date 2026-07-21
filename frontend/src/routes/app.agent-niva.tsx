@@ -10,7 +10,7 @@ export const Route = createFileRoute("/app/agent-niva")({
 });
 
 type ScrapeJob = { id: string; url: string; count: number; status: string; error: string | null; created_at: string };
-type Recommendation = { id: string; source_url: string; status: string; title: string; description: string; platforms: string[]; created_ad_id: string | null; created_at: string };
+type Recommendation = { id: string; source_url: string; status: string; title: string; description: string; audience: string; platforms: string[]; created_ad_id: string | null; created_at: string };
 type AgentEvent = {
   id: string; name: string; month: number; day: number; lead_days: number; guidance: string; platforms: string[];
   product_id: string | null; enabled: boolean; skipped_years: number[]; last_run_year: number | null; next_run_date: string | null;
@@ -35,6 +35,7 @@ function PlatformChips({ selected, onToggle }: { selected: string[]; onToggle: (
 function QuickStartTab() {
   const [url, setUrl] = useState("");
   const [count, setCount] = useState(5);
+  const [focus, setFocus] = useState("");
   const [job, setJob] = useState<ScrapeJob | null>(null);
   const [recs, setRecs] = useState<Recommendation[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -62,19 +63,17 @@ function QuickStartTab() {
     if (!url.trim()) return;
     setErr("");
     try {
-      const j = await api("/agent/quick-start", { method: "POST", body: { url: url.trim(), count } });
+      const j = await api("/agent/quick-start", { method: "POST", body: { url: url.trim(), count, focus: focus.trim() || null } });
       setJob(j);
     } catch (e: any) { setErr(e.message || "Could not start"); }
   }
 
-  async function createFrom(id: string) {
-    setBusyId(id); setErr("");
-    try {
-      const res = await api(`/agent/recommendations/${id}/create`, { method: "POST" });
-      await loadRecs();
-      if (res.ad_id) navigate({ to: "/app/my-ads" });
-    } catch (e: any) { setErr(e.message || "Could not create ad"); }
-    setBusyId(null);
+  async function createFrom(rec: Recommendation) {
+    sessionStorage.setItem(
+      "nivaad_prefill_product",
+      JSON.stringify({ name: rec.title, description: rec.description, audience: rec.audience }),
+    );
+    navigate({ to: "/app" });
   }
 
   async function dismiss(id: string) {
@@ -103,6 +102,18 @@ function QuickStartTab() {
             {job && GENERATING.has(job.status) ? "Studying site…" : "Get ad ideas"}
           </button>
         </div>
+        <div className="mt-3">
+          <label className="text-xs font-medium text-foreground">Focus on a specific subject <span className="font-normal text-muted-foreground">(optional)</span></label>
+          <textarea
+            value={focus}
+            onChange={(e) => setFocus(e.target.value)}
+            placeholder="e.g. our summer sale, the new iOS app, our loyalty programme…"
+            rows={2}
+            maxLength={500}
+            className="mt-1 w-full rounded-lg border border-input bg-input/40 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+          />
+          <div className="mt-0.5 text-right text-[10px] text-muted-foreground">{focus.length}/500</div>
+        </div>
         {job?.status === "failed" && <div className="mt-2 text-xs text-destructive">Couldn't do that: {job.error}</div>}
       </div>
 
@@ -120,6 +131,9 @@ function QuickStartTab() {
               <div key={r.id} className="rounded-xl border border-border bg-card/40 p-4">
                 <div className="text-sm font-semibold text-foreground">{r.title}</div>
                 <div className="mt-1 text-xs text-muted-foreground">{r.description}</div>
+                {r.audience && (
+                  <div className="mt-2 text-xs text-muted-foreground"><span className="font-medium text-foreground">Audience:</span> {r.audience}</div>
+                )}
                 <div className="mt-2 flex flex-wrap gap-1">
                   {r.platforms.map((p) => {
                     const meta = PLATFORMS.find((pl) => pl.id === p);
@@ -128,9 +142,9 @@ function QuickStartTab() {
                 </div>
                 <div className="mt-1 text-[10px] text-muted-foreground truncate">from {r.source_url}</div>
                 <div className="mt-3 flex items-center gap-2">
-                  <button onClick={() => createFrom(r.id)} disabled={busyId === r.id}
-                    className="rounded-full bg-gold-gradient px-3 py-1.5 text-xs font-semibold text-background disabled:opacity-50">
-                    {busyId === r.id ? "Creating…" : "Create this ad"}
+                  <button onClick={() => createFrom(r)}
+                    className="rounded-full bg-gold-gradient px-3 py-1.5 text-xs font-semibold text-background">
+                    Create this ad →
                   </button>
                   <button onClick={() => dismiss(r.id)} disabled={busyId === r.id}
                     className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-destructive/40 hover:text-destructive disabled:opacity-50">
