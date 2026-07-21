@@ -112,10 +112,10 @@ async def _shot_out(db: AsyncSession, company_id) -> list[BrandVideoShotOut]:
     # single response.
     return [
         BrandVideoShotOut(
-            id=str(r.id), kind=r.kind, status=r.status, label=r.label, prompt=r.prompt, duration=r.duration, ratio=r.ratio,
+            id=str(r.id), kind=r.kind, status=r.status, label=r.label, prompt=r.prompt, duration=r.duration, ratio=r.ratio, mute_audio=r.mute_audio,
             url=r.url, poster_url=r.poster_url, error=r.error, created_at=r.created_at,
             reference_logo_id=str(r.reference_logo_id) if r.reference_logo_id else None,
-            overlay_text=r.overlay_text, overlay_font=r.overlay_font, overlay_text_color=r.overlay_text_color, overlay_position=r.overlay_position,
+            overlay_text=r.overlay_text, overlay_font=r.overlay_font, overlay_font_size=r.overlay_font_size, overlay_text_color=r.overlay_text_color, overlay_position=r.overlay_position,
         )
         for r in rows
     ]
@@ -158,9 +158,10 @@ async def generate_brand_video_shot_endpoint(data: GenerateBrandVideoShotIn, use
 
     shot = BrandVideoShot(
         company_id=user.company_id, kind=data.kind, label=data.label.strip(), prompt=data.prompt, duration=data.duration, ratio=data.ratio,
+        mute_audio=data.mute_audio,
         model_used=model["model"], status="queued",
         reference_logo_id=reference_logo_id,
-        overlay_text=(data.overlay_text or None), overlay_font=data.overlay_font, overlay_text_color=data.overlay_text_color, overlay_position=data.overlay_position,
+        overlay_text=(data.overlay_text or None), overlay_font=data.overlay_font, overlay_font_size=data.overlay_font_size, overlay_text_color=data.overlay_text_color, overlay_position=data.overlay_position,
     )
     db.add(shot)
     db.add(CreditLedger(company_id=user.company_id, delta=-cost, reason="generation", ref_id=None))

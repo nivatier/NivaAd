@@ -108,6 +108,7 @@ class BrandVideoShot(Base):
     prompt: Mapped[str] = mapped_column(Text, default="")
     duration: Mapped[int] = mapped_column(Integer, default=3)
     ratio: Mapped[str] = mapped_column(String(10), default="16:9")  # one of the company's available video ratios (see services/video_ratios.py) — the raw AI generation is reframed to this via reframe_video before it's finalized, same padding pipeline used everywhere else
+    mute_audio: Mapped[bool] = mapped_column(Boolean, default=False)  # generate without audio: audio=False is sent to the model (skips audio for models that honor it) AND any audio track that still comes back is stripped via ffmpeg before saving — see reframe.strip_audio
     model_used: Mapped[str | None] = mapped_column(String(120), nullable=True)
     url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     poster_url: Mapped[str | None] = mapped_column(String(500), nullable=True)  # last frame as a static JPEG — used for the gallery card thumbnail so the clip doesn't autoplay in a tiny window; full playback happens in the Preview modal instead
@@ -119,6 +120,7 @@ class BrandVideoShot(Base):
     reference_logo_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)  # a BrandLogo id — its url is sent to the video model as the starting frame, so the AI generates around/animates that actual logo rather than guessing at one from the text prompt alone
     overlay_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # e.g. contact info / website — burned in via ffmpeg drawtext AFTER generation (see reframe.add_text_overlay), never left to the AI to render, since video models are unreliable at exact legible text
     overlay_font: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "sans" | "sans_bold" | "serif" — see reframe.FONT_PATHS
+    overlay_font_size: Mapped[str | None] = mapped_column(String(10), nullable=True)  # "small" | "medium" | "large" — see reframe.FONT_SIZE_FACTORS
     overlay_text_color: Mapped[str | None] = mapped_column(String(9), nullable=True)
     overlay_position: Mapped[str | None] = mapped_column(String(20), nullable=True)  # one of 9 anchors (8 edges/corners + middle_center for text-only shots) — see reframe.add_text_overlay's ANCHOR_EXPRESSIONS
 
@@ -212,6 +214,8 @@ class Ad(Base):
     posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     posted_platforms: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    agent_source: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "quick_start" | "event" | None (normal, human-created) — drives the "Agent Niva" tag in My Ads/Calendar
+    agent_event_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agent_events.id"), nullable=True)  # only set when agent_source == "event" — which recurring event definition produced this ad
 
 
 class GenerationJob(Base):
@@ -319,3 +323,62 @@ class RoleCapability(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), unique=True)
     config: Mapped[dict] = mapped_column(JSON, default=dict)  # {"editor": {cap: bool, ...}, "poster": {...}}
+
+
+class AgentEvent(Base):
+    """A recurring yearly occasion (Christmas, a seasonal sale, etc) that
+    Agent Niva watches for — see tasks.check_agent_events, a daily Celery
+    Beat job. Every year, `lead_days` before month/day, it generates an
+    ad and (depending on the developer's configured
+    agent_settings.event_approval_mode) drafts it, schedules it for
+    review, or posts it automatically. `skipped_years` lets a specific
+    occurrence be turned off (e.g. "not running the Christmas ad this
+    year") without deleting the whole recurring definition — `enabled`
+    is the permanent on/off switch, skipped_years is a one-off pause."""
+    __tablename__ = "agent_events"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))  # e.g. "Christmas"
+    month: Mapped[int] = mapped_column(Integer)  # 1-12
+    day: Mapped[int] = mapped_column(Integer)  # 1-31 (validated against the month at creation time)
+    lead_days: Mapped[int] = mapped_column(Integer, default=2)  # generate this many days BEFORE month/day
+    guidance: Mapped[str] = mapped_column(Text, default="")  # freeform brief for what the ad should be about, e.g. "20% off holiday sale, festive theme"
+    platforms: Mapped[list] = mapped_column(JSON, default=list)
+    product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id"), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    skipped_years: Mapped[list] = mapped_column(JSON, default=list)  # e.g. [2026] — this occurrence only, definition stays intact
+    last_run_year: Mapped[int | None] = mapped_column(Integer, nullable=True)  # guards against firing twice in the same year if the beat task runs more than once on the trigger day
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AgentRecommendation(Base):
+    """One AI-suggested ad idea from Quick Start's "study my website and
+    recommend ads" flow (see routers/agent.py, tasks.generate_quick_start_recommendations).
+    Stays "pending" for the customer to review/edit and turn into a real
+    ad (or dismiss) — see agent_settings.quick_start_mode for whether
+    that review step is required or skipped."""
+    __tablename__ = "agent_recommendations"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
+    source_url: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # "pending" | "created" | "dismissed"
+    title: Mapped[str] = mapped_column(String(200), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    platforms: Mapped[list] = mapped_column(JSON, default=list)
+    created_ad_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ads.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AgentScrapeJob(Base):
+    """Tracks one Quick Start run (scrape a URL -> N recommendations) as
+    a background job, same async job/polling pattern as ad generation —
+    scraping + AI recommendation can take a little while, so the
+    frontend polls this instead of blocking on one request."""
+    __tablename__ = "agent_scrape_jobs"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
+    url: Mapped[str] = mapped_column(String(500))
+    count: Mapped[int] = mapped_column(Integer, default=5)
+    status: Mapped[str] = mapped_column(String(20), default="queued")  # "queued" | "running" | "ready" | "failed"
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

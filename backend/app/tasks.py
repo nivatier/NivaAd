@@ -6,7 +6,7 @@ Workers run synchronously, so they use a sync SQLAlchemy engine
 import base64
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import httpx
 from sqlalchemy import create_engine, delete, func, select
@@ -14,16 +14,18 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
-from app.models import Ad, BrandKit, BrandLogo, BrandVideoShot, CreditLedger, GenerationJob, PlatformConnection, ScheduledPost
+from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, BrandKit, BrandLogo, BrandVideoShot, CreditLedger, GenerationJob, PlatformConnection, Product, ScheduledPost
 from app.services import storage
 from app.services import linkedin
+from app.services.agent_scraper import scrape_company_website
+from app.services.agent_settings import get_agent_settings_sync
 from app.services.branding import composite_logo
 from app.services.images import generate_image
 from app.services.credits import get_available_models_sync
 from app.services.retention import get_post_retention_months_sync, get_retention_months_sync
 from app.services import text_gen
 from app.services.platform_config import get_ad_targeting_ratios_sync
-from app.services.reframe import add_text_overlay, concat_video_clips, extract_last_frame, prepare_video_reference_frame, probe_video_url_dimensions, reframe_image, reframe_video, reframe_video_to_dims
+from app.services.reframe import add_text_overlay, concat_video_clips, extract_last_frame, prepare_video_reference_frame, probe_video_url_dimensions, reframe_image, reframe_video, reframe_video_to_dims, strip_audio
 from app.services.video_ratios import get_video_ratios_sync, resolve_ratio
 from app.services.video_prep import get_video_prep_settings_sync
 from app.services.token_crypto import decrypt_token
@@ -349,7 +351,37 @@ def generate_brand_video_shot(self, shot_id: str):
                 else:
                     logger.warning("[brand_video_shot] shot=%s reference logo %s no longer exists — generating without it", shot_id, shot.reference_logo_id)
 
-            video_bytes = generate_video(shot.prompt, shot.model_used, duration=shot.duration, resolution="720p", frame_image_url=frame_image_url)
+            # Logo fidelity: the reference frame anchors the FIRST frame,
+            # but video models will happily "reinterpret" the logo as the
+            # clip plays — redrawing, restyling, or morphing it. Appended
+            # server-side (not stored on shot.prompt) so the customer's
+            # own wording stays clean in the gallery, and every
+            # logo-referenced generation gets the instruction whether or
+            # not they thought to write it.
+            gen_prompt = shot.prompt
+            if frame_image_url:
+                gen_prompt = (
+                    f"{shot.prompt.rstrip('. ')}. "
+                    "The logo shown in the reference image must remain EXACTLY as it is throughout the entire video — "
+                    "identical shape, colors, proportions, and any text in it. Do not redraw, restyle, distort, morph, "
+                    "recolor, or replace the logo at any point."
+                )
+
+            # audio=False is only SENT when the customer asked for a
+            # silent clip — otherwise None, letting the provider's own
+            # default apply (same convention as generate_ad's video path).
+            video_bytes = generate_video(gen_prompt, shot.model_used, duration=shot.duration, resolution="720p", frame_image_url=frame_image_url, audio=False if shot.mute_audio else None)
+
+            if shot.mute_audio:
+                # The audio=False flag above is a request; this is the
+                # guarantee — not every model/provider honors the flag,
+                # so any audio track that still came back is stripped
+                # here (video stream copied as-is, no re-encode) before
+                # anything downstream sees it.
+                try:
+                    video_bytes = strip_audio(video_bytes)
+                except Exception as strip_exc:  # noqa: BLE001
+                    logger.warning("[brand_video_shot] shot=%s audio strip failed, continuing with the clip as generated: %s", shot_id, strip_exc)
 
             # Reframe to the company's chosen ratio — AI video models
             # generate at their own native shape (usually 16:9)
@@ -369,7 +401,7 @@ def generate_brand_video_shot(self, shot_id: str):
 
             if shot.overlay_text and shot.overlay_text.strip():
                 try:
-                    video_bytes = add_text_overlay(video_bytes, shot.overlay_text, shot.overlay_font or "sans", shot.overlay_text_color or "#ffffff", shot.overlay_position or "bottom_center")
+                    video_bytes = add_text_overlay(video_bytes, shot.overlay_text, shot.overlay_font or "sans", shot.overlay_text_color or "#ffffff", shot.overlay_position or "bottom_center", shot.overlay_font_size or "medium")
                 except Exception as overlay_exc:  # noqa: BLE001
                     # The clip itself still generated fine — losing just
                     # the text overlay is far better than losing the
@@ -1312,3 +1344,172 @@ def cleanup_expired_posts():
         db.commit()
         logger.info("[retention] posts deleted=%d skipped_pending=%d cutoff=%s", deleted, skipped_pending, cutoff.isoformat())
         return f"deleted {deleted} posts, skipped {skipped_pending} (pending post)"
+
+
+def _resolve_default_text_and_image_models(db):
+    """Picks the first enabled text/image model from the platform
+    catalog — used for agent-generated ads (Quick Start + recurring
+    events), which don't go through Create Ad's own model picker."""
+    models = get_available_models_sync(db)
+    text_models = [m for m in models.get("text", []) if m.get("enabled", True)]
+    image_models = [m for m in models.get("image", []) if m.get("enabled", True)]
+    if not text_models or not image_models:
+        raise RuntimeError("No enabled text/image models configured — Agent Niva needs at least one of each to generate an ad.")
+    return text_models[0], image_models[0]
+
+
+@celery_app.task(name="app.generate_quick_start_recommendations", bind=True, max_retries=0)
+def generate_quick_start_recommendations(self, job_id: str):
+    """Scrapes the company's site (see services/agent_scraper.py — swap
+    that module's implementation for a JS-capable scraper if needed)
+    and asks a text model to recommend `count` concrete ad ideas from
+    what it read, storing each as a pending AgentRecommendation for the
+    customer to review (see routers/agent.py)."""
+    with Session(sync_engine) as db:
+        job = db.get(AgentScrapeJob, job_id)
+        if job is None:
+            return "job not found"
+        job.status = "running"
+        db.commit()
+        try:
+            site_text = scrape_company_website(job.url)
+            text_models = [m for m in get_available_models_sync(db).get("text", []) if m.get("enabled", True)]
+            if not text_models:
+                raise RuntimeError("No enabled text model configured.")
+            model = text_models[0]["model"]
+
+            prompt = (
+                f"You are a marketing strategist. Below is the visible text content scraped from a company's "
+                f"website. Based ONLY on what's actually there (don't invent products or claims that aren't "
+                f"implied by the content), recommend exactly {job.count} distinct, concrete social media ad ideas "
+                f"this company could run.\n\n"
+                f"Respond with ONLY a JSON array (no markdown fences, no preamble), each item shaped exactly as:\n"
+                f'{{"title": "short internal name for this ad idea", "description": "2-3 sentence ad description/angle, '
+                f'written as if briefing a copywriter", "platforms": ["facebook","instagram"]}}\n'
+                f'Valid platform values: facebook, instagram, linkedin, x, tiktok. Pick 1-3 sensible platforms per idea.\n\n'
+                f"Website content:\n{site_text}"
+            )
+            parsed = text_gen.generate_text(prompt, model)
+            ideas = parsed if isinstance(parsed, list) else parsed.get("ideas", [])
+            if not ideas:
+                raise RuntimeError("The model didn't return any ad ideas — try a different URL or fewer requested ads.")
+
+            for idea in ideas[: job.count]:
+                db.add(AgentRecommendation(
+                    company_id=job.company_id, source_url=job.url, status="pending",
+                    title=(idea.get("title") or "Untitled idea")[:200],
+                    description=idea.get("description") or "",
+                    platforms=[p for p in (idea.get("platforms") or []) if p in ("facebook", "instagram", "linkedin", "x", "tiktok")] or ["facebook", "instagram"],
+                ))
+            job.status = "ready"
+            db.commit()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[agent] quick-start job=%s failed: %s", job_id, exc)
+            job.status = "failed"
+            job.error = str(exc)[:1000]
+            db.commit()
+        return "done"
+
+
+def _create_agent_ad_sync(db, company_id, product_name: str, description: str, platforms: list[str], agent_source: str, agent_event_id=None, product_id=None) -> "Ad":
+    """Builds and generates one ad directly from the Celery/sync world —
+    used for BOTH recurring-event ads (no HTTP request in progress to
+    hang this off) and can be reused wherever agent-triggered generation
+    needs to happen outside a request. Deliberately simple compared to
+    the full Create Ad flow: text + image only, platform's default
+    models, no theme reference, no carousel, no video — Agent Niva's
+    job is fast, reasonable ads from minimal input, not the full
+    creative toolkit. Runs generate_ad's logic inline (direct call, not
+    a separate enqueued task) since this already runs inside a worker."""
+    text_model, image_model = _resolve_default_text_and_image_models(db)
+    cost = (text_model.get("credits") or 0) + (image_model.get("credits") or 0)
+
+    product = db.get(Product, product_id) if product_id else None
+    ad = Ad(
+        company_id=company_id, created_by=None, product_id=product_id,
+        brief={
+            "product_name": product_name, "description": description,
+            "audience": "", "offer": "", "goal": "Drive sales", "tone": "Professional",
+            "env": None, "image_scene": description, "product_image_url": product.image_url if product else None,
+            "text_model": text_model["model"], "text_model_credits": text_model.get("credits"),
+            "image_model": image_model["model"], "image_model_credits": image_model.get("credits"),
+        },
+        platforms=platforms, outputs={"text": True, "image": True, "video": False, "format": "single", "variations": 1},
+        status="generating", agent_source=agent_source, agent_event_id=agent_event_id,
+    )
+    db.add(ad)
+    db.flush()
+
+    job = GenerationJob(company_id=company_id, ad_id=ad.id, kind="ad", credits_cost=cost)
+    db.add(job)
+    db.add(CreditLedger(company_id=company_id, delta=-cost, reason="generation", ref_id=str(ad.id)))
+    db.commit()
+
+    generate_ad(str(job.id))  # direct call, not .delay() — already running inside a worker process
+    return ad
+
+
+@celery_app.task(name="app.check_agent_events", bind=True, max_retries=0)
+def check_agent_events(self):
+    """Celery Beat, once daily: for every enabled recurring event whose
+    trigger date (month/day minus lead_days) is today and hasn't
+    already fired this year, generates the ad and — per the platform's
+    agent_settings.event_approval_mode — either leaves it a draft,
+    schedules it for the event date (still cancellable from My Ads /
+    Calendar up to then), or schedules it with nothing further to do
+    (the existing fire_due_scheduled_posts beat task posts it
+    automatically either way — "auto_post" vs "schedule_review" differ
+    only in framing to the customer, not in what's stored)."""
+    with Session(sync_engine) as db:
+        today = date.today()
+        settings_ = get_agent_settings_sync(db)
+        mode = settings_.get("event_approval_mode", "draft_only")
+        budget_mode = settings_.get("credit_cap_mode", "monthly_budget")
+        monthly_budget = settings_.get("monthly_credit_budget", 200)
+
+        events = db.scalars(select(AgentEvent).where(AgentEvent.enabled == True)).all()  # noqa: E712
+        fired = 0
+        skipped_budget = 0
+        for ev in events:
+            if ev.last_run_year == today.year or today.year in (ev.skipped_years or []):
+                continue
+            try:
+                trigger_date = date(today.year, ev.month, ev.day) - timedelta(days=ev.lead_days)
+            except ValueError:
+                continue  # e.g. Feb 30 — malformed, skip rather than crash the whole daily run
+            if trigger_date != today:
+                continue
+
+            if budget_mode == "monthly_budget":
+                month_start = datetime(today.year, today.month, 1)
+                spent = db.scalar(
+                    select(func.coalesce(func.sum(GenerationJob.credits_cost), 0))
+                    .select_from(GenerationJob).join(Ad, Ad.id == GenerationJob.ad_id)
+                    .where(Ad.company_id == ev.company_id, Ad.agent_source.isnot(None), GenerationJob.created_at >= month_start)
+                ) or 0
+                if spent >= monthly_budget:
+                    logger.info("[agent-events] company=%s event=%s skipped — monthly agent budget (%s) reached", ev.company_id, ev.id, monthly_budget)
+                    skipped_budget += 1
+                    ev.last_run_year = today.year  # don't retry every day for the rest of the month once budget's hit
+                    db.commit()
+                    continue
+
+            try:
+                event_date = date(today.year, ev.month, ev.day)
+                ad = _create_agent_ad_sync(
+                    db, ev.company_id, product_name=ev.name, description=ev.guidance or f"An ad for {ev.name}",
+                    platforms=ev.platforms or ["facebook", "instagram"], agent_source="event", agent_event_id=ev.id, product_id=ev.product_id,
+                )
+                if mode in ("schedule_review", "auto_post"):
+                    scheduled_at = datetime.combine(event_date, datetime.min.time().replace(hour=10))
+                    for p in (ev.platforms or ["facebook", "instagram"]):
+                        db.add(ScheduledPost(company_id=ev.company_id, ad_id=ad.id, platform=p, scheduled_at=scheduled_at))
+                    ad.status = "scheduled" if ad.status == "ready" else ad.status
+                ev.last_run_year = today.year
+                db.commit()
+                fired += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[agent-events] event=%s generation failed: %s", ev.id, exc)
+                db.rollback()
+
+        return f"fired={fired} skipped_budget={skipped_budget}"

@@ -207,6 +207,11 @@ function MyAds() {
                             📣 {ad.campaign_name}{ad.campaign_phase && ` · ${PHASE_LABEL[ad.campaign_phase] || ad.campaign_phase}`}
                           </span>
                         )}
+                        {ad.agent_source && (
+                          <span className="shrink-0 rounded-full border border-primary/40 bg-primary/5 px-2 py-0.5 text-[10px] text-primary">
+                            🤖 Agent Niva{ad.agent_source === "event" ? " · event" : ""}
+                          </span>
+                        )}
                       </div>
                       <div className="mt-1 text-[11px] text-muted-foreground">
                         {ad.platforms.join(" · ")} · created {new Date(ad.created_at).toLocaleDateString()}

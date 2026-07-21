@@ -19,7 +19,7 @@ from app.deps import require_developer, require_developer_permission
 from app.models import Ad, Campaign, Company, CreditLedger, FlaggedContent, GuardrailRule, ModelConfig, Subscription, User
 from app.schemas import (
     AddAssistantHintIn, AddDeveloperTeamUserIn, AddModelIn, AddPlatformIntegrationIn, AddTextStylePresetIn,
-    AddThemeTagIn, AddVideoRatioIn, AddVisionModelIn, AnalyzeThemeImageIn, AnalyzeThemeImageOut, AssistantHintOut,
+    AddThemeTagIn, AddVideoRatioIn, AddVisionModelIn, AgentSettingsOut, AgentSettingsUpdateIn, AnalyzeThemeImageIn, AnalyzeThemeImageOut, AssistantHintOut,
     AssistantSettingsIn, AssistantSettingsOut, CompanyAdminOut, DeveloperLoginIn, DeveloperModelOut,
     DeveloperModelsOut, DeveloperTeamUserOut, DeveloperTokenOut, GenerateAllMissingOut, GenerateIntroAudioIn,
     GenerateTagPromptIn, GenerateTagPromptOut, GenerateVideoThemeDraftIn, GenerateVideoThemeDraftOut,
@@ -42,6 +42,7 @@ from app.services import assistant_hints as assistant_hints_svc
 from app.services import developer_team as developer_team_svc
 from app.services import theme_ai as theme_ai_svc
 from app.services import themes as themes_svc
+from app.services import agent_settings as agent_settings_svc
 from app.services import video_prep as video_prep_svc
 from app.services import video_ratios as video_ratios_svc
 from app.services.guardrails import get_or_seed_global_rules
@@ -1020,6 +1021,20 @@ async def get_retention(_: str = Depends(require_developer_permission("settings"
     scheduled (anchored to each ad's own creation date), so the two
     settings can never drift apart."""
     return RetentionMonthsOut(retention_months=await retention_svc.get_retention_months(db))
+
+
+@router.get("/agent-settings", response_model=AgentSettingsOut)
+async def get_agent_settings_endpoint(_: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
+    """Agent Niva's platform-wide default policy — see
+    services/agent_settings.py. Not per-company: one policy for the
+    whole platform, same as retention/video-ratios/etc above."""
+    return AgentSettingsOut(**await agent_settings_svc.get_agent_settings(db))
+
+
+@router.put("/agent-settings", response_model=AgentSettingsOut)
+async def update_agent_settings_endpoint(data: AgentSettingsUpdateIn, _: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
+    updated = await agent_settings_svc.update_agent_settings(db, data.model_dump())
+    return AgentSettingsOut(**updated)
 
 
 @router.put("/retention", response_model=RetentionMonthsOut)

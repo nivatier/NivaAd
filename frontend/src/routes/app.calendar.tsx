@@ -105,7 +105,7 @@ function Calendar() {
   const monthLabel = new Date(year, monthIndex, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
   return (
-    <AppShell title="Calendar">
+    <AppShell eyebrow="Library" title="Calendar">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <button onClick={prevMonth} className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground hover:border-primary/40">←</button>
@@ -155,7 +155,7 @@ function Calendar() {
                                   title={`${briefTitle(e.ad)} — ${e.kind === "scheduled" ? "scheduled" : "posted"} ${formatInTimeZone(e.when, tz)}`}
                                   className={`block w-full truncate rounded px-1.5 py-0.5 text-left text-[10px] text-white ${e.kind === "scheduled" ? "bg-blue-500" : "bg-green-500"}`}
                                 >
-                                  {p?.tag ? `${p.tag} · ` : ""}{briefTitle(e.ad).slice(0, 28)}
+                                  {e.ad.agent_source ? "🤖 " : ""}{p?.tag ? `${p.tag} · ` : ""}{briefTitle(e.ad).slice(0, 28)}
                                 </button>
                               );
                             })}

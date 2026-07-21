@@ -810,6 +810,7 @@ class AdOut(BaseModel):
     scheduled_posts: list[AdScheduledPostOut] = Field(default_factory=list)  # every platform's pending schedule for this ad, not just the earliest
     created_at: datetime
     error: str | None = None
+    agent_source: str | None = None
 
     class Config:
         from_attributes = True
@@ -890,6 +891,7 @@ class BrandVideoShotOut(BaseModel):
     prompt: str
     duration: int
     ratio: str
+    mute_audio: bool = False
     url: str | None
     poster_url: str | None = None
     error: str | None
@@ -897,6 +899,7 @@ class BrandVideoShotOut(BaseModel):
     reference_logo_id: str | None = None
     overlay_text: str | None = None
     overlay_font: str | None = None
+    overlay_font_size: str | None = None
     overlay_text_color: str | None = None
     overlay_position: str | None = None
 
@@ -910,10 +913,12 @@ class GenerateBrandVideoShotIn(BaseModel):
     prompt: str = Field(min_length=1, max_length=1000)
     duration: int = Field(ge=2, le=5)
     ratio: str = "16:9"  # must be one of the company's available ratios (GET /connections/video-ratios) — validated server-side
+    mute_audio: bool = False  # generate a silent clip: audio=False is sent to the model AND any audio that still comes back is stripped via ffmpeg before saving, so the stored file is guaranteed silent either way
     model_id: str
     reference_logo_id: str | None = None  # a Brand Logo (see /brand-kit/logos) to send as the video's starting frame — the AI generates around/animates this actual logo instead of guessing at one from words alone
     overlay_text: str | None = Field(default=None, max_length=200)  # e.g. contact info / website — burned in via ffmpeg AFTER generation, not left to the AI to render as text
     overlay_font: str = Field(default="sans", pattern="^(sans|sans_bold|serif)$")
+    overlay_font_size: str = Field(default="medium", pattern="^(small|medium|large)$")  # see reframe.FONT_SIZE_FACTORS — the old fixed size read too large, so the customer picks now
     overlay_text_color: str = "#ffffff"
     # 9 anchors — 8 edge/corner + middle_center (for text-only shots with
     # no logo reference). When a logo IS referenced, steer away from
@@ -1160,3 +1165,79 @@ class FlaggedContentOut(BaseModel):
 class ModerationOverviewOut(BaseModel):
     default_rules: list[str]
     strikes: int
+
+
+# ── Agent Niva ──────────────────────────────────────────────────────
+
+class AgentSettingsOut(BaseModel):
+    quick_start_mode: str
+    event_approval_mode: str
+    credit_cap_mode: str
+    monthly_credit_budget: int
+
+
+class AgentSettingsUpdateIn(BaseModel):
+    quick_start_mode: str | None = Field(default=None, pattern="^(review_first|auto_draft|auto_schedule)$")
+    event_approval_mode: str | None = Field(default=None, pattern="^(draft_only|schedule_review|auto_post)$")
+    credit_cap_mode: str | None = Field(default=None, pattern="^(monthly_budget|confirm_each_time|none)$")
+    monthly_credit_budget: int | None = Field(default=None, ge=0)
+
+
+class QuickStartIn(BaseModel):
+    url: str = Field(min_length=3, max_length=500)
+    count: int = Field(default=5, ge=1, le=10)
+
+
+class AgentScrapeJobOut(BaseModel):
+    id: str
+    url: str
+    count: int
+    status: str
+    error: str | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AgentRecommendationOut(BaseModel):
+    id: str
+    source_url: str
+    status: str
+    title: str
+    description: str
+    platforms: list[str]
+    created_ad_id: str | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AgentEventIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    month: int = Field(ge=1, le=12)
+    day: int = Field(ge=1, le=31)
+    lead_days: int = Field(default=2, ge=0, le=60)
+    guidance: str = Field(default="", max_length=1000)
+    platforms: list[str] = Field(min_length=1)
+    product_id: uuid.UUID | None = None
+    enabled: bool = True
+
+
+class AgentEventOut(BaseModel):
+    id: str
+    name: str
+    month: int
+    day: int
+    lead_days: int
+    guidance: str
+    platforms: list[str]
+    product_id: str | None = None
+    enabled: bool
+    skipped_years: list[int]
+    last_run_year: int | None = None
+    next_run_date: str | None = None  # computed — this year's (or next year's, if already past) trigger date, for display only
+
+    class Config:
+        from_attributes = True

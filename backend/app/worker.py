@@ -51,6 +51,10 @@ celery_app.conf.update(
             "task": "app.cleanup_expired_posts",
             "schedule": crontab(hour=4, minute=0),  # once daily at 4 AM UTC — offset an hour after media cleanup so the two don't compete for the same window; this one deletes whole rows (much rarer/heavier than the media pass) so keeping them separate makes each run's logs easier to read too
         },
+        "check-agent-events": {
+            "task": "app.check_agent_events",
+            "schedule": crontab(hour=5, minute=0),  # once daily at 5 AM UTC — checks every enabled recurring event for whether today is (month/day - lead_days), i.e. whether it's time to generate this year's ad
+        },
     },
 )
 

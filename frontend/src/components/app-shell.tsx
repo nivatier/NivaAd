@@ -1,7 +1,7 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  BarChart3, CalendarDays, Crown, Images, Link2, Megaphone, Package, Palette,
+  BarChart3, Bot, CalendarDays, Crown, GalleryHorizontal, Images, Link2, Megaphone, Package, Palette,
   Settings as SettingsIcon, ShieldCheck, Sparkles, type LucideIcon,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -16,7 +16,7 @@ import { useAuth } from "@/hooks/use-auth";
 // would be inconsistent). "admin-only" is a special marker: shown only
 // when role === "admin", never a configurable capability, matching the
 // backend's hardcoded (non-configurable) Admin access.
-const NAV: { section: string; items: { to: string; label: string; icon: LucideIcon; capability?: string; hintKey?: string }[] }[] = [
+export const NAV: { section: string; items: { to: string; label: string; icon: LucideIcon; capability?: string; hintKey?: string }[] }[] = [
   {
     section: "Create",
     items: [
@@ -28,8 +28,10 @@ const NAV: { section: string; items: { to: string; label: string; icon: LucideIc
     section: "Library",
     items: [
       { to: "/app/my-ads", label: "My Ads", icon: Images, capability: "view_my_ads", hintKey: "nav:my-ads" },
-      { to: "/app/calendar", label: "Calendar", icon: CalendarDays, capability: "view_my_ads", hintKey: "nav:calendar" },
       { to: "/app/products", label: "Products", icon: Package, hintKey: "nav:products" },
+      { to: "/app/themes-gallery", label: "Themes Gallery", icon: GalleryHorizontal, hintKey: "nav:themes-gallery" },
+      { to: "/app/calendar", label: "Calendar", icon: CalendarDays, capability: "view_my_ads", hintKey: "nav:calendar" },
+      { to: "/app/agent-niva", label: "Agent Niva", icon: Bot, hintKey: "nav:agent-niva" },
     ],
   },
   {
@@ -136,11 +138,11 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
 
   const nav = visibleNav(me?.user.role, me?.capabilities);
   const NavList = (
-    <nav className="flex-1 space-y-6 overflow-y-auto px-3 pb-6">
+    <nav className="flex-1 space-y-4 overflow-y-auto px-3 pb-6">
       {nav.map((group) => (
         <div key={group.section}>
-          <div className="px-3 pb-2 text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">{group.section}</div>
-          <ul className="space-y-1">
+          <div className="px-3 pb-1 text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">{group.section}</div>
+          <ul className="space-y-0.5">
             {group.items.map((it) => {
               const active = pathname === it.to;
               return (
@@ -148,7 +150,7 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
                   <Link
                     to={it.to}
                     data-robot-hint-key={it.hintKey || undefined}
-                    className={`relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
+                    className={`relative flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm transition ${
                       active
                         ? "bg-primary/10 text-primary neon-ring"
                         : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-foreground"

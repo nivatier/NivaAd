@@ -131,6 +131,7 @@ export type AdOut = {
   scheduled_posts: { id: string; platform: string; scheduled_at: string }[];
   created_at: string;
   error: string | null;
+  agent_source: string | null;
 };
 
 export type AvailableModel = { id: string; label: string; credits: number; min_duration?: number; max_duration?: number; duration_options?: number[]; resolutions?: string[]; supports_audio?: boolean; supports_last_frame?: boolean; has_dynamic_pricing?: boolean };

@@ -25,6 +25,7 @@ import { Route as DeveloperModerationRouteImport } from './routes/developer.mode
 import { Route as DeveloperModelsRouteImport } from './routes/developer.models'
 import { Route as DeveloperCompaniesRouteImport } from './routes/developer.companies'
 import { Route as DeveloperAssistantRouteImport } from './routes/developer.assistant'
+import { Route as AppThemesGalleryRouteImport } from './routes/app.themes-gallery'
 import { Route as AppSettingsRouteImport } from './routes/app.settings'
 import { Route as AppScheduleRouteImport } from './routes/app.schedule'
 import { Route as AppProductsRouteImport } from './routes/app.products'
@@ -35,6 +36,7 @@ import { Route as AppCampaignsRouteImport } from './routes/app.campaigns'
 import { Route as AppCalendarRouteImport } from './routes/app.calendar'
 import { Route as AppBrandKitRouteImport } from './routes/app.brand-kit'
 import { Route as AppAnalyticsRouteImport } from './routes/app.analytics'
+import { Route as AppAgentNivaRouteImport } from './routes/app.agent-niva'
 import { Route as AppAdminRouteImport } from './routes/app.admin'
 
 const SignupRoute = SignupRouteImport.update({
@@ -117,6 +119,11 @@ const DeveloperAssistantRoute = DeveloperAssistantRouteImport.update({
   path: '/developer/assistant',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppThemesGalleryRoute = AppThemesGalleryRouteImport.update({
+  id: '/app/themes-gallery',
+  path: '/app/themes-gallery',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/app/settings',
   path: '/app/settings',
@@ -167,6 +174,11 @@ const AppAnalyticsRoute = AppAnalyticsRouteImport.update({
   path: '/app/analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppAgentNivaRoute = AppAgentNivaRouteImport.update({
+  id: '/app/agent-niva',
+  path: '/app/agent-niva',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppAdminRoute = AppAdminRouteImport.update({
   id: '/app/admin',
   path: '/app/admin',
@@ -181,6 +193,7 @@ export interface FileRoutesByFullPath {
   '/pricing': typeof PricingRoute
   '/signup': typeof SignupRoute
   '/app/admin': typeof AppAdminRoute
+  '/app/agent-niva': typeof AppAgentNivaRoute
   '/app/analytics': typeof AppAnalyticsRoute
   '/app/brand-kit': typeof AppBrandKitRoute
   '/app/calendar': typeof AppCalendarRoute
@@ -191,6 +204,7 @@ export interface FileRoutesByFullPath {
   '/app/products': typeof AppProductsRoute
   '/app/schedule': typeof AppScheduleRoute
   '/app/settings': typeof AppSettingsRoute
+  '/app/themes-gallery': typeof AppThemesGalleryRoute
   '/developer/assistant': typeof DeveloperAssistantRoute
   '/developer/companies': typeof DeveloperCompaniesRoute
   '/developer/models': typeof DeveloperModelsRoute
@@ -210,6 +224,7 @@ export interface FileRoutesByTo {
   '/pricing': typeof PricingRoute
   '/signup': typeof SignupRoute
   '/app/admin': typeof AppAdminRoute
+  '/app/agent-niva': typeof AppAgentNivaRoute
   '/app/analytics': typeof AppAnalyticsRoute
   '/app/brand-kit': typeof AppBrandKitRoute
   '/app/calendar': typeof AppCalendarRoute
@@ -220,6 +235,7 @@ export interface FileRoutesByTo {
   '/app/products': typeof AppProductsRoute
   '/app/schedule': typeof AppScheduleRoute
   '/app/settings': typeof AppSettingsRoute
+  '/app/themes-gallery': typeof AppThemesGalleryRoute
   '/developer/assistant': typeof DeveloperAssistantRoute
   '/developer/companies': typeof DeveloperCompaniesRoute
   '/developer/models': typeof DeveloperModelsRoute
@@ -240,6 +256,7 @@ export interface FileRoutesById {
   '/pricing': typeof PricingRoute
   '/signup': typeof SignupRoute
   '/app/admin': typeof AppAdminRoute
+  '/app/agent-niva': typeof AppAgentNivaRoute
   '/app/analytics': typeof AppAnalyticsRoute
   '/app/brand-kit': typeof AppBrandKitRoute
   '/app/calendar': typeof AppCalendarRoute
@@ -250,6 +267,7 @@ export interface FileRoutesById {
   '/app/products': typeof AppProductsRoute
   '/app/schedule': typeof AppScheduleRoute
   '/app/settings': typeof AppSettingsRoute
+  '/app/themes-gallery': typeof AppThemesGalleryRoute
   '/developer/assistant': typeof DeveloperAssistantRoute
   '/developer/companies': typeof DeveloperCompaniesRoute
   '/developer/models': typeof DeveloperModelsRoute
@@ -271,6 +289,7 @@ export interface FileRouteTypes {
     | '/pricing'
     | '/signup'
     | '/app/admin'
+    | '/app/agent-niva'
     | '/app/analytics'
     | '/app/brand-kit'
     | '/app/calendar'
@@ -281,6 +300,7 @@ export interface FileRouteTypes {
     | '/app/products'
     | '/app/schedule'
     | '/app/settings'
+    | '/app/themes-gallery'
     | '/developer/assistant'
     | '/developer/companies'
     | '/developer/models'
@@ -300,6 +320,7 @@ export interface FileRouteTypes {
     | '/pricing'
     | '/signup'
     | '/app/admin'
+    | '/app/agent-niva'
     | '/app/analytics'
     | '/app/brand-kit'
     | '/app/calendar'
@@ -310,6 +331,7 @@ export interface FileRouteTypes {
     | '/app/products'
     | '/app/schedule'
     | '/app/settings'
+    | '/app/themes-gallery'
     | '/developer/assistant'
     | '/developer/companies'
     | '/developer/models'
@@ -329,6 +351,7 @@ export interface FileRouteTypes {
     | '/pricing'
     | '/signup'
     | '/app/admin'
+    | '/app/agent-niva'
     | '/app/analytics'
     | '/app/brand-kit'
     | '/app/calendar'
@@ -339,6 +362,7 @@ export interface FileRouteTypes {
     | '/app/products'
     | '/app/schedule'
     | '/app/settings'
+    | '/app/themes-gallery'
     | '/developer/assistant'
     | '/developer/companies'
     | '/developer/models'
@@ -359,6 +383,7 @@ export interface RootRouteChildren {
   PricingRoute: typeof PricingRoute
   SignupRoute: typeof SignupRoute
   AppAdminRoute: typeof AppAdminRoute
+  AppAgentNivaRoute: typeof AppAgentNivaRoute
   AppAnalyticsRoute: typeof AppAnalyticsRoute
   AppBrandKitRoute: typeof AppBrandKitRoute
   AppCalendarRoute: typeof AppCalendarRoute
@@ -369,6 +394,7 @@ export interface RootRouteChildren {
   AppProductsRoute: typeof AppProductsRoute
   AppScheduleRoute: typeof AppScheduleRoute
   AppSettingsRoute: typeof AppSettingsRoute
+  AppThemesGalleryRoute: typeof AppThemesGalleryRoute
   DeveloperAssistantRoute: typeof DeveloperAssistantRoute
   DeveloperCompaniesRoute: typeof DeveloperCompaniesRoute
   DeveloperModelsRoute: typeof DeveloperModelsRoute
@@ -495,6 +521,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DeveloperAssistantRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/themes-gallery': {
+      id: '/app/themes-gallery'
+      path: '/app/themes-gallery'
+      fullPath: '/app/themes-gallery'
+      preLoaderRoute: typeof AppThemesGalleryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/app/settings': {
       id: '/app/settings'
       path: '/app/settings'
@@ -565,6 +598,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/agent-niva': {
+      id: '/app/agent-niva'
+      path: '/app/agent-niva'
+      fullPath: '/app/agent-niva'
+      preLoaderRoute: typeof AppAgentNivaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/app/admin': {
       id: '/app/admin'
       path: '/app/admin'
@@ -583,6 +623,7 @@ const rootRouteChildren: RootRouteChildren = {
   PricingRoute: PricingRoute,
   SignupRoute: SignupRoute,
   AppAdminRoute: AppAdminRoute,
+  AppAgentNivaRoute: AppAgentNivaRoute,
   AppAnalyticsRoute: AppAnalyticsRoute,
   AppBrandKitRoute: AppBrandKitRoute,
   AppCalendarRoute: AppCalendarRoute,
@@ -593,6 +634,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppProductsRoute: AppProductsRoute,
   AppScheduleRoute: AppScheduleRoute,
   AppSettingsRoute: AppSettingsRoute,
+  AppThemesGalleryRoute: AppThemesGalleryRoute,
   DeveloperAssistantRoute: DeveloperAssistantRoute,
   DeveloperCompaniesRoute: DeveloperCompaniesRoute,
   DeveloperModelsRoute: DeveloperModelsRoute,

@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { DeveloperShell } from "@/components/developer-shell";
+import { NAV } from "@/components/app-shell";
 import { useRequireDeveloperPermission, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
 import { devApi } from "@/lib/dev-api";
 
@@ -244,10 +245,10 @@ function EditForm({ hint, busy, onSave, onCancel }: { hint: Hint; busy: boolean;
  * `${keyPrefix}:${suffix}`, so a hint added from inside a group box can't
  * accidentally land in a different one. Omit it to let the developer type a
  * fully custom key (used for the very first hint in a brand-new group). */
-function AddForm({ busy, keyPrefix, onAdd, onCancel }: { busy: boolean; keyPrefix?: string; onAdd: (v: { key: string; label: string; message: string }) => void; onCancel: () => void }) {
+function AddForm({ busy, keyPrefix, initialSuffix, initialLabel, onAdd, onCancel }: { busy: boolean; keyPrefix?: string; initialSuffix?: string; initialLabel?: string; onAdd: (v: { key: string; label: string; message: string }) => void; onCancel: () => void }) {
   const [key, setKey] = useState("");
-  const [suffix, setSuffix] = useState("");
-  const [label, setLabel] = useState("");
+  const [suffix, setSuffix] = useState(initialSuffix || "");
+  const [label, setLabel] = useState(initialLabel || "");
   const [message, setMessage] = useState("");
   const finalKey = keyPrefix ? (suffix.trim() ? `${keyPrefix}:${suffix.trim()}` : "") : key.trim();
   return (
@@ -330,6 +331,124 @@ function HintRow({ hint, busy, editing, generating, onEdit, onCancelEdit, onSave
  * with its own "+ Add message" affordance that seeds new hints straight into
  * that group's key prefix. Boxes are meant to sit in a responsive grid —
  * side-by-side on wide screens, stacked on narrow ones. */
+/** Compact inline add-form for one specific, fixed hint key — used by
+ * the Navigation checklist below where the key is already known (it
+ * comes straight from app-shell.tsx's NAV config, not typed by hand),
+ * so there's nothing to get wrong or mismatch against
+ * data-robot-hint-key in the frontend. */
+function FixedKeyAddForm({ fixedKey, initialLabel, busy, onAdd, onCancel }: { fixedKey: string; initialLabel: string; busy: boolean; onAdd: (v: { key: string; label: string; message: string }) => void; onCancel: () => void }) {
+  const [label, setLabel] = useState(initialLabel);
+  const [message, setMessage] = useState("");
+  return (
+    <div className="space-y-2">
+      <div className="text-[11px] text-muted-foreground font-mono">{fixedKey}</div>
+      <div>
+        <label className="text-[11px] text-muted-foreground">Label</label>
+        <input value={label} onChange={(e) => setLabel(e.target.value)}
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+      </div>
+      <div>
+        <label className="text-[11px] text-muted-foreground">Message</label>
+        <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3}
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs leading-relaxed text-foreground focus:border-ring focus:outline-none" />
+      </div>
+      <div className="flex items-center gap-2">
+        <button disabled={busy || !label.trim() || !message.trim()} onClick={() => onAdd({ key: fixedKey, label: label.trim(), message: message.trim() })}
+          className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+          {busy ? "Adding…" : "Add"}
+        </button>
+        <button onClick={onCancel} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+/** Navigation gets its own checklist instead of the generic GroupBox:
+ * every item in app-shell.tsx's NAV — not just ones that already have a
+ * saved hint — is listed, so a sidebar entry with no mascot explanation
+ * yet (like a newly-added page) is visible as a clear gap here instead
+ * of silently having nothing to say when clicked. Existing hints render
+ * exactly like any other group's HintRow; missing ones get a compact
+ * "+ Add hint" row with the exact required key already filled in. */
+function NavHintChecklist({
+  navHints, expanded, onToggle, editingId, busy, generatingAudioId,
+  addingKey, onStartAdd, onCancelAdd, onAddHint,
+  onEdit, onCancelEdit, onSaveHint, onGenerateAudio, onRemove,
+}: {
+  navHints: Hint[];
+  expanded: boolean;
+  onToggle: () => void;
+  editingId: string | null;
+  busy: boolean;
+  generatingAudioId: string | null;
+  addingKey: string | null;
+  onStartAdd: (key: string) => void;
+  onCancelAdd: () => void;
+  onAddHint: (v: { key: string; label: string; message: string }) => void;
+  onEdit: (id: string) => void;
+  onCancelEdit: () => void;
+  onSaveHint: (id: string, v: { label: string; message: string }) => void;
+  onGenerateAudio: (id: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const items = NAV.flatMap((g) => g.items).filter((it) => it.hintKey);
+  const missingCount = items.filter((it) => !navHints.some((h) => h.key === it.hintKey)).length;
+
+  return (
+    <div className="rounded-xl border border-border bg-card/40 overflow-hidden">
+      <button type="button" onClick={onToggle}
+        className="w-full flex items-center justify-between gap-2 px-4 py-3 text-left hover:bg-card/60 transition-colors">
+        <span className="flex items-center gap-2 min-w-0">
+          <span className={`inline-block text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`}>▶</span>
+          <span className="text-sm font-semibold text-foreground truncate">Navigation</span>
+          <span className="text-[10px] text-muted-foreground shrink-0">{items.length - missingCount}/{items.length}</span>
+        </span>
+        {missingCount > 0 && <span className="shrink-0 rounded-full bg-destructive/15 px-2 py-0.5 text-[10px] text-destructive">{missingCount} missing</span>}
+      </button>
+      {expanded && (
+        <div className="px-4 pb-4 space-y-2">
+          {items.map((it) => {
+            const hint = navHints.find((h) => h.key === it.hintKey);
+            if (hint) {
+              return (
+                <HintRow
+                  key={it.hintKey}
+                  hint={hint}
+                  busy={busy}
+                  editing={editingId === hint.id}
+                  generating={generatingAudioId === hint.id}
+                  onEdit={() => onEdit(hint.id)}
+                  onCancelEdit={onCancelEdit}
+                  onSave={(v) => onSaveHint(hint.id, v)}
+                  onGenerateAudio={() => onGenerateAudio(hint.id)}
+                  onRemove={() => onRemove(hint.id)}
+                />
+              );
+            }
+            return (
+              <div key={it.hintKey} className="rounded-xl border border-dashed border-destructive/40 bg-destructive/5 p-3">
+                {addingKey === it.hintKey ? (
+                  <FixedKeyAddForm fixedKey={it.hintKey!} initialLabel={it.label} busy={busy} onCancel={onCancelAdd} onAdd={onAddHint} />
+                ) : (
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold text-foreground">{it.label}</div>
+                      <div className="text-[10px] text-muted-foreground font-mono">{it.hintKey} — no message yet</div>
+                    </div>
+                    <button onClick={() => onStartAdd(it.hintKey!)} className="shrink-0 rounded-full border border-dashed border-primary/50 px-3 py-1 text-[11px] text-primary hover:bg-primary/5">
+                      + Add hint
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GroupBox({
   prefix, label, hints, expanded, onToggle, editingId, busy, generatingAudioId,
   addingGroup, onStartAdd, onCancelAdd, onAddHint,
@@ -412,6 +531,7 @@ function DeveloperAssistant() {
   const [generatingAudioId, setGeneratingAudioId] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [addingGroup, setAddingGroup] = useState<string | null>(null);
+  const [addingNavKey, setAddingNavKey] = useState<string | null>(null);
   const [showNewGroup, setShowNewGroup] = useState(false);
 
   async function load() {
@@ -453,7 +573,7 @@ function DeveloperAssistant() {
 
   const groups = useMemo(() => {
     if (!hints) return [];
-    const rest = hints.filter((h) => h.key !== SYSTEM_SLEEP_KEY && h.key !== SYSTEM_WAKE_KEY);
+    const rest = hints.filter((h) => h.key !== SYSTEM_SLEEP_KEY && h.key !== SYSTEM_WAKE_KEY && !h.key.startsWith("nav:"));
     const byPrefix = new Map<string, Hint[]>();
     for (const h of rest) {
       const prefix = h.key.includes(":") ? h.key.split(":")[0] : "other";
@@ -502,6 +622,23 @@ function DeveloperAssistant() {
 
       <div className="text-sm font-semibold text-foreground mb-3">Hint messages</div>
       <div className="grid gap-4 lg:grid-cols-2 mb-4">
+        <NavHintChecklist
+          navHints={hints.filter((h) => h.key.startsWith("nav:"))}
+          expanded={isExpanded("nav")}
+          onToggle={() => toggleGroup("nav")}
+          editingId={editingId}
+          busy={busy}
+          generatingAudioId={generatingAudioId}
+          addingKey={addingNavKey}
+          onStartAdd={setAddingNavKey}
+          onCancelAdd={() => setAddingNavKey(null)}
+          onAddHint={async (v) => { await add(v); setAddingNavKey(null); }}
+          onEdit={setEditingId}
+          onCancelEdit={() => setEditingId(null)}
+          onSaveHint={save}
+          onGenerateAudio={generateAudio}
+          onRemove={remove}
+        />
         {groups.map((g) => (
           <GroupBox
             key={g.prefix}

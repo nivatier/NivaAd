@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import (
-    admin_capabilities, admin_overview, admin_users, ads, analytics, auth,
+    admin_capabilities, admin_overview, admin_users, ads, agent, analytics, auth,
     billing, brand_kit, campaigns, connections, developer, moderation, products, schedule, webhooks,
 )
 
@@ -24,6 +24,7 @@ app.include_router(webhooks.router)
 app.include_router(products.router)
 app.include_router(brand_kit.router)
 app.include_router(campaigns.router)
+app.include_router(agent.router)
 app.include_router(connections.router)
 app.include_router(schedule.router)  # backend endpoints stay — My Ads calls them directly now, the standalone /app/schedule frontend page is what's being removed
 app.include_router(moderation.router)

@@ -73,7 +73,7 @@ def _ad_out(
         posted_platforms=ad.posted_platforms or [],
         next_scheduled_at=next_scheduled_at,
         scheduled_posts=scheduled_posts or [],
-        created_at=ad.created_at, error=error,
+        created_at=ad.created_at, error=error, agent_source=ad.agent_source,
     )
 
 

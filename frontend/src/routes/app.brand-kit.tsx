@@ -191,12 +191,13 @@ type BrandLogo = { id: string; url: string; is_active: boolean; created_at: stri
 const MAX_LOGOS = 5;
 
 type BrandVideoShot = {
-  id: string; kind: string; status: string; label: string; prompt: string; duration: number; ratio: string; url: string | null; poster_url: string | null; error: string | null; created_at: string;
+  id: string; kind: string; status: string; label: string; prompt: string; duration: number; ratio: string; mute_audio: boolean; url: string | null; poster_url: string | null; error: string | null; created_at: string;
   reference_logo_id: string | null; overlay_text: string | null; overlay_font: string | null; overlay_text_color: string | null; overlay_position: string | null;
 };
 const MAX_SHOTS_PER_KIND = 3;
 const GENERATING_STATUSES = new Set(["queued", "running"]);
 const OVERLAY_FONTS: [string, string][] = [["sans", "Sans"], ["sans_bold", "Sans Bold"], ["serif", "Serif"]];
+const OVERLAY_SIZES: [string, string][] = [["small", "Small"], ["medium", "Medium"], ["large", "Large"]];
 // Full 3x3 grid — middle_center included specifically for text-only
 // shots with no logo reference (nothing to collide with in the
 // middle). When a logo IS referenced, steer toward an edge/corner
@@ -218,8 +219,8 @@ function shotDisplayName(shot: BrandVideoShot) {
 }
 
 type GenerateShotInput = {
-  kind: "intro" | "outro"; label: string; prompt: string; duration: number; ratio: string; model_id: string;
-  reference_logo_id: string | null; overlay_text: string | null; overlay_font: string; overlay_text_color: string; overlay_position: string;
+  kind: "intro" | "outro"; label: string; prompt: string; duration: number; ratio: string; mute_audio: boolean; model_id: string;
+  reference_logo_id: string | null; overlay_text: string | null; overlay_font: string; overlay_font_size: string; overlay_text_color: string; overlay_position: string;
 };
 
 function ShotPreviewModal({ shot, onClose }: { shot: BrandVideoShot; onClose: () => void }) {
@@ -290,10 +291,12 @@ function ShotGallery({
   const [prompt, setPrompt] = useState("");
   const [duration, setDuration] = useState(3);
   const [ratio, setRatio] = useState(ratios[0] || "16:9");
+  const [muteAudio, setMuteAudio] = useState(true);
   const [modelId, setModelId] = useState("");
   const [referenceLogoId, setReferenceLogoId] = useState("");
   const [overlayText, setOverlayText] = useState("");
   const [overlayFont, setOverlayFont] = useState("sans");
+  const [overlaySize, setOverlaySize] = useState("medium");
   const [overlayColor, setOverlayColor] = useState("#ffffff");
   const [overlayAnchor, setOverlayAnchor] = useState("bottom_center");
   const [previewShot, setPreviewShot] = useState<BrandVideoShot | null>(null);
@@ -303,9 +306,9 @@ function ShotGallery({
   function submit() {
     if (!prompt.trim() || !modelId) return;
     onGenerate({
-      kind, label: name.trim(), prompt: prompt.trim(), duration, ratio, model_id: modelId,
+      kind, label: name.trim(), prompt: prompt.trim(), duration, ratio, mute_audio: muteAudio, model_id: modelId,
       reference_logo_id: referenceLogoId || null,
-      overlay_text: overlayText.trim() || null, overlay_font: overlayFont, overlay_text_color: overlayColor, overlay_position: overlayAnchor,
+      overlay_text: overlayText.trim() || null, overlay_font: overlayFont, overlay_font_size: overlaySize, overlay_text_color: overlayColor, overlay_position: overlayAnchor,
     });
     setName(""); setPrompt(""); setOverlayText(""); setReferenceLogoId(""); setShowForm(false);
   }
@@ -337,7 +340,7 @@ function ShotGallery({
             <ShotNameLabel shot={shot} onRename={onRename} />
             {shot.overlay_text && <div className="text-[10px] text-primary line-clamp-1">"{shot.overlay_text}"</div>}
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-muted-foreground">{shot.ratio} · {shot.duration}s</span>
+              <span className="text-[10px] text-muted-foreground">{shot.ratio} · {shot.duration}s{shot.mute_audio ? " · 🔇" : ""}</span>
               <button onClick={() => onDelete(shot.id)} disabled={busyId === shot.id} className="text-[10px] text-destructive hover:underline disabled:opacity-50">Delete</button>
             </div>
           </div>
@@ -379,6 +382,12 @@ function ShotGallery({
                 <div className="mt-1 text-[10px] text-muted-foreground">AI video models generate 16:9 by default — this reframes to your chosen shape afterward, same padding your Brand Kit uses everywhere else.</div>
               </div>
 
+              <label className="flex items-center gap-1.5 text-[11px] text-foreground">
+                <input type="checkbox" checked={muteAudio} onChange={(e) => setMuteAudio(e.target.checked)} />
+                🔇 Generate without audio
+              </label>
+              {muteAudio && <div className="-mt-2 text-[10px] text-muted-foreground">The model is asked to skip audio, and any audio it produces anyway is stripped before saving — the stored clip is guaranteed silent.</div>}
+
               <div>
                 <div className="text-[10px] text-muted-foreground mb-1">Reference logo (optional)</div>
                 <select value={referenceLogoId} onChange={(e) => setReferenceLogoId(e.target.value)}
@@ -400,6 +409,10 @@ function ShotGallery({
                       <select value={overlayFont} onChange={(e) => setOverlayFont(e.target.value)}
                         className="rounded-lg border border-border bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-ring focus:outline-none">
                         {OVERLAY_FONTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                      </select>
+                      <select value={overlaySize} onChange={(e) => setOverlaySize(e.target.value)}
+                        className="rounded-lg border border-border bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-ring focus:outline-none">
+                        {OVERLAY_SIZES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                       </select>
                       <input type="color" value={overlayColor} onChange={(e) => setOverlayColor(e.target.value)} className="h-7 w-7 rounded border border-border bg-transparent cursor-pointer" />
                     </div>

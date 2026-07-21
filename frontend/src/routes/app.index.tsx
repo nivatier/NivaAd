@@ -8,6 +8,7 @@ import { detectedTimeZone, zonedWallTimeToUtcNaiveIso } from "@/lib/timezone";
 import { api, type AvailableModelsOut } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { NovaHint } from "@/components/nova-hint";
+import { ImageThemeGrid, VideoThemeGrid, mapImageTheme, type ImageTheme, type ImageThemeField, type VideoTheme } from "@/components/theme-gallery-grid";
 
 export const Route = createFileRoute("/app/")({
   component: CreateAd,
@@ -22,8 +23,6 @@ const POSITION_OPTIONS = [
   "middle-left", "center", "middle-right",
   "bottom-left", "bottom-center", "bottom-right",
 ];
-
-type ImageThemeField = { key: string; label: string; placeholder: string; styleHint: string; defaultPosition: string };
 
 // Same three fields the backend now guarantees on every Image Theme
 // Reference gallery entry (services/themes.py STANDARD_TEXT_FIELDS) —
@@ -84,33 +83,12 @@ function buildOverlayText(
     })
     .join(". ") + ".";
 }
-type ImageTheme = {
-  id: string;
-  label: string;
-  thumbnail: string;
-  styleTags: string[];
-  categoryTags: string[];
-  basePrompt: string;
-  textFields: ImageThemeField[];
-};
 type TextThemeData = {
   styleTags: string[];
   categoryTags: string[];
   stylePrompts: Record<string, string>;
   categoryPrompts: Record<string, string>;
 };
-
-function mapImageTheme(t: any): ImageTheme {
-  return {
-    id: t.id, label: t.label, thumbnail: t.thumbnail || "",
-    styleTags: t.style_tags || [], categoryTags: t.category_tags || [],
-    basePrompt: t.base_prompt,
-    textFields: (t.text_fields || []).map((f: any) => ({
-      key: f.key, label: f.label, placeholder: f.placeholder || "",
-      styleHint: f.style_hint || "", defaultPosition: f.default_position || "top-left",
-    })),
-  };
-}
 
 /** Returns the scene/style prompt and the text-overlay instruction as two
  * SEPARATE strings — they must never be nested inside one another, or a
@@ -224,8 +202,6 @@ function CreateAd() {
   const [textStylePresets, setTextStylePresets] = useState<TextStylePreset[]>([{ id: "standard", label: "Standard (fits the image)", fontStyle: "", textColor: "", accentColor: "", size: "" }]);
   const [imageTextOverlay, setImageTextOverlay] = useState<string | null>(null);
   const [showThemeModal, setShowThemeModal] = useState(false);
-  const [modalFilterStyle, setModalFilterStyle] = useState("All");
-  const [modalFilterCategory, setModalFilterCategory] = useState("All");
 
   // --- Per-slide theme (carousel) ---
   // Single mode: the flat state above (refMode/envDesc/imageScene/...) IS
@@ -298,14 +274,13 @@ function CreateAd() {
   const [liveVideoCredits, setLiveVideoCredits] = useState<number | null>(null);
   const [liveTextCredits, setLiveTextCredits] = useState<number | null>(null);
   const [videoShots, setVideoShots] = useState<{ prompt: string; duration: number }[]>([{ prompt: "", duration: 6 }]);
-  const [videoThemes, setVideoThemes] = useState<{ id: string; label: string; thumbnail: string | null; category_tags: string[]; style_notes: string; shots: { label: string; duration: number; prompt_template: string }[] }[]>([]);
+  const [videoThemes, setVideoThemes] = useState<VideoTheme[]>([]);
   const [selectedVideoThemeId, setSelectedVideoThemeId] = useState<string | null>(null);
   const [videoRefMode, setVideoRefMode] = useState<"custom" | "theme">("custom");
   const [showVideoThemeModal, setShowVideoThemeModal] = useState(false);
   const [brandVideoShots, setBrandVideoShots] = useState<{ id: string; kind: string; status: string; label: string; prompt: string; duration: number; url: string | null; poster_url: string | null }[]>([]);
   const [videoStartShotId, setVideoStartShotId] = useState<string | null>(null);
   const [videoEndShotId, setVideoEndShotId] = useState<string | null>(null);
-  const [videoModalFilterCategory, setVideoModalFilterCategory] = useState("All");
   const [refineVideoPrompt, setRefineVideoPrompt] = useState(false);
   const [refineVideoFrame, setRefineVideoFrame] = useState(false);
 
@@ -561,6 +536,69 @@ function CreateAd() {
       if (p.image_url) setImageReferenceImage(p.image_url);
     } catch { /* ignore malformed prefill */ }
   }, []);
+
+  // Pre-fill when arriving from the Themes Gallery (see
+  // app.themes-gallery.tsx) — a theme id plus an optional linked
+  // product. Themes aren't loaded yet at mount (their own fetch is
+  // still in flight), so the parsed payload is held in a ref and
+  // applied once the matching theme list actually has entries, rather
+  // than trying to apply it immediately against an empty array.
+  const pendingThemePrefillRef = useRef<{ themeKind: "image" | "video"; themeId: string; product: any | null } | null>(null);
+  useEffect(() => {
+    const raw = sessionStorage.getItem("nivaad_prefill_theme");
+    if (!raw) return;
+    sessionStorage.removeItem("nivaad_prefill_theme");
+    try {
+      pendingThemePrefillRef.current = JSON.parse(raw);
+    } catch { /* ignore malformed prefill */ }
+  }, []);
+
+  function applyLinkedProduct(p: any | null, { forVideo }: { forVideo: boolean }) {
+    if (!p) return;
+    setProductName(p.name || ""); setDescription(p.description || "");
+    setAudience(p.audience || ""); setOffer(p.offer || "");
+    if (p.id) setSelectedProductId(p.id);
+    if (p.image_url) {
+      if (forVideo) {
+        // Video themes animate FROM a starting frame — the linked
+        // product's photo becomes that frame, same idea as the image
+        // path's reference image, just wired to the video field
+        // instead since a video theme means outputs.video, not image.
+        setVideoFrameImage(p.image_url);
+      } else {
+        setImageReferenceImage(p.image_url);
+      }
+    }
+  }
+
+  useEffect(() => {
+    const pending = pendingThemePrefillRef.current;
+    if (!pending || pending.themeKind !== "image" || imageThemes.length === 0) return;
+    const theme = imageThemes.find((t) => t.id === pending.themeId);
+    if (!theme) return;
+    pendingThemePrefillRef.current = null;
+    setOutputs((o) => ({ ...o, image: true, video: false }));
+    setRefMode("image");
+    setSelectedImageTheme(theme.id);
+    setThemeFieldValues({}); setThemePositions({});
+    applyLinkedProduct(pending.product, { forVideo: false });
+  }, [imageThemes]);
+
+  useEffect(() => {
+    const pending = pendingThemePrefillRef.current;
+    if (!pending || pending.themeKind !== "video" || videoThemes.length === 0) return;
+    const theme = videoThemes.find((t) => t.id === pending.themeId);
+    if (!theme) return;
+    pendingThemePrefillRef.current = null;
+    setOutputs((o) => ({ ...o, video: true, image: false }));
+    setVideoRefMode("theme");
+    setSelectedVideoThemeId(theme.id);
+    setVideoShots(theme.shots.map((s) => ({
+      prompt: s.prompt_template.replace(/\{product\}/g, pending.product?.name?.trim() || "the product"),
+      duration: s.duration,
+    })));
+    applyLinkedProduct(pending.product, { forVideo: true });
+  }, [videoThemes]);
 
   async function saveToLibrary() {
     if (!productName.trim()) return;
@@ -1568,127 +1606,45 @@ function CreateAd() {
         </div>
       )}
 
-      {showThemeModal && (() => {
-        const styleOpts = ["All", ...Array.from(new Set(imageThemes.flatMap((t) => t.styleTags)))];
-        const categoryOpts = ["All", ...Array.from(new Set(imageThemes.flatMap((t) => t.categoryTags)))];
-        const visible = imageThemes.filter((t) =>
-          (modalFilterStyle === "All" || t.styleTags.includes(modalFilterStyle)) &&
-          (modalFilterCategory === "All" || t.categoryTags.includes(modalFilterCategory))
-        );
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowThemeModal(false)}>
-            <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-2xl border border-border bg-background p-5" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between mb-4">
-                <div className="text-sm font-semibold text-foreground">Choose an image theme</div>
-                <button type="button" onClick={() => setShowThemeModal(false)} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
-              </div>
-
-              <div className="mb-2">
-                <div className="text-[11px] font-semibold text-muted-foreground mb-1.5">Style</div>
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {styleOpts.map((tag) => (
-                    <button key={tag} type="button" onClick={() => setModalFilterStyle(tag)}
-                      className={`rounded-full border px-3 py-1.5 text-xs ${modalFilterStyle === tag ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
-                      {tag}
-                    </button>
-                  ))}
-                </div>
-                <div className="text-[11px] font-semibold text-muted-foreground mb-1.5">Product category</div>
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {categoryOpts.map((tag) => (
-                    <button key={tag} type="button" onClick={() => setModalFilterCategory(tag)}
-                      className={`rounded-full border px-3 py-1.5 text-xs ${modalFilterCategory === tag ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
-                      {tag}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {visible.map((t) => (
-                  <button key={t.id} type="button"
-                    onClick={() => { setSelectedImageTheme(t.id); setThemeFieldValues({}); setThemePositions({}); setShowThemeModal(false); }}
-                    className={`rounded-xl border overflow-hidden text-left transition ${selectedImageTheme === t.id ? "border-primary ring-2 ring-primary" : "border-border hover:border-primary/50"}`}>
-                    <img src={t.thumbnail} alt={t.label} className="h-40 w-full object-cover" />
-                    <div className="p-2">
-                      <div className="text-xs font-semibold text-foreground">{t.label}</div>
-                      <div className="text-[11px] text-muted-foreground">{[...t.styleTags, ...t.categoryTags].join(" · ")}</div>
-                    </div>
-                  </button>
-                ))}
-                {visible.length === 0 && (
-                  <div className="col-span-full text-center text-xs text-muted-foreground py-8">No themes match those filters yet.</div>
-                )}
-                <div className="rounded-xl border border-dashed border-border flex items-center justify-center text-[11px] text-muted-foreground px-3 py-8 text-center">
-                  More themes coming soon
-                </div>
-              </div>
+      {showThemeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowThemeModal(false)}>
+          <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-2xl border border-border bg-background p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-sm font-semibold text-foreground">Choose an image theme</div>
+              <button type="button" onClick={() => setShowThemeModal(false)} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
             </div>
+            <ImageThemeGrid
+              themes={imageThemes}
+              selectedId={selectedImageTheme}
+              onSelect={(t) => { setSelectedImageTheme(t.id); setThemeFieldValues({}); setThemePositions({}); setShowThemeModal(false); }}
+            />
           </div>
-        );
-      })()}
+        </div>
+      )}
 
-      {showVideoThemeModal && (() => {
-        const categoryOpts = ["All", ...Array.from(new Set(videoThemes.flatMap((t) => t.category_tags)))];
-        const visible = videoThemes.filter((t) =>
-          videoModalFilterCategory === "All" || t.category_tags.includes(videoModalFilterCategory)
-        );
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowVideoThemeModal(false)}>
-            <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-2xl border border-border bg-background p-5" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between mb-4">
-                <div className="text-sm font-semibold text-foreground">Choose a video theme</div>
-                <button type="button" onClick={() => setShowVideoThemeModal(false)} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
-              </div>
-
-              <div className="mb-4">
-                <div className="text-[11px] font-semibold text-muted-foreground mb-1.5">Product category</div>
-                <div className="flex flex-wrap gap-2">
-                  {categoryOpts.map((tag) => (
-                    <button key={tag} type="button" onClick={() => setVideoModalFilterCategory(tag)}
-                      className={`rounded-full border px-3 py-1.5 text-xs ${videoModalFilterCategory === tag ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
-                      {tag}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {visible.map((t) => (
-                  <button key={t.id} type="button"
-                    onClick={() => {
-                      setSelectedVideoThemeId(t.id);
-                      const resolved = t.shots.map((s) => ({
-                        prompt: s.prompt_template.replace(/\{product\}/g, productName.trim() || "the product"),
-                        duration: s.duration,
-                      }));
-                      setVideoShots(resolved);
-                      setShowVideoThemeModal(false);
-                    }}
-                    className={`rounded-xl border overflow-hidden text-left transition ${selectedVideoThemeId === t.id ? "border-primary ring-2 ring-primary" : "border-border hover:border-primary/50"}`}>
-                    {t.thumbnail ? (
-                      <img src={t.thumbnail} alt={t.label} className="h-40 w-full object-cover" />
-                    ) : (
-                      <div className="h-40 w-full bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center text-4xl">🎬</div>
-                    )}
-                    <div className="p-2">
-                      <div className="text-xs font-semibold text-foreground">{t.label}</div>
-                      <div className="text-[11px] text-muted-foreground">{t.shots.length} shot{t.shots.length > 1 ? "s" : ""} · {t.shots.reduce((s, x) => s + x.duration, 0)}s</div>
-                      <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">{t.style_notes}</div>
-                    </div>
-                  </button>
-                ))}
-                {visible.length === 0 && (
-                  <div className="col-span-full text-center text-xs text-muted-foreground py-8">No themes match that filter.</div>
-                )}
-                <div className="rounded-xl border border-dashed border-border flex items-center justify-center text-[11px] text-muted-foreground px-3 py-8 text-center">
-                  More video themes coming soon
-                </div>
-              </div>
+      {showVideoThemeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowVideoThemeModal(false)}>
+          <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-2xl border border-border bg-background p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-sm font-semibold text-foreground">Choose a video theme</div>
+              <button type="button" onClick={() => setShowVideoThemeModal(false)} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
             </div>
+            <VideoThemeGrid
+              themes={videoThemes}
+              selectedId={selectedVideoThemeId}
+              onSelect={(t) => {
+                setSelectedVideoThemeId(t.id);
+                const resolved = t.shots.map((s) => ({
+                  prompt: s.prompt_template.replace(/\{product\}/g, productName.trim() || "the product"),
+                  duration: s.duration,
+                }));
+                setVideoShots(resolved);
+                setShowVideoThemeModal(false);
+              }}
+            />
           </div>
-        );
-      })()}
+        </div>
+      )}
 
       {showPromptModal && (
         <PromptConfirmModal

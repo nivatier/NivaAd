@@ -287,6 +287,23 @@ FONT_PATHS = {
 }
 
 
+def strip_audio(video_bytes: bytes) -> bytes:
+    """Removes any audio track — the video stream is copied as-is
+    (`-c:v copy`, no re-encode), so this is fast and lossless. Used by
+    the Brand Kit shot pipeline when the customer asked for a silent
+    clip: sending audio=False to the model is the first line of
+    defense, but not every model/provider honors it, so the returned
+    file is stripped here regardless — the flag is a request, this is
+    the guarantee."""
+    with tempfile.TemporaryDirectory(prefix="strip-audio-") as tmp:
+        tmp_path = Path(tmp)
+        source_path = tmp_path / "source.mp4"
+        source_path.write_bytes(video_bytes)
+        output_path = tmp_path / "silent.mp4"
+        _run(["ffmpeg", "-y", "-i", str(source_path), "-an", "-c:v", "copy", str(output_path)])
+        return output_path.read_bytes()
+
+
 def extract_last_frame(video_bytes: bytes) -> bytes:
     """Grabs the video's last frame as a JPEG — used as a static gallery
     thumbnail (see routers/brand_kit.py, tasks.generate_brand_video_shot)
@@ -317,7 +334,10 @@ ANCHOR_EXPRESSIONS = {
 }
 
 
-def add_text_overlay(video_bytes: bytes, text: str, font: str = "sans", color: str = "#ffffff", anchor: str = "bottom_center") -> bytes:
+FONT_SIZE_FACTORS = {"small": 0.032, "medium": 0.042, "large": 0.055}  # fontsize as a fraction of video height — the old fixed 0.05 read too large in practice
+
+
+def add_text_overlay(video_bytes: bytes, text: str, font: str = "sans", color: str = "#ffffff", anchor: str = "bottom_center", size: str = "medium") -> bytes:
     """Burns text onto a video via ffmpeg's drawtext filter — used for a
     Brand Kit shot's contact-info/website line (see routers/brand_kit.py
     and tasks.generate_brand_video_shot). Deliberately NOT asked of the
@@ -328,36 +348,83 @@ def add_text_overlay(video_bytes: bytes, text: str, font: str = "sans", color: s
     principle, applied to video.
 
     `anchor` is one of the 9 keys in ANCHOR_EXPRESSIONS (top/middle/
-    bottom × left/center/right) — lets the caller keep text clear of
-    wherever a referenced logo landed in the AI-generated frame.
-    middle_center is included for text-only shots with no logo
-    reference at all; when a logo IS referenced, the caller should
-    steer toward one of the other 8 edge/corner anchors instead, since
-    the logo's exact position isn't knowable in advance.
+    bottom × left/center/right); `size` is one of FONT_SIZE_FACTORS.
 
-    Text is written to a temp file and referenced via drawtext's
-    `textfile=` option rather than passed inline, which sidesteps
-    needing to escape colons/quotes/newlines for ffmpeg's filter-string
-    syntax — multi-line text (e.g. "Contact us" / "www.example.com")
-    just works.
+    Each line is rendered as its OWN drawtext filter rather than one
+    multi-line drawtext: with a single drawtext, x=(w-text_w)/2 centers
+    the whole text BLOCK, but the lines inside that block stay
+    left-aligned against each other (drawtext has no per-line alignment
+    on the ffmpeg version shipped in this image) — so "Contact us" over
+    "www.example.com" looked centered as a block but ragged-left within
+    it. One drawtext per line means each line's own text_w drives its
+    own centering, which is what a centered caption is actually
+    supposed to look like. Left/right anchors get the same treatment:
+    every line aligns to the same margin. Line positions are computed
+    as fractions of video height (line height = fontsize × 1.35), and
+    blank lines are skipped for drawing but still advance the y
+    position, preserving intentional spacing.
+
+    Text is written to a temp file per line and referenced via
+    drawtext's `textfile=` option rather than passed inline, which
+    sidesteps needing to escape colons/quotes for ffmpeg's
+    filter-string syntax.
     """
     font_path = FONT_PATHS.get(font, FONT_PATHS["sans"])
+    factor = FONT_SIZE_FACTORS.get(size, FONT_SIZE_FACTORS["medium"])
+
+    lines = text.splitlines() or [text]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return video_bytes
+    n = len(lines)
+
+    x_key, y_key = ANCHOR_EXPRESSIONS.get(anchor, ANCHOR_EXPRESSIONS["bottom_center"])
+    color_ffmpeg = color.lstrip("#") if color else "ffffff"
+
     with tempfile.TemporaryDirectory(prefix="overlay-") as tmp:
         tmp_path = Path(tmp)
         source_path = tmp_path / "source.mp4"
         source_path.write_bytes(video_bytes)
-        text_path = tmp_path / "text.txt"
-        text_path.write_text(text)
 
-        color_ffmpeg = color.lstrip("#") if color else "ffffff"
-        x_key, y_key = ANCHOR_EXPRESSIONS.get(anchor, ANCHOR_EXPRESSIONS["bottom_center"])
-        vf = (
-            f"drawtext=fontfile={font_path}:textfile={text_path}:fontcolor=0x{color_ffmpeg}:"
-            f"fontsize=h*0.05:line_spacing=6:x={_X_EXPR[x_key]}:y={_Y_EXPR[y_key]}:"
-            f"box=1:boxcolor=black@0.45:boxborderw=14"
-        )
+        # Everything below is computed in ABSOLUTE pixels from the
+        # video's probed height rather than h-relative expressions:
+        # boxborderw only accepts a constant, so it can't scale via an
+        # expression — and a constant border that isn't derived from the
+        # actual fontsize made adjacent lines' boxes overlap at small
+        # sizes. Deriving all three (fontsize, border, line step) from
+        # the same probed height keeps them proportioned to each other
+        # at any resolution.
+        _, vh = _probe_dimensions(source_path)
+        font_px = max(8, round(vh * factor))
+        border_px = max(3, round(font_px * 0.3))
+        line_step = font_px + border_px * 2 + max(2, round(font_px * 0.15))  # each line's box clears the previous one with a small gap
+        margin = round(vh * 0.08)
+        block_h = line_step * n
+
+        if y_key == "top":
+            block_top = margin
+        elif y_key == "middle":
+            block_top = round((vh - block_h) / 2)
+        else:  # bottom
+            block_top = vh - margin - block_h
+
+        filters = []
+        for i, line in enumerate(lines):
+            if not line.strip():
+                continue  # blank line: no box drawn, but i still advances the block's spacing
+            text_path = tmp_path / f"line{i}.txt"
+            text_path.write_text(line)
+            y_px = block_top + i * line_step + border_px  # drawtext's y is the TEXT top; leave room for the box border above it
+            filters.append(
+                f"drawtext=fontfile={font_path}:textfile={text_path}:fontcolor=0x{color_ffmpeg}:"
+                f"fontsize={font_px}:x={_X_EXPR[x_key]}:y={y_px}:"
+                f"box=1:boxcolor=black@0.45:boxborderw={border_px}"
+            )
         output_path = tmp_path / "overlaid.mp4"
-        _run(["ffmpeg", "-y", "-i", str(source_path), "-vf", vf, "-c:a", "copy", str(output_path)])
+        _run(["ffmpeg", "-y", "-i", str(source_path), "-vf", ",".join(filters), "-c:a", "copy", str(output_path)])
         return output_path.read_bytes()
 
 
@@ -419,6 +486,24 @@ def reframe_video_to_dims(source_video_url: str, tw: int, th: int, brand_kit) ->
         return output_path.read_bytes()
 
 
+def _probe_has_audio(path: Path) -> bool:
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path)],
+        capture_output=True, timeout=30,
+    )
+    return result.returncode == 0 and b"audio" in result.stdout
+
+
+def _probe_duration(path: Path) -> float:
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+        capture_output=True, timeout=30,
+    )
+    if result.returncode != 0:
+        raise ReframeError(f"ffprobe duration failed: {result.stderr.decode('utf-8', errors='replace')}")
+    return float(result.stdout.decode().strip())
+
+
 def concat_video_clips(clip_bytes_list: list[bytes]) -> bytes:
     """Concatenates 2+ video clips end-to-end via ffmpeg's concat filter
     — e.g. [intro, main, outro] into one final video. Every clip MUST
@@ -427,27 +512,80 @@ def concat_video_clips(clip_bytes_list: list[bytes]) -> bytes:
     only an fps normalization pass (AI video models don't all generate
     at the same frame rate, and concat assumes a consistent one).
 
-    Output is deliberately video-only (no audio track): an AI-generated
-    intro/main/outro combination has no guarantee all three either have
-    or lack an audio track, and ffmpeg's concat filter requires a
-    consistent stream layout across every input — mixing would fail
-    unpredictably depending on which clips happened to have audio.
+    AUDIO IS PRESERVED. ffmpeg's concat filter requires every input to
+    share the same stream layout — a mix of with-audio and audio-less
+    clips fails outright, which is why the first version of this
+    function stripped audio entirely. Instead of stripping, the layout
+    is now NORMALIZED: any clip without an audio stream gets a
+    generated silence track of exactly its own duration (anullsrc,
+    stereo/48kHz), and real audio is resampled to the same format and
+    trimmed/padded to its clip's length. So a with-audio main video
+    between two silent brand shots comes out as silence → ad audio →
+    silence, all in one continuous track. Only if NO clip has audio at
+    all does the output stay video-only (nothing to preserve, no point
+    encoding a silent track).
     """
     if len(clip_bytes_list) < 2:
         raise ReframeError("concat_video_clips needs at least 2 clips")
     with tempfile.TemporaryDirectory(prefix="concat-") as tmp:
         tmp_path = Path(tmp)
-        input_args: list[str] = []
-        filter_stages: list[str] = []
+        n = len(clip_bytes_list)
+        paths: list[Path] = []
         for i, clip_bytes in enumerate(clip_bytes_list):
             p = tmp_path / f"clip{i}.mp4"
             p.write_bytes(clip_bytes)
+            paths.append(p)
+
+        has_audio = [_probe_has_audio(p) for p in paths]
+        any_audio = any(has_audio)
+
+        input_args: list[str] = []
+        for p in paths:
             input_args += ["-i", str(p)]
+
+        filter_stages: list[str] = []
+        for i in range(n):
             filter_stages.append(f"[{i}:v:0]fps=30[v{i}]")
-        concat_inputs = "".join(f"[v{i}]" for i in range(len(clip_bytes_list)))
-        filter_complex = ";".join(filter_stages) + f";{concat_inputs}concat=n={len(clip_bytes_list)}:v=1:a=0[outv]"
+
+        if not any_audio:
+            concat_inputs = "".join(f"[v{i}]" for i in range(n))
+            filter_complex = ";".join(filter_stages) + f";{concat_inputs}concat=n={n}:v=1:a=0[outv]"
+            output_path = tmp_path / "stitched.mp4"
+            _run(["ffmpeg", "-y", *input_args, "-filter_complex", filter_complex, "-map", "[outv]", "-an", str(output_path)], timeout=180)
+            return output_path.read_bytes()
+
+        # At least one clip has real audio — build a consistent a/v
+        # layout. Audio-less clips reference extra anullsrc inputs
+        # (appended after the real inputs), trimmed to that clip's own
+        # probed duration so the silence occupies exactly its slot.
+        durations = [_probe_duration(p) for p in paths]
+        silent_input_index: dict[int, int] = {}
+        next_input = n
+        for i in range(n):
+            if not has_audio[i]:
+                input_args += ["-f", "lavfi", "-t", f"{durations[i]:.3f}", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
+                silent_input_index[i] = next_input
+                next_input += 1
+
+        for i in range(n):
+            if has_audio[i]:
+                # Normalize real audio to one format, and pin it to its
+                # clip's video length (trim if longer, pad with silence
+                # if shorter) so audio/video never drift across the seam.
+                filter_stages.append(
+                    f"[{i}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                    f"atrim=0:{durations[i]:.3f},asetpts=PTS-STARTPTS,apad=whole_dur={durations[i]:.3f}[a{i}]"
+                )
+            else:
+                filter_stages.append(f"[{silent_input_index[i]}:a:0]asetpts=PTS-STARTPTS[a{i}]")
+
+        concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(n))
+        filter_complex = ";".join(filter_stages) + f";{concat_inputs}concat=n={n}:v=1:a=1[outv][outa]"
         output_path = tmp_path / "stitched.mp4"
-        _run(["ffmpeg", "-y", *input_args, "-filter_complex", filter_complex, "-map", "[outv]", "-an", str(output_path)], timeout=180)
+        _run([
+            "ffmpeg", "-y", *input_args, "-filter_complex", filter_complex,
+            "-map", "[outv]", "-map", "[outa]", "-c:a", "aac", "-b:a", "128k", str(output_path),
+        ], timeout=180)
         return output_path.read_bytes()
 
 
