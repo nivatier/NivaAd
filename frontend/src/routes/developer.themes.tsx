@@ -94,14 +94,14 @@ function TagPromptEditor({
       <div className="w-56 shrink-0 space-y-1">
         {tags.map((tag) => (
           <button key={tag} onClick={() => setSelected(tag)}
-            className={`block w-full truncate rounded-lg px-3 py-2 text-left text-xs ${selected === tag ? "bg-primary/10 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-800/40"}`}>
+            className={`block w-full truncate rounded-lg px-3 py-2 text-left text-xs ${selected === tag ? "bg-primary/10 text-primary font-semibold" : "text-muted-foreground hover:bg-muted"}`}>
             {tag}{values[tag]?.trim() ? "" : " ·"}
           </button>
         ))}
-        <div className="mt-2 flex gap-1 border-t border-slate-700/50 pt-2">
+        <div className="mt-2 flex gap-1 border-t border-border pt-2">
           <input value={newTag} onChange={(e) => setNewTag(e.target.value)} placeholder="Add new tag…"
-            className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2 py-1.5 text-[11px] text-foreground focus:border-slate-500 focus:outline-none" />
-          <button onClick={addTag} disabled={addingTag} className="shrink-0 rounded-lg bg-slate-700 px-2 text-xs text-slate-100 hover:bg-slate-600 disabled:opacity-50">＋</button>
+            className="w-full rounded-lg border border-border bg-input/40 px-2 py-1.5 text-[11px] text-foreground focus:border-ring focus:outline-none" />
+          <button onClick={addTag} disabled={addingTag} className="shrink-0 rounded-lg bg-foreground px-2 text-xs text-background hover:bg-foreground/90 disabled:opacity-50">＋</button>
         </div>
       </div>
       <div className="flex-1">
@@ -113,10 +113,10 @@ function TagPromptEditor({
               onChange={(e) => setDraft(e.target.value)}
               rows={8}
               placeholder="Describe the scene/background this tag should produce…"
-              className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-3 py-2 text-xs leading-relaxed text-foreground focus:border-slate-500 focus:outline-none"
+              className="w-full rounded-lg border border-border bg-input/40 px-3 py-2 text-xs leading-relaxed text-foreground focus:border-ring focus:outline-none"
             />
             <div className="mt-2 flex items-center gap-3">
-              <button onClick={save} disabled={saving} className="rounded-full bg-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+              <button onClick={save} disabled={saving} className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
                 {saving ? "Saving…" : "Save"}
               </button>
               {saved && <span className="text-xs text-emerald-400">✓ Saved</span>}
@@ -275,7 +275,7 @@ function ImageGalleryTab({ styleTags, categoryTags }: { styleTags: string[]; cat
         <div className="mt-3 grid grid-cols-2 gap-2">
           {entries.map((entry) => (
             <button key={entry.id} onClick={() => selectExisting(entry.id)}
-              className={`overflow-hidden rounded-lg border text-left ${selectedId === entry.id ? "border-primary ring-2 ring-primary" : "border-slate-700/50 hover:border-primary/40"}`}>
+              className={`overflow-hidden rounded-lg border text-left ${selectedId === entry.id ? "border-primary ring-2 ring-primary" : "border-border hover:border-primary/40"}`}>
               <img src={entry.thumbnail} alt={entry.label} className="h-16 w-full object-cover" />
               <div className="truncate px-1.5 py-1 text-[10px] text-foreground">{entry.label}</div>
             </button>
@@ -283,21 +283,21 @@ function ImageGalleryTab({ styleTags, categoryTags }: { styleTags: string[]; cat
         </div>
       </div>
 
-      <div className="flex-1 rounded-xl border border-slate-700/50 bg-card/60 p-4">
+      <div className="flex-1 rounded-xl border border-border bg-card/60 p-4">
         {!draft ? (
           <div className="text-xs text-muted-foreground">Select an image on the left, or upload a new reference.</div>
         ) : (
           <>
             <div className="mb-3 flex items-start gap-3">
               {draft.thumbnail ? (
-                <img src={draft.thumbnail} alt={draft.label} className="h-24 w-24 rounded-lg object-cover border border-slate-700/50" />
+                <img src={draft.thumbnail} alt={draft.label} className="h-24 w-24 rounded-lg object-cover border border-border" />
               ) : (
-                <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-dashed border-slate-700/50 text-[10px] text-muted-foreground">No image</div>
+                <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-dashed border-border text-[10px] text-muted-foreground">No image</div>
               )}
               <div className="flex-1">
                 <label className="text-[11px] text-muted-foreground">Label</label>
                 <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })}
-                  className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+                  className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
               </div>
             </div>
 
@@ -306,7 +306,7 @@ function ImageGalleryTab({ styleTags, categoryTags }: { styleTags: string[]; cat
               <div className="flex flex-wrap gap-1.5">
                 {allStyleTags.map((tag) => (
                   <button key={tag} onClick={() => toggleTag("style_tags", tag)}
-                    className={`rounded-full border px-2.5 py-1 text-[11px] ${draft.style_tags.includes(tag) ? "border-primary bg-primary/10 text-primary" : "border-slate-700/50 text-muted-foreground"}`}>
+                    className={`rounded-full border px-2.5 py-1 text-[11px] ${draft.style_tags.includes(tag) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
                     {tag}
                   </button>
                 ))}
@@ -318,7 +318,7 @@ function ImageGalleryTab({ styleTags, categoryTags }: { styleTags: string[]; cat
               <div className="flex flex-wrap gap-1.5">
                 {allCategoryTags.map((tag) => (
                   <button key={tag} onClick={() => toggleTag("category_tags", tag)}
-                    className={`rounded-full border px-2.5 py-1 text-[11px] ${draft.category_tags.includes(tag) ? "border-primary bg-primary/10 text-primary" : "border-slate-700/50 text-muted-foreground"}`}>
+                    className={`rounded-full border px-2.5 py-1 text-[11px] ${draft.category_tags.includes(tag) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
                     {tag}
                   </button>
                 ))}
@@ -330,11 +330,11 @@ function ImageGalleryTab({ styleTags, categoryTags }: { styleTags: string[]; cat
               value={draft.base_prompt}
               onChange={(e) => setDraft({ ...draft, base_prompt: e.target.value })}
               rows={5}
-              className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-3 py-2 text-xs leading-relaxed text-foreground focus:border-slate-500 focus:outline-none"
+              className="w-full rounded-lg border border-border bg-input/40 px-3 py-2 text-xs leading-relaxed text-foreground focus:border-ring focus:outline-none"
             />
 
             <div className="mt-3 flex items-center gap-3">
-              <button onClick={saveDraft} disabled={saving} className="rounded-full bg-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+              <button onClick={saveDraft} disabled={saving} className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
                 {saving ? "Saving…" : "Save to gallery"}
               </button>
               {selectedId && (
@@ -406,7 +406,7 @@ function ImageThemeTab() {
       <div className="mb-4 flex gap-2">
         {([["text_for_image", "Text for Image"], ["image_for_image", "Image for Image"]] as const).map(([k, l]) => (
           <button key={k} onClick={() => setSubTab(k)}
-            className={`rounded-full border px-4 py-1.5 text-xs font-semibold ${subTab === k ? "border-primary bg-primary/10 text-primary" : "border-slate-700/50 text-muted-foreground"}`}>
+            className={`rounded-full border px-4 py-1.5 text-xs font-semibold ${subTab === k ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
             {l}
           </button>
         ))}
@@ -422,7 +422,7 @@ function ImageThemeTab() {
           <div className="mb-4 flex items-center gap-2">
             {([["style", "Style"], ["product", "Product"]] as const).map(([k, l]) => (
               <button key={k} onClick={() => setAxis(k)}
-                className={`rounded-full border px-4 py-1.5 text-xs font-semibold ${axis === k ? "border-primary bg-primary/10 text-primary" : "border-slate-700/50 text-muted-foreground"}`}>
+                className={`rounded-full border px-4 py-1.5 text-xs font-semibold ${axis === k ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
                 {l}
               </button>
             ))}
@@ -432,7 +432,7 @@ function ImageThemeTab() {
             </button>
           </div>
           {generateMsg && <div className="mb-2 text-[11px] text-emerald-400">{generateMsg}</div>}
-          <div className="max-w-3xl rounded-xl border border-slate-700/50 bg-card/60 p-4">
+          <div className="max-w-3xl rounded-xl border border-border bg-card/60 p-4">
             <TagPromptEditor tags={tags} values={data.text_for_image[axis]} onSave={saveTextPrompt} addTagAxis={axis === "style" ? "style" : "category"} />
           </div>
         </>
@@ -592,27 +592,27 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
     <div className="flex gap-4">
       <div className="w-64 shrink-0 space-y-2">
         <button onClick={startNewBlank}
-          className="block w-full rounded-lg border border-dashed border-slate-700/50 px-3 py-2 text-center text-[11px] text-muted-foreground hover:border-primary/50 hover:text-primary">
+          className="block w-full rounded-lg border border-dashed border-border px-3 py-2 text-center text-[11px] text-muted-foreground hover:border-primary/50 hover:text-primary">
           + New theme (blank)
         </button>
         {showBrief ? (
           <div className="rounded-lg border border-primary/40 bg-card/60 p-2.5 space-y-2">
             <textarea value={brief} onChange={(e) => setBrief(e.target.value)} rows={3} placeholder="e.g. Slow-motion unboxing with warm autumn light…"
-              className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2 py-1.5 text-[11px] leading-relaxed text-foreground focus:border-slate-500 focus:outline-none" />
+              className="w-full rounded-lg border border-border bg-input/40 px-2 py-1.5 text-[11px] leading-relaxed text-foreground focus:border-ring focus:outline-none" />
             <div className="flex flex-wrap gap-1">
               {categoryTags.map((tag) => (
                 <button key={tag} onClick={() => setBriefTags((t) => t.includes(tag) ? t.filter((x) => x !== tag) : [...t, tag])}
-                  className={`rounded-full border px-2 py-0.5 text-[10px] ${briefTags.includes(tag) ? "border-primary bg-primary/10 text-primary" : "border-slate-700/50 text-muted-foreground"}`}>
+                  className={`rounded-full border px-2 py-0.5 text-[10px] ${briefTags.includes(tag) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
                   {tag}
                 </button>
               ))}
             </div>
             <div className="flex items-center gap-1.5">
               <button onClick={generateFromBrief} disabled={drafting || !brief.trim()}
-                className="rounded-full bg-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+                className="rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
                 {drafting ? "Drafting…" : "Generate"}
               </button>
-              <button onClick={() => setShowBrief(false)} className="rounded-full border border-slate-700/50 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground">Cancel</button>
+              <button onClick={() => setShowBrief(false)} className="rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground">Cancel</button>
             </div>
           </div>
         ) : (
@@ -624,11 +624,11 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
         <div className="grid grid-cols-2 gap-2 pt-1">
           {entries.map((entry) => (
             <button key={entry.id} onClick={() => selectExisting(entry.id)}
-              className={`overflow-hidden rounded-lg border text-left ${selectedId === entry.id ? "border-primary ring-2 ring-primary" : "border-slate-700/50 hover:border-primary/40"}`}>
+              className={`overflow-hidden rounded-lg border text-left ${selectedId === entry.id ? "border-primary ring-2 ring-primary" : "border-border hover:border-primary/40"}`}>
               {entry.thumbnail ? (
                 <img src={entry.thumbnail} alt={entry.label} className="h-16 w-full object-cover" />
               ) : (
-                <div className="flex h-16 w-full items-center justify-center bg-slate-800/40 text-[9px] text-muted-foreground">No thumbnail</div>
+                <div className="flex h-16 w-full items-center justify-center bg-muted text-[9px] text-muted-foreground">No thumbnail</div>
               )}
               <div className="truncate px-1.5 py-1 text-[10px] text-foreground">{entry.label}</div>
             </button>
@@ -636,23 +636,23 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
         </div>
       </div>
 
-      <div className="flex-1 rounded-xl border border-slate-700/50 bg-card/60 p-4">
+      <div className="flex-1 rounded-xl border border-border bg-card/60 p-4">
         {!draft ? (
           <div className="text-xs text-muted-foreground">Select a theme on the left, start a blank one, or draft one from a brief.</div>
         ) : (
           <>
             <div className="mb-3 flex items-start gap-3">
               {draft.thumbnail ? (
-                <img src={draft.thumbnail} alt={draft.label} className="h-24 w-24 rounded-lg object-cover border border-slate-700/50" />
+                <img src={draft.thumbnail} alt={draft.label} className="h-24 w-24 rounded-lg object-cover border border-border" />
               ) : (
-                <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-dashed border-slate-700/50 text-[10px] text-muted-foreground text-center px-1">No thumbnail</div>
+                <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-dashed border-border text-[10px] text-muted-foreground text-center px-1">No thumbnail</div>
               )}
               <div className="flex-1">
                 <label className="text-[11px] text-muted-foreground">Label</label>
                 <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })}
-                  className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none mb-2" />
+                  className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none mb-2" />
                 <div className="flex items-center gap-2 flex-wrap">
-                  <label className="cursor-pointer rounded-full border border-slate-700/50 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground">
+                  <label className="cursor-pointer rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground">
                     Upload thumbnail
                     <input type="file" accept="image/*" onChange={handleThumbnailUpload} disabled={thumbBusy} className="hidden" />
                   </label>
@@ -669,7 +669,7 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
               <div className="flex flex-wrap gap-1.5">
                 {categoryTags.map((tag) => (
                   <button key={tag} onClick={() => toggleTag(tag)}
-                    className={`rounded-full border px-2.5 py-1 text-[11px] ${draft.category_tags.includes(tag) ? "border-primary bg-primary/10 text-primary" : "border-slate-700/50 text-muted-foreground"}`}>
+                    className={`rounded-full border px-2.5 py-1 text-[11px] ${draft.category_tags.includes(tag) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
                     {tag}
                   </button>
                 ))}
@@ -679,7 +679,7 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
             <label className="text-[11px] text-muted-foreground">Style notes</label>
             <textarea value={draft.style_notes} onChange={(e) => setDraft({ ...draft, style_notes: e.target.value })} rows={2}
               placeholder="Overall look, mood, and pacing shown to companies browsing this theme…"
-              className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-3 py-2 text-xs leading-relaxed text-foreground focus:border-slate-500 focus:outline-none mb-3" />
+              className="w-full rounded-lg border border-border bg-input/40 px-3 py-2 text-xs leading-relaxed text-foreground focus:border-ring focus:outline-none mb-3" />
 
             <div className="mb-1 flex items-center justify-between">
               <div className="text-[11px] font-semibold text-muted-foreground">Shots</div>
@@ -687,12 +687,12 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
             </div>
             <div className="space-y-2 mb-3">
               {draft.shots.map((shot, i) => (
-                <div key={i} className="rounded-lg border border-slate-700/50 p-2.5">
+                <div key={i} className="rounded-lg border border-border p-2.5">
                   <div className="flex items-center gap-2 mb-1.5">
                     <input value={shot.label} onChange={(e) => updateShot(i, { label: e.target.value })} placeholder="Shot label"
-                      className="flex-1 rounded-lg border border-slate-700/50 bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-slate-500 focus:outline-none" />
+                      className="flex-1 rounded-lg border border-border bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-ring focus:outline-none" />
                     <input type="number" min={1} max={30} value={shot.duration} onChange={(e) => updateShot(i, { duration: Number(e.target.value) })}
-                      className="w-16 rounded-lg border border-slate-700/50 bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-slate-500 focus:outline-none" />
+                      className="w-16 rounded-lg border border-border bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-ring focus:outline-none" />
                     <span className="text-[10px] text-muted-foreground shrink-0">sec</span>
                     {draft.shots.length > 1 && (
                       <button onClick={() => removeShot(i)} className="shrink-0 rounded-full border border-destructive/50 px-2 py-0.5 text-[10px] text-destructive hover:bg-destructive/10">Remove</button>
@@ -700,13 +700,13 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
                   </div>
                   <textarea value={shot.prompt_template} onChange={(e) => updateShot(i, { prompt_template: e.target.value })} rows={2}
                     placeholder="Video generation prompt — must include {product} exactly once…"
-                    className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2 py-1.5 text-[11px] leading-relaxed text-foreground focus:border-slate-500 focus:outline-none font-mono" />
+                    className="w-full rounded-lg border border-border bg-input/40 px-2 py-1.5 text-[11px] leading-relaxed text-foreground focus:border-ring focus:outline-none font-mono" />
                 </div>
               ))}
             </div>
 
             <div className="flex items-center gap-3">
-              <button onClick={saveDraft} disabled={saving} className="rounded-full bg-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+              <button onClick={saveDraft} disabled={saving} className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
                 {saving ? "Saving…" : "Save theme"}
               </button>
               {selectedId && (
@@ -746,40 +746,40 @@ function PresetForm({
       <div>
         <label className="text-[11px] text-muted-foreground">Label</label>
         <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Bold White on Black"
-          className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
       </div>
       <div>
         <label className="text-[11px] text-muted-foreground">Font style</label>
         <input value={fontStyle} onChange={(e) => setFontStyle(e.target.value)} placeholder="e.g. Bold sans-serif"
-          className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
       </div>
       <div>
         <label className="text-[11px] text-muted-foreground">Text color</label>
         <div className="flex items-center gap-2">
-          <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(textColor) ? textColor : "#FFFFFF"} onChange={(e) => setTextColor(e.target.value)} className="h-8 w-10 rounded border border-slate-700/50 bg-transparent" />
-          <input value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+          <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(textColor) ? textColor : "#FFFFFF"} onChange={(e) => setTextColor(e.target.value)} className="h-8 w-10 rounded border border-border bg-transparent" />
+          <input value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
         </div>
       </div>
       <div>
         <label className="text-[11px] text-muted-foreground">Accent / outline color</label>
         <div className="flex items-center gap-2">
-          <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(accentColor) ? accentColor : "#000000"} onChange={(e) => setAccentColor(e.target.value)} className="h-8 w-10 rounded border border-slate-700/50 bg-transparent" />
-          <input value={accentColor} onChange={(e) => setAccentColor(e.target.value)} className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+          <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(accentColor) ? accentColor : "#000000"} onChange={(e) => setAccentColor(e.target.value)} className="h-8 w-10 rounded border border-border bg-transparent" />
+          <input value={accentColor} onChange={(e) => setAccentColor(e.target.value)} className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
         </div>
       </div>
       <div>
         <label className="text-[11px] text-muted-foreground">Size</label>
         <select value={size} onChange={(e) => setSize(e.target.value)}
-          className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
           {SIZE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
       </div>
       <div className="flex items-end gap-2">
         <button disabled={busy || !label.trim()} onClick={() => onSubmit({ label: label.trim(), font_style: fontStyle, text_color: textColor, accent_color: accentColor, size })}
-          className="rounded-full bg-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+          className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
           {busy ? "Saving…" : "Save"}
         </button>
-        {onCancel && <button onClick={onCancel} className="rounded-full border border-slate-700/50 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>}
+        {onCancel && <button onClick={onCancel} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>}
       </div>
     </div>
   );
@@ -845,14 +845,14 @@ function TextStylesTab() {
       </p>
       <div className="space-y-2 mb-4">
         {presets.map((p) => (
-          <div key={p.id} className="rounded-xl border border-slate-700/50 bg-card/60 p-3">
+          <div key={p.id} className="rounded-xl border border-border bg-card/60 p-3">
             {editingId === p.id ? (
               <PresetForm initial={p} busy={busy} onCancel={() => setEditingId(null)} onSubmit={(v) => update(p.id, v)} />
             ) : (
               <div className="flex items-center gap-3">
                 <div className="flex gap-1">
-                  <span className="h-6 w-6 rounded border border-slate-600" style={{ background: p.text_color || "#888" }} title="Text color" />
-                  <span className="h-6 w-6 rounded border border-slate-600" style={{ background: p.accent_color || "#888" }} title="Accent color" />
+                  <span className="h-6 w-6 rounded border border-border" style={{ background: p.text_color || "#888" }} title="Text color" />
+                  <span className="h-6 w-6 rounded border border-border" style={{ background: p.accent_color || "#888" }} title="Accent color" />
                 </div>
                 <div className="flex-1">
                   <div className="text-xs font-semibold text-foreground">{p.label}</div>
@@ -860,7 +860,7 @@ function TextStylesTab() {
                 </div>
                 {p.id !== "standard" && (
                   <>
-                    <button onClick={() => setEditingId(p.id)} className="rounded-full border border-slate-700/50 px-3 py-1 text-[11px] text-muted-foreground hover:text-foreground">Edit</button>
+                    <button onClick={() => setEditingId(p.id)} className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground hover:text-foreground">Edit</button>
                     <button onClick={() => remove(p.id)} className="rounded-full border border-destructive/50 px-3 py-1 text-[11px] text-destructive hover:bg-destructive/10">Delete</button>
                   </>
                 )}
@@ -871,7 +871,7 @@ function TextStylesTab() {
       </div>
 
       {showAdd ? (
-        <div className="rounded-xl border border-slate-700/50 bg-card/60 p-3">
+        <div className="rounded-xl border border-border bg-card/60 p-3">
           <PresetForm initial={{}} busy={busy} onCancel={() => setShowAdd(false)} onSubmit={add} />
         </div>
       ) : (
@@ -903,7 +903,7 @@ function DeveloperThemes() {
         for every company immediately.
       </p>
 
-      <div className="mb-6 flex gap-2 border-b border-slate-700/50 pb-3">
+      <div className="mb-6 flex gap-2 border-b border-border pb-3">
         {([["text", "Text Themes"], ["image", "Image Theme"], ["styles", "Text Styles"], ["video", "Video Theme"]] as const).map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`rounded-full px-4 py-2 text-xs font-semibold ${tab === k ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}>

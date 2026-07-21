@@ -268,41 +268,209 @@ def _reframe_with_images(source_path: Path, output_path: Path, tw: int, th: int,
 
 # ---------------------------------------------------------------------------
 # Image reframing — same design as video (scale-to-fit, pad, never crop),
-# same Brand Kit settings (vertical_pad_mode/horizontal_pad_mode, the four
-# bar images, the two colors) — reused as-is rather than a separate config
-# surface, since the actual need here is narrower than video's (mainly
-# Instagram's Graph API hard-rejecting images outside a 4:5-1.91:1 range,
-# not every platform). Uses Pillow instead of ffmpeg, since a single frame
+# but with its OWN independent Brand Kit settings (image_vertical_pad_mode/
+# image_horizontal_pad_mode, the four image_pad_*_image_url bars, the two
+# image_*_pad_color colors) — split out from video's settings so a company
+# can, say, use a blurred background for video but branded color bars for
+# static image posts. Uses Pillow instead of ffmpeg, since a single frame
 # doesn't need a video-processing tool.
-#
-# "blurred_video" mode is intentionally NOT renamed in storage — reusing
-# the exact same stored value avoids a migration and keeps one Brand Kit
-# setting driving both media types. Only the UI LABEL differs by context
-# (shown as "Blurred background" in the image section, "Blurred video" in
-# the video section) — the underlying behavior for this mode is the same
-# concept either way: blur the source itself to fill the padding.
 # ---------------------------------------------------------------------------
 from io import BytesIO
 
 from PIL import Image, ImageFilter
 
 
-def reframe_image(source_image_url: str, target_ratio: str, brand_kit) -> bytes:
-    """Downloads the source image, scales it to fit entirely within the
-    target dimensions (no cropping), and pads the leftover space using
-    the company's Brand Kit preference for whichever direction actually
-    needs padding. Returns the reframed image's raw bytes (PNG)."""
-    source_bytes, _ = storage.fetch_bytes(source_image_url)
-    img = Image.open(BytesIO(source_bytes)).convert("RGBA")
-    sw, sh = img.size
+FONT_PATHS = {
+    "sans": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "sans_bold": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "serif": "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+}
 
+
+def extract_last_frame(video_bytes: bytes) -> bytes:
+    """Grabs the video's last frame as a JPEG — used as a static gallery
+    thumbnail (see routers/brand_kit.py, tasks.generate_brand_video_shot)
+    instead of autoplaying the clip inline in a small card. `-sseof -0.1`
+    seeks to 0.1s before end-of-file rather than trying to compute an
+    exact duration first — simpler and avoids an extra ffprobe call."""
+    with tempfile.TemporaryDirectory(prefix="lastframe-") as tmp:
+        tmp_path = Path(tmp)
+        source_path = tmp_path / "source.mp4"
+        source_path.write_bytes(video_bytes)
+        output_path = tmp_path / "frame.jpg"
+        _run(["ffmpeg", "-y", "-sseof", "-0.1", "-i", str(source_path), "-vframes", "1", "-q:v", "3", str(output_path)])
+        return output_path.read_bytes()
+
+
+# x/y ffmpeg drawtext expressions per axis — combined below per anchor.
+# Margins (0.06w / 0.08h) keep text off the very edge; anchors never
+# include a "middle_center" x "middle" y combination (see
+# ANCHOR_EXPRESSIONS) since that's roughly where a referenced logo tends
+# to land, and there's no way to know its exact AI-generated position.
+_X_EXPR = {"left": "w*0.06", "center": "(w-text_w)/2", "right": "w-text_w-w*0.06"}
+_Y_EXPR = {"top": "h*0.08", "middle": "(h-text_h)/2", "bottom": "h-text_h-h*0.08"}
+
+ANCHOR_EXPRESSIONS = {
+    "top_left": ("left", "top"), "top_center": ("center", "top"), "top_right": ("right", "top"),
+    "middle_left": ("left", "middle"), "middle_center": ("center", "middle"), "middle_right": ("right", "middle"),
+    "bottom_left": ("left", "bottom"), "bottom_center": ("center", "bottom"), "bottom_right": ("right", "bottom"),
+}
+
+
+def add_text_overlay(video_bytes: bytes, text: str, font: str = "sans", color: str = "#ffffff", anchor: str = "bottom_center") -> bytes:
+    """Burns text onto a video via ffmpeg's drawtext filter — used for a
+    Brand Kit shot's contact-info/website line (see routers/brand_kit.py
+    and tasks.generate_brand_video_shot). Deliberately NOT asked of the
+    AI video model itself: video models are unreliable at rendering
+    exact, legible text, so this gets the "AI does the visuals, code
+    renders the exact text" split the app already uses for logo
+    compositing on images (see branding.py's composite_logo) — same
+    principle, applied to video.
+
+    `anchor` is one of the 9 keys in ANCHOR_EXPRESSIONS (top/middle/
+    bottom × left/center/right) — lets the caller keep text clear of
+    wherever a referenced logo landed in the AI-generated frame.
+    middle_center is included for text-only shots with no logo
+    reference at all; when a logo IS referenced, the caller should
+    steer toward one of the other 8 edge/corner anchors instead, since
+    the logo's exact position isn't knowable in advance.
+
+    Text is written to a temp file and referenced via drawtext's
+    `textfile=` option rather than passed inline, which sidesteps
+    needing to escape colons/quotes/newlines for ffmpeg's filter-string
+    syntax — multi-line text (e.g. "Contact us" / "www.example.com")
+    just works.
+    """
+    font_path = FONT_PATHS.get(font, FONT_PATHS["sans"])
+    with tempfile.TemporaryDirectory(prefix="overlay-") as tmp:
+        tmp_path = Path(tmp)
+        source_path = tmp_path / "source.mp4"
+        source_path.write_bytes(video_bytes)
+        text_path = tmp_path / "text.txt"
+        text_path.write_text(text)
+
+        color_ffmpeg = color.lstrip("#") if color else "ffffff"
+        x_key, y_key = ANCHOR_EXPRESSIONS.get(anchor, ANCHOR_EXPRESSIONS["bottom_center"])
+        vf = (
+            f"drawtext=fontfile={font_path}:textfile={text_path}:fontcolor=0x{color_ffmpeg}:"
+            f"fontsize=h*0.05:line_spacing=6:x={_X_EXPR[x_key]}:y={_Y_EXPR[y_key]}:"
+            f"box=1:boxcolor=black@0.45:boxborderw=14"
+        )
+        output_path = tmp_path / "overlaid.mp4"
+        _run(["ffmpeg", "-y", "-i", str(source_path), "-vf", vf, "-c:a", "copy", str(output_path)])
+        return output_path.read_bytes()
+
+
+def probe_video_url_dimensions(video_url: str) -> tuple[int, int]:
+    """Downloads just enough to read a video's pixel dimensions — used by
+    the intro/outro stitching pipeline (tasks.py) to learn the MAIN
+    video's own resolution, so intro/outro clips can be forced to those
+    exact same pixel dimensions (not just the same ratio) before concat.
+    """
+    with tempfile.TemporaryDirectory(prefix="probe-") as tmp:
+        tmp_path = Path(tmp) / "source.mp4"
+        source_bytes, _ = storage.fetch_bytes(video_url)
+        tmp_path.write_bytes(source_bytes)
+        return _probe_dimensions(tmp_path)
+
+
+def reframe_video_to_dims(source_video_url: str, tw: int, th: int, brand_kit) -> bytes:
+    """Like reframe_video, but forces the source to EXACT pixel
+    dimensions (tw, th) — no deriving target size from the source's own
+    resolution, and no "close enough, skip" shortcut. Used only by the
+    intro/outro stitching pipeline (tasks.py): every clip being
+    concatenated together (intro/main/outro) must match pixel-for-pixel,
+    not just share a ratio — two clips generated at different native
+    resolutions can both be "9:16" while landing on different absolute
+    sizes if each computed its own target independently, which is
+    exactly what plain reframe_video does (by design, for the normal
+    single-video case where that doesn't matter)."""
+    with tempfile.TemporaryDirectory(prefix="reframe-exact-") as tmp:
+        tmp_path = Path(tmp)
+        source_path = tmp_path / "source.mp4"
+        source_bytes, _ = storage.fetch_bytes(source_video_url)
+        source_path.write_bytes(source_bytes)
+
+        sw, sh = _probe_dimensions(source_path)
+        source_ratio = sw / sh
+        target_ratio_value = tw / th
+        vertical_padding_needed = source_ratio > target_ratio_value
+
+        if vertical_padding_needed:
+            mode = brand_kit.vertical_pad_mode
+            fill_image_urls = (brand_kit.pad_top_image_url, brand_kit.pad_bottom_image_url)
+            fill_color = brand_kit.vertical_pad_color
+        else:
+            mode = brand_kit.horizontal_pad_mode
+            fill_image_urls = (brand_kit.pad_left_image_url, brand_kit.pad_right_image_url)
+            fill_color = brand_kit.horizontal_pad_color
+        if mode == "image" and not any(fill_image_urls):
+            mode = "blurred_video"
+        if mode == "color" and not fill_color:
+            mode = "blurred_video"
+
+        output_path = tmp_path / f"{uuid.uuid4()}.mp4"
+        if mode == "color":
+            _reframe_with_color(source_path, output_path, tw, th, fill_color)
+        elif mode == "image":
+            _reframe_with_images(source_path, output_path, tw, th, fill_image_urls, vertical_padding_needed, tmp_path)
+        else:
+            _reframe_with_blurred_video(source_path, output_path, tw, th)
+        return output_path.read_bytes()
+
+
+def concat_video_clips(clip_bytes_list: list[bytes]) -> bytes:
+    """Concatenates 2+ video clips end-to-end via ffmpeg's concat filter
+    — e.g. [intro, main, outro] into one final video. Every clip MUST
+    already be the exact same pixel dimensions (see
+    reframe_video_to_dims above) — this does no scaling of its own,
+    only an fps normalization pass (AI video models don't all generate
+    at the same frame rate, and concat assumes a consistent one).
+
+    Output is deliberately video-only (no audio track): an AI-generated
+    intro/main/outro combination has no guarantee all three either have
+    or lack an audio track, and ffmpeg's concat filter requires a
+    consistent stream layout across every input — mixing would fail
+    unpredictably depending on which clips happened to have audio.
+    """
+    if len(clip_bytes_list) < 2:
+        raise ReframeError("concat_video_clips needs at least 2 clips")
+    with tempfile.TemporaryDirectory(prefix="concat-") as tmp:
+        tmp_path = Path(tmp)
+        input_args: list[str] = []
+        filter_stages: list[str] = []
+        for i, clip_bytes in enumerate(clip_bytes_list):
+            p = tmp_path / f"clip{i}.mp4"
+            p.write_bytes(clip_bytes)
+            input_args += ["-i", str(p)]
+            filter_stages.append(f"[{i}:v:0]fps=30[v{i}]")
+        concat_inputs = "".join(f"[v{i}]" for i in range(len(clip_bytes_list)))
+        filter_complex = ";".join(filter_stages) + f";{concat_inputs}concat=n={len(clip_bytes_list)}:v=1:a=0[outv]"
+        output_path = tmp_path / "stitched.mp4"
+        _run(["ffmpeg", "-y", *input_args, "-filter_complex", filter_complex, "-map", "[outv]", "-an", str(output_path)], timeout=180)
+        return output_path.read_bytes()
+
+
+def _fit_and_pad_image(img: "Image.Image", target_ratio: str, mode: str, fill_image_urls: tuple, fill_color: str | None) -> bytes:
+    """Shared core for reframe_image and prepare_video_reference_frame:
+    scales `img` to fit entirely within the target ratio (never
+    cropping the subject) and fills the leftover space per the already-
+    resolved mode/fill. If `img` already has real alpha transparency
+    (a proper logo export, not a flat rectangle), this naturally "just
+    isolates" the subject onto the padded background — Pillow's alpha-
+    aware paste only draws the non-transparent pixels. A logo exported
+    WITHOUT transparency (an opaque rectangle) can't be isolated this
+    way — there's no reliable way to detect/remove an arbitrary flat
+    background without real image segmentation, which is out of scope
+    here; the whole rectangle just gets fit-and-padded as one image in
+    that case, background and all."""
+    sw, sh = img.size
     target_dims = target_dimensions_for_ratio(target_ratio, (sw, sh))
     if target_dims is None:
         raise ReframeError(f"Unknown or malformed target ratio: {target_ratio}")
     tw, th = target_dims
 
     if not needs_reframe((sw, sh), target_dims):
-        logger.info("[reframe] image source %dx%d already close enough to target %s — skipping, using source as-is", sw, sh, target_ratio)
         buf = BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
@@ -311,22 +479,11 @@ def reframe_image(source_image_url: str, target_ratio: str, brand_kit) -> bytes:
     target_ratio_value = tw / th
     vertical_padding_needed = source_ratio > target_ratio_value
 
-    if vertical_padding_needed:
-        mode = brand_kit.vertical_pad_mode
-        fill_image_urls = (brand_kit.pad_top_image_url, brand_kit.pad_bottom_image_url)
-        fill_color = brand_kit.vertical_pad_color
-    else:
-        mode = brand_kit.horizontal_pad_mode
-        fill_image_urls = (brand_kit.pad_left_image_url, brand_kit.pad_right_image_url)
-        fill_color = brand_kit.horizontal_pad_color
-
     if mode == "image" and not any(fill_image_urls):
         mode = "blurred_video"
     if mode == "color" and not fill_color:
         mode = "blurred_video"
 
-    # Scale the source to fit within the target on the constrained
-    # dimension.
     scale = min(tw / sw, th / sh)
     fg_w, fg_h = max(1, round(sw * scale)), max(1, round(sh * scale))
     fg = img.resize((fg_w, fg_h), Image.LANCZOS)
@@ -362,8 +519,7 @@ def reframe_image(source_image_url: str, target_ratio: str, brand_kit) -> bytes:
                 canvas.paste(bar, (paste_x + fg_w, 0))
     else:
         # Blurred background — the source itself, scaled to fill and
-        # cropped to the target's shape, then blurred, same visual
-        # effect as the video version's split+crop+gblur chain.
+        # cropped to the target's shape, then blurred.
         bg_scale = max(tw / sw, th / sh)
         bg_w, bg_h = max(1, round(sw * bg_scale)), max(1, round(sh * bg_scale))
         bg = img.resize((bg_w, bg_h), Image.LANCZOS)
@@ -376,3 +532,72 @@ def reframe_image(source_image_url: str, target_ratio: str, brand_kit) -> bytes:
     buf = BytesIO()
     canvas.convert("RGB").save(buf, format="PNG")
     return buf.getvalue()
+
+
+def prepare_video_reference_frame(source_image_url: str, target_ratio: str, brand_kit) -> bytes:
+    """Prepares a Brand Logo as a video generation starting frame —
+    fit-and-padded into the shot's TARGET ratio using the company's
+    VIDEO padding settings (not image padding), BEFORE the AI ever
+    sees it. This is the fix for a specific failure mode: a 16:9 logo
+    reference sent as-is to a video model, then the resulting video
+    reframed to (say) 1:1 afterward, produces two visibly different
+    padding styles stacked on top of each other — the logo's own
+    original background/framing plus a second, differently-styled pad
+    added later. Preparing the reference frame in the right shape and
+    style FIRST means the AI's whole generation starts from something
+    that already matches how the final video will look, so there's
+    nothing left to mismatch.
+
+    Uses the VIDEO (not image) padding fields specifically, since the
+    goal is matching how THIS video will eventually be padded, not how
+    a static image post would be."""
+    source_bytes, _ = storage.fetch_bytes(source_image_url)
+    img = Image.open(BytesIO(source_bytes)).convert("RGBA")
+    sw, sh = img.size
+    target_dims = target_dimensions_for_ratio(target_ratio, (sw, sh))
+    if target_dims is None:
+        raise ReframeError(f"Unknown or malformed target ratio: {target_ratio}")
+    tw, th = target_dims
+    source_ratio = sw / sh
+    target_ratio_value = tw / th
+    vertical_padding_needed = source_ratio > target_ratio_value
+
+    if vertical_padding_needed:
+        mode = brand_kit.vertical_pad_mode
+        fill_image_urls = (brand_kit.pad_top_image_url, brand_kit.pad_bottom_image_url)
+        fill_color = brand_kit.vertical_pad_color
+    else:
+        mode = brand_kit.horizontal_pad_mode
+        fill_image_urls = (brand_kit.pad_left_image_url, brand_kit.pad_right_image_url)
+        fill_color = brand_kit.horizontal_pad_color
+
+    return _fit_and_pad_image(img, target_ratio, mode, fill_image_urls, fill_color)
+
+
+def reframe_image(source_image_url: str, target_ratio: str, brand_kit) -> bytes:
+    """Downloads the source image, scales it to fit entirely within the
+    target dimensions (no cropping), and pads the leftover space using
+    the company's Brand Kit preference for whichever direction actually
+    needs padding. Returns the reframed image's raw bytes (PNG)."""
+    source_bytes, _ = storage.fetch_bytes(source_image_url)
+    img = Image.open(BytesIO(source_bytes)).convert("RGBA")
+    sw, sh = img.size
+
+    target_dims = target_dimensions_for_ratio(target_ratio, (sw, sh))
+    if target_dims is None:
+        raise ReframeError(f"Unknown or malformed target ratio: {target_ratio}")
+    tw, th = target_dims
+    source_ratio = sw / sh
+    target_ratio_value = tw / th
+    vertical_padding_needed = source_ratio > target_ratio_value
+
+    if vertical_padding_needed:
+        mode = brand_kit.image_vertical_pad_mode
+        fill_image_urls = (brand_kit.image_pad_top_image_url, brand_kit.image_pad_bottom_image_url)
+        fill_color = brand_kit.image_vertical_pad_color
+    else:
+        mode = brand_kit.image_horizontal_pad_mode
+        fill_image_urls = (brand_kit.image_pad_left_image_url, brand_kit.image_pad_right_image_url)
+        fill_color = brand_kit.image_horizontal_pad_color
+
+    return _fit_and_pad_image(img, target_ratio, mode, fill_image_urls, fill_color)

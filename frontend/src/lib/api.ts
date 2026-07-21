@@ -6,15 +6,20 @@ export type Tokens = { access_token: string; refresh_token: string; token_type: 
 
 export function getTokens(): Tokens | null {
   try {
-    const raw = localStorage.getItem("nivaad_tokens");
+    const raw = sessionStorage.getItem("nivaad_tokens");
     return raw ? (JSON.parse(raw) as Tokens) : null;
   } catch {
     return null;
   }
 }
 export function setTokens(t: Tokens | null) {
-  if (t) localStorage.setItem("nivaad_tokens", JSON.stringify(t));
-  else localStorage.removeItem("nivaad_tokens");
+  // sessionStorage (not localStorage) is deliberate: it's cleared as soon
+  // as the tab/window is closed, so closing the browser signs the person
+  // out — reopening the site always asks for login again. It still
+  // survives normal page reloads/navigation within the same tab, and each
+  // tab gets its own independent session (not shared across tabs).
+  if (t) sessionStorage.setItem("nivaad_tokens", JSON.stringify(t));
+  else sessionStorage.removeItem("nivaad_tokens");
 }
 export function clearTokens() {
   setTokens(null);

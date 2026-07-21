@@ -29,17 +29,17 @@ function OpenRouterBalanceCard() {
   const low = credits && credits.remaining < 5;
 
   return (
-    <div className={`mb-6 rounded-xl border p-5 ${low ? "border-destructive/50 bg-destructive/5" : "border-slate-700/50 bg-card/60"}`}>
+    <div className={`mb-6 rounded-xl border p-5 ${low ? "border-destructive/50 bg-destructive/5" : "border-border bg-card/60"}`}>
       <div className="flex items-start justify-between">
         <div>
           <div className="text-sm font-semibold text-foreground">OpenRouter balance</div>
           <p className="mt-1 text-xs text-muted-foreground">The actual account every company's image/video generation draws from — this is what's behind any "Insufficient credits" error.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={load} disabled={loading} className="rounded-full border border-slate-700/50 px-3 py-1 text-[11px] text-muted-foreground hover:border-slate-500 disabled:opacity-50">
+          <button onClick={load} disabled={loading} className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground hover:border-ring disabled:opacity-50">
             {loading ? "Checking…" : "↻ Refresh"}
           </button>
-          <a href="https://openrouter.ai/settings/credits" target="_blank" rel="noreferrer" className="rounded-full bg-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-100 hover:bg-slate-600">
+          <a href="https://openrouter.ai/settings/credits" target="_blank" rel="noreferrer" className="rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold text-background hover:bg-foreground/90">
             Manage / top up ↗
           </a>
         </div>
@@ -100,19 +100,19 @@ function DeveloperOverview() {
               ["Total campaigns", data.total_campaigns],
               ["Unresolved flagged content", data.flagged_unresolved_total],
             ].map(([l, v]) => (
-              <div key={l as string} className="rounded-xl border border-slate-700/50 bg-card/60 p-4">
+              <div key={l as string} className="rounded-xl border border-border bg-card/60 p-4">
                 <div className="text-xs text-muted-foreground">{l}</div>
                 <div className="mt-2 font-display text-2xl font-bold">{v}</div>
               </div>
             ))}
           </div>
 
-          <div className="mt-6 rounded-xl border border-slate-700/50 bg-card/60 p-5">
+          <div className="mt-6 rounded-xl border border-border bg-card/60 p-5">
             <div className="text-sm font-semibold text-foreground">Companies by plan</div>
             <p className="mt-1 text-xs text-muted-foreground">Estimated MRR uses each tier's base monthly price — actual revenue may differ slightly with multi-month term discounts.</p>
             <div className="mt-4 space-y-2">
               {Object.entries(data.companies_by_tier).sort().map(([tier, count]) => (
-                <div key={tier} className="flex items-center justify-between rounded-lg border border-slate-700/40 bg-background/40 px-3 py-2 text-sm">
+                <div key={tier} className="flex items-center justify-between rounded-lg border border-border bg-background/40 px-3 py-2 text-sm">
                   <span className="text-foreground">{TIER_LABEL[tier] || tier}</span>
                   <span className="font-semibold text-foreground">{count} {count === 1 ? "company" : "companies"}</span>
                 </div>

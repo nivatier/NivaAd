@@ -37,14 +37,14 @@ function TeamLimitCard() {
   }
 
   return (
-    <div className="mb-6 rounded-xl border border-slate-700/50 bg-card/60 p-5 max-w-md">
+    <div className="rounded-xl border border-border bg-card/60 p-5">
       <div className="text-sm font-semibold text-foreground">Team size limit</div>
       <p className="mt-1 text-xs text-muted-foreground">How many non-admin members (editor/poster) a single company can add, on top of its admin(s). Applies to every company the same way. Pending invites count too, so this genuinely caps what's in the database, not just active accounts.</p>
       <div className="mt-3 flex items-center gap-2">
         <input type="number" min={0} step={1} value={value} onChange={(e) => setValue(e.target.value)}
-          className="w-20 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-slate-500 focus:outline-none" />
+          className="w-20 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
         <span className="text-xs text-muted-foreground">extra users per company</span>
-        <button disabled={saving} onClick={save} className="rounded-full bg-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+        <button disabled={saving} onClick={save} className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
           {saving ? "Saving…" : "Save"}
         </button>
         {saved && <span className="text-xs text-emerald-400">✓ Saved</span>}
@@ -82,14 +82,14 @@ function DataRetentionCard() {
   }
 
   return (
-    <div className="mb-6 rounded-xl border border-slate-700/50 bg-card/60 p-5 max-w-md">
+    <div className="rounded-xl border border-border bg-card/60 p-5">
       <div className="text-sm font-semibold text-foreground">Media retention period</div>
       <p className="mt-1 text-xs text-muted-foreground">How long a generated ad's image/video stays in storage before automatic cleanup. Only the media files are removed — the ad's caption, metadata, and analytics stay forever. Also caps how far out a post can be scheduled (measured from each ad's own creation date), so the two settings can never drift apart.</p>
       <div className="mt-3 flex items-center gap-2">
         <input type="number" min={1} step={1} value={value} onChange={(e) => setValue(e.target.value)}
-          className="w-20 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-slate-500 focus:outline-none" />
+          className="w-20 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
         <span className="text-xs text-muted-foreground">months</span>
-        <button disabled={saving} onClick={save} className="rounded-full bg-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+        <button disabled={saving} onClick={save} className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
           {saving ? "Saving…" : "Save"}
         </button>
         {saved && <span className="text-xs text-emerald-400">✓ Saved</span>}
@@ -127,14 +127,14 @@ function PostRetentionCard() {
   }
 
   return (
-    <div className="mb-6 rounded-xl border border-slate-700/50 bg-card/60 p-5 max-w-md">
+    <div className="rounded-xl border border-border bg-card/60 p-5">
       <div className="text-sm font-semibold text-foreground">Post retention period</div>
       <p className="mt-1 text-xs text-muted-foreground">How long an ad's ENTIRE RECORD — caption, metadata, everything, not just its media — stays in the database before being permanently deleted. Separate from and longer than media retention above, since this is the real bound on long-term database growth. Default 2 years.</p>
       <div className="mt-3 flex items-center gap-2">
         <input type="number" min={1} step={1} value={value} onChange={(e) => setValue(e.target.value)}
-          className="w-20 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-slate-500 focus:outline-none" />
+          className="w-20 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
         <span className="text-xs text-muted-foreground">months</span>
-        <button disabled={saving} onClick={save} className="rounded-full bg-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+        <button disabled={saving} onClick={save} className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
           {saving ? "Saving…" : "Save"}
         </button>
         {saved && <span className="text-xs text-emerald-400">✓ Saved</span>}
@@ -194,7 +194,7 @@ function VideoRatiosCard() {
   }
 
   return (
-    <div className="mb-6 rounded-xl border border-slate-700/50 bg-card/60 p-5 max-w-md">
+    <div className="rounded-xl border border-border bg-card/60 p-5">
       <div className="text-sm font-semibold text-foreground">Video ratios</div>
       <p className="mt-1 text-xs text-muted-foreground">The aspect ratios available for platforms and company overrides to choose from. Just the ratio itself (e.g. "9:16") — actual pixel dimensions are computed per generation from each source video's own resolution, not a fixed size.</p>
       {!ratios ? (
@@ -210,8 +210,8 @@ function VideoRatiosCard() {
         </div>
       )}
       <div className="mt-3 flex gap-2">
-        <input value={newRatio} onChange={(e) => setNewRatio(e.target.value)} placeholder="e.g. 21:9" className="w-24 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
-        <button onClick={add} disabled={busy === "add" || !newRatio.trim()} className="rounded-full bg-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+        <input value={newRatio} onChange={(e) => setNewRatio(e.target.value)} placeholder="e.g. 21:9" className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+        <button onClick={add} disabled={busy === "add" || !newRatio.trim()} className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
           {busy === "add" ? "Adding…" : "+ Add"}
         </button>
       </div>
@@ -290,7 +290,7 @@ function ThemeAiSettingsCard() {
   if (!settings) return <div className="mb-6 max-w-2xl text-xs text-muted-foreground">Loading theme AI settings…</div>;
 
   return (
-    <div className="mb-6 rounded-xl border border-slate-700/50 bg-card/60 p-5 max-w-2xl">
+    <div className="mb-6 rounded-xl border border-border bg-card/60 p-5 max-w-2xl">
       <div className="text-sm font-semibold text-foreground">Theme AI models</div>
       <p className="mt-1 text-xs text-muted-foreground">
         Dedicated models used by Developer &gt; Themes &gt; Image Theme's AI assistance — writing draft prompts for
@@ -301,7 +301,7 @@ function ThemeAiSettingsCard() {
         <div>
           <label className="text-[11px] text-muted-foreground">Text model (writes tag prompts)</label>
           <select value={settings.text_model_id || ""} onChange={(e) => save({ text_model_id: e.target.value || undefined })}
-            className="mt-1 w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
+            className="mt-1 w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
             <option value="">— none selected —</option>
             {textModels.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
@@ -309,7 +309,7 @@ function ThemeAiSettingsCard() {
         <div>
           <label className="text-[11px] text-muted-foreground">Image model (regenerates uploaded references)</label>
           <select value={settings.image_transform_model_id || ""} onChange={(e) => save({ image_transform_model_id: e.target.value || undefined })}
-            className="mt-1 w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
+            className="mt-1 w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
             <option value="">— none selected —</option>
             {imageModels.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
@@ -319,14 +319,14 @@ function ThemeAiSettingsCard() {
       <div className="mt-4">
         <label className="text-[11px] text-muted-foreground">Vision model (tags uploaded reference images)</label>
         <select value={settings.vision_model_id || ""} onChange={(e) => save({ vision_model_id: e.target.value || undefined })}
-          className="mt-1 w-full max-w-xs rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
+          className="mt-1 w-full max-w-xs rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
           {settings.vision_models.map((m: any) => <option key={m.id} value={m.id}>{m.label}</option>)}
         </select>
 
         <div className="mt-2 space-y-1">
           {settings.vision_models.map((m: any) => (
             <div key={m.id} className="flex items-center gap-2 text-[11px] text-muted-foreground">
-              <code className="rounded bg-slate-800/50 px-1.5 py-0.5">{m.model}</code>
+              <code className="rounded bg-muted px-1.5 py-0.5">{m.model}</code>
               <span>{m.label}</span>
               <button onClick={() => removeVisionModel(m.id)} className="ml-auto text-muted-foreground hover:text-destructive">✕ remove</button>
             </div>
@@ -335,10 +335,10 @@ function ThemeAiSettingsCard() {
 
         <div className="mt-2 flex gap-2">
           <input value={newVisionLabel} onChange={(e) => setNewVisionLabel(e.target.value)} placeholder="Label, e.g. GPT-4o Vision"
-            className="w-40 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+            className="w-40 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <input value={newVisionModel} onChange={(e) => setNewVisionModel(e.target.value)} placeholder="OpenRouter slug, e.g. openai/gpt-4o"
-            className="w-56 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
-          <button onClick={addVisionModel} disabled={addingVision} className="rounded-full bg-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+            className="w-56 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+          <button onClick={addVisionModel} disabled={addingVision} className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
             {addingVision ? "Adding…" : "+ Add"}
           </button>
         </div>
@@ -362,10 +362,12 @@ function DeveloperSettings() {
       <p className="mb-6 text-sm text-muted-foreground">
         Platform-wide settings that apply to every company — team size limits, media retention, and post retention. Per-platform video ratios moved to the Platforms tab, alongside everything else about each platform.
       </p>
-      <TeamLimitCard />
-      <DataRetentionCard />
-      <PostRetentionCard />
-      <VideoRatiosCard />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <TeamLimitCard />
+        <DataRetentionCard />
+        <PostRetentionCard />
+        <VideoRatiosCard />
+      </div>
       <ThemeAiSettingsCard />
     </DeveloperShell>
   );

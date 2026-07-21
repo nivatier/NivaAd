@@ -63,7 +63,7 @@ function DeveloperModeration() {
 
       {err && <div className="mb-4 text-sm text-destructive">{err}</div>}
 
-      <div className="rounded-xl border border-slate-700/50 bg-card/60 p-4">
+      <div className="rounded-xl border border-border bg-card/60 p-4">
         <div className="text-sm font-semibold text-foreground">Default terms</div>
         {!rules ? (
           <div className="mt-3 text-sm text-muted-foreground">Loading…</div>
@@ -71,7 +71,7 @@ function DeveloperModeration() {
           <>
             <div className="mt-3 flex flex-wrap gap-2">
               {rules.map((r) => (
-                <span key={r.id} className="flex items-center gap-1.5 rounded-full border border-slate-700/50 bg-background/40 px-3 py-1 text-xs text-foreground">
+                <span key={r.id} className="flex items-center gap-1.5 rounded-full border border-border bg-background/40 px-3 py-1 text-xs text-foreground">
                   {r.phrase}
                   <button onClick={() => remove(r.id)} className="text-muted-foreground hover:text-destructive" title="Remove">✕</button>
                 </span>
@@ -84,9 +84,9 @@ function DeveloperModeration() {
                 onChange={(e) => setNewTerm(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") add(); }}
                 placeholder="Add a term, e.g. counterfeit"
-                className="w-full max-w-xs rounded-lg border border-slate-700/50 bg-input/40 px-3 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none"
+                className="w-full max-w-xs rounded-lg border border-border bg-input/40 px-3 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
               />
-              <button disabled={adding || !newTerm.trim()} onClick={add} className="rounded-full bg-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+              <button disabled={adding || !newTerm.trim()} onClick={add} className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
                 {adding ? "Adding…" : "Add"}
               </button>
             </div>

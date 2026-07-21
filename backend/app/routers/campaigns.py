@@ -78,6 +78,7 @@ async def _create_phase_ad(
     video_mode: str = "single_reference", video_end_frame_image: str | None = None,
     video_end_frame_image_url: str | None = None, refine_video_prompt: bool = False,
     refine_video_frame: bool = False,
+    video_start_shot_id: str | None = None, video_end_shot_id: str | None = None,
 ) -> tuple[Ad, int, uuid.UUID | None]:
     """Creates a real ad for one campaign phase. Copy is free (it's the
     phase's own caption, no extra Claude call) — cost is image and/or
@@ -198,6 +199,8 @@ async def _create_phase_ad(
             "image_model_credits": image_model["credits"] if image_model else None,
             "video_model": video_model["model"] if video_model else None,
             "video_model_credits": video_model["credits"] if video_model else None,
+            "video_start_shot_id": video_start_shot_id if generate_video else None,
+            "video_end_shot_id": video_end_shot_id if generate_video else None,
             "video_shots": [s.model_dump() for s in video_shots] if video_shots else None,
             "video_frame_image_url": video_frame_image_url_resolved,
             "video_mode": video_mode if generate_video else None,
@@ -302,6 +305,7 @@ async def create_campaign(data: CampaignCreateIn, user: User = Depends(require_c
             video_mode=pin.video_mode, video_end_frame_image=pin.video_end_frame_image,
             video_end_frame_image_url=pin.video_end_frame_image_url, refine_video_prompt=pin.refine_video_prompt,
             refine_video_frame=pin.refine_video_frame,
+            video_start_shot_id=pin.video_start_shot_id, video_end_shot_id=pin.video_end_shot_id,
         )
         if job_id:
             pending_job_ids.append(job_id)

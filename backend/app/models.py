@@ -88,6 +88,56 @@ class CreditLedger(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+class BrandVideoShot(Base):
+    """One AI-generated intro (Start) or outro (Credit/End) clip in a
+    company's gallery — up to 3 of each kind (enforced in
+    routers/brand_kit.py). Generation runs as a Celery job exactly like
+    ad video generation (see tasks.generate_brand_video_shot) since even
+    a short 2-5s clip can take a while on a video model; `status` lets
+    the gallery show a "generating" card with a spinner until `url` is
+    populated. Selected per-ad in Create Ad's AI Video section (stored
+    as start_shot_id/end_shot_id on that ad's brief, not here) and
+    stitched onto the generated video via ffmpeg concat — see
+    services/reframe.py concat_video and tasks.py's video pipeline."""
+    __tablename__ = "brand_video_shots"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))  # "intro" | "outro"
+    status: Mapped[str] = mapped_column(String(20), default="queued")  # "queued" | "running" | "ready" | "failed"
+    label: Mapped[str] = mapped_column(String(120), default="")  # user-editable display name — falls back to a truncated prompt in the UI when blank, never auto-derived from the prompt server-side so renaming never fights with regenerating the description
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    duration: Mapped[int] = mapped_column(Integer, default=3)
+    ratio: Mapped[str] = mapped_column(String(10), default="16:9")  # one of the company's available video ratios (see services/video_ratios.py) — the raw AI generation is reframed to this via reframe_video before it's finalized, same padding pipeline used everywhere else
+    model_used: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    poster_url: Mapped[str | None] = mapped_column(String(500), nullable=True)  # last frame as a static JPEG — used for the gallery card thumbnail so the clip doesn't autoplay in a tiny window; full playback happens in the Preview modal instead
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Optional generation inputs — all nullable/blank means "plain
+    # text-to-video, no logo reference, no burned-in text", exactly the
+    # original behaviour. See routers/brand_kit.py + tasks.py.
+    reference_logo_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)  # a BrandLogo id — its url is sent to the video model as the starting frame, so the AI generates around/animates that actual logo rather than guessing at one from the text prompt alone
+    overlay_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # e.g. contact info / website — burned in via ffmpeg drawtext AFTER generation (see reframe.add_text_overlay), never left to the AI to render, since video models are unreliable at exact legible text
+    overlay_font: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "sans" | "sans_bold" | "serif" — see reframe.FONT_PATHS
+    overlay_text_color: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    overlay_position: Mapped[str | None] = mapped_column(String(20), nullable=True)  # one of 9 anchors (8 edges/corners + middle_center for text-only shots) — see reframe.add_text_overlay's ANCHOR_EXPRESSIONS
+
+
+class BrandLogo(Base):
+    """One uploaded logo in a company's gallery (up to 5, enforced in
+    routers/brand_kit.py). BrandKit.logo_url is the ACTIVE one — the
+    single URL every ad-generation/composite consumer already reads
+    (routers/ads.py, campaigns.py, app.index.tsx) — deliberately kept
+    as-is so "activating" a gallery logo is just copying its url onto
+    that one existing field, with zero changes needed anywhere logos
+    actually get used."""
+    __tablename__ = "brand_logos"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
+    url: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class BrandKit(Base):
     __tablename__ = "brand_kits"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
@@ -96,15 +146,19 @@ class BrandKit(Base):
     primary_color: Mapped[str] = mapped_column(String(9), default="#7c3aed")
     tagline: Mapped[str] = mapped_column(String(200), default="")
     logo_placement: Mapped[str] = mapped_column(String(20), default="bottom-right")
-    # Reframe/padding — used when a generated video's native aspect
-    # ratio doesn't match a platform's required ratio (see
-    # services/reframe.py). Two independent directions since they're
-    # visually unrelated choices: vertical padding (top/bottom bars,
-    # needed when the source is WIDER than the target) and horizontal
-    # padding (left/right bars, needed when the source is TALLER than
-    # the target). Mode is "blurred_video" | "image" | "color" — image
-    # URLs and colors below are only read when that direction's mode
-    # selects them.
+    # Reframe/padding — used when a generated video or image's native
+    # aspect ratio doesn't match a platform's required ratio (see
+    # services/reframe.py). Video and image each get their own
+    # independent settings (companies often want different fills for
+    # each — e.g. a blurred background for video but branded bar images
+    # for static posts) — the vertical_/horizontal_ fields below are
+    # VIDEO-only; the image_ prefixed fields are their exact image
+    # counterparts. Within each media type, still two independent
+    # directions: vertical padding (top/bottom bars, needed when the
+    # source is WIDER than the target) and horizontal padding
+    # (left/right bars, needed when the source is TALLER than the
+    # target). Mode is "blurred_video" | "image" | "color" — image URLs
+    # and colors are only read when that direction's mode selects them.
     vertical_pad_mode: Mapped[str] = mapped_column(String(20), default="blurred_video")
     horizontal_pad_mode: Mapped[str] = mapped_column(String(20), default="blurred_video")
     pad_top_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -113,6 +167,14 @@ class BrandKit(Base):
     pad_right_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     vertical_pad_color: Mapped[str | None] = mapped_column(String(9), nullable=True)
     horizontal_pad_color: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    image_vertical_pad_mode: Mapped[str] = mapped_column(String(20), default="blurred_video")
+    image_horizontal_pad_mode: Mapped[str] = mapped_column(String(20), default="blurred_video")
+    image_pad_top_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    image_pad_bottom_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    image_pad_left_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    image_pad_right_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    image_vertical_pad_color: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    image_horizontal_pad_color: Mapped[str | None] = mapped_column(String(9), nullable=True)
     # {"platform_id": "ratio"} — a company's own override of the
     # developer's platform-wide default ratio (see
     # services/platform_config.py's DEFAULT_PLATFORMS / video_ratio

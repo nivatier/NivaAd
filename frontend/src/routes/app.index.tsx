@@ -302,6 +302,9 @@ function CreateAd() {
   const [selectedVideoThemeId, setSelectedVideoThemeId] = useState<string | null>(null);
   const [videoRefMode, setVideoRefMode] = useState<"custom" | "theme">("custom");
   const [showVideoThemeModal, setShowVideoThemeModal] = useState(false);
+  const [brandVideoShots, setBrandVideoShots] = useState<{ id: string; kind: string; status: string; label: string; prompt: string; duration: number; url: string | null; poster_url: string | null }[]>([]);
+  const [videoStartShotId, setVideoStartShotId] = useState<string | null>(null);
+  const [videoEndShotId, setVideoEndShotId] = useState<string | null>(null);
   const [videoModalFilterCategory, setVideoModalFilterCategory] = useState("All");
   const [refineVideoPrompt, setRefineVideoPrompt] = useState(false);
   const [refineVideoFrame, setRefineVideoFrame] = useState(false);
@@ -538,6 +541,9 @@ function CreateAd() {
     api("/ads/video-themes").then((themes: typeof videoThemes) => {
       setVideoThemes(themes);
     }).catch(() => {});
+    api("/brand-kit/video-shots").then((shots: typeof brandVideoShots) => {
+      setBrandVideoShots(shots);
+    }).catch(() => { /* Create Ad still works without brand shots — picker just shows "None" only */ });
   }, []);
 
   // Pre-fill the brief when arriving from Products → "New ad" (see app.products.tsx).
@@ -676,6 +682,8 @@ function CreateAd() {
             video_model_id: outputs.video ? videoModelId : null,
             video_resolution: outputs.video ? videoResolution : null,
             video_audio: outputs.video ? videoAudio : false,
+            video_start_shot_id: outputs.video ? videoStartShotId : null,
+            video_end_shot_id: outputs.video ? videoEndShotId : null,
           },
         });
         id = res.ad_id; setAdId(id);
@@ -1325,6 +1333,49 @@ function CreateAd() {
                     </div>
                   )}
                 </div>
+
+                {(() => {
+                  const readyIntros = brandVideoShots.filter((s) => s.kind === "intro" && s.status === "ready");
+                  const readyOutros = brandVideoShots.filter((s) => s.kind === "outro" && s.status === "ready");
+                  if (readyIntros.length === 0 && readyOutros.length === 0) return null;
+                  const shotName = (s: typeof readyIntros[number]) => s.label || (s.prompt.length > 40 ? s.prompt.slice(0, 40) + "…" : s.prompt);
+                  return (
+                    <div className="rounded-xl border border-border/60 bg-background/40 p-4">
+                      <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                        Brand intro / credits shots (optional)
+                        <NovaHint hintKey="field:video-intro-credits" />
+                      </div>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <div className="text-[11px] text-muted-foreground mb-1">Start shot</div>
+                          <select value={videoStartShotId || ""} onChange={(e) => setVideoStartShotId(e.target.value || null)}
+                            className="w-full rounded-lg border border-input bg-input/40 px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary">
+                            <option value="">None</option>
+                            {readyIntros.map((s) => (
+                              <option key={s.id} value={s.id}>{shotName(s)} ({s.duration}s)</option>
+                            ))}
+                          </select>
+                          {videoStartShotId && readyIntros.find((s) => s.id === videoStartShotId)?.poster_url && (
+                            <img src={readyIntros.find((s) => s.id === videoStartShotId)!.poster_url!} alt="Selected start shot" className="mt-2 h-20 w-full rounded-lg border border-border object-cover" />
+                          )}
+                        </div>
+                        <div>
+                          <div className="text-[11px] text-muted-foreground mb-1">End shot</div>
+                          <select value={videoEndShotId || ""} onChange={(e) => setVideoEndShotId(e.target.value || null)}
+                            className="w-full rounded-lg border border-input bg-input/40 px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary">
+                            <option value="">None</option>
+                            {readyOutros.map((s) => (
+                              <option key={s.id} value={s.id}>{shotName(s)} ({s.duration}s)</option>
+                            ))}
+                          </select>
+                          {videoEndShotId && readyOutros.find((s) => s.id === videoEndShotId)?.poster_url && (
+                            <img src={readyOutros.find((s) => s.id === videoEndShotId)!.poster_url!} alt="Selected end shot" className="mt-2 h-20 w-full rounded-lg border border-border object-cover" />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           </div>

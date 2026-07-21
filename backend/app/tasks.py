@@ -3,6 +3,7 @@
 Workers run synchronously, so they use a sync SQLAlchemy engine
 (the async one belongs to FastAPI request handlers).
 """
+import base64
 import json
 import logging
 from datetime import datetime, timedelta
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
-from app.models import Ad, BrandKit, CreditLedger, GenerationJob, PlatformConnection, ScheduledPost
+from app.models import Ad, BrandKit, BrandLogo, BrandVideoShot, CreditLedger, GenerationJob, PlatformConnection, ScheduledPost
 from app.services import storage
 from app.services import linkedin
 from app.services.branding import composite_logo
@@ -22,7 +23,7 @@ from app.services.credits import get_available_models_sync
 from app.services.retention import get_post_retention_months_sync, get_retention_months_sync
 from app.services import text_gen
 from app.services.platform_config import get_ad_targeting_ratios_sync
-from app.services.reframe import reframe_image, reframe_video
+from app.services.reframe import add_text_overlay, concat_video_clips, extract_last_frame, prepare_video_reference_frame, probe_video_url_dimensions, reframe_image, reframe_video, reframe_video_to_dims
 from app.services.video_ratios import get_video_ratios_sync, resolve_ratio
 from app.services.video_prep import get_video_prep_settings_sync
 from app.services.token_crypto import decrypt_token
@@ -294,6 +295,165 @@ def _review_shot_prompt(raw_prompt: str, review_model: str) -> str:
         logger.warning("[video_prep] shot prompt review failed, using original: %s", exc)
         return raw_prompt
 
+
+
+@celery_app.task(name="app.generate_brand_video_shot", bind=True, max_retries=0)
+def generate_brand_video_shot(self, shot_id: str):
+    """Generates one Brand Kit intro/outro clip — same idea as the video
+    portion of generate_ad below, just standalone (no Ad/GenerationJob
+    involved; BrandVideoShot carries its own status/error directly).
+    Credits were already deducted when the shot was queued (see
+    routers/brand_kit.py) — refunded here on failure.
+
+    Two extra inputs beyond a plain prompt, both optional:
+    - reference_logo_id: sent to the video model as the starting frame,
+      so the AI generates around/animates the company's ACTUAL logo
+      rather than guessing at one from the text prompt alone.
+    - overlay_text: burned in via ffmpeg drawtext AFTER generation —
+      never left to the AI model to render as text, since video models
+      are unreliable at exact, legible text (same "AI does the visuals,
+      code renders the exact text" split as image logo compositing)."""
+    with Session(sync_engine) as db:
+        shot = db.get(BrandVideoShot, shot_id)
+        if shot is None:
+            return "shot not found"
+        shot.status = "running"
+        db.commit()
+        try:
+            frame_image_url = None
+            if shot.reference_logo_id:
+                logo = db.get(BrandLogo, shot.reference_logo_id)
+                if logo:
+                    try:
+                        brand_kit_for_frame = db.scalar(select(BrandKit).where(BrandKit.company_id == shot.company_id))
+                        if brand_kit_for_frame is not None:
+                            # Fit-and-pad the logo into the SHOT'S TARGET
+                            # ratio/style BEFORE the AI ever sees it —
+                            # fixes a real failure mode where a
+                            # differently-shaped logo (e.g. 16:9) sent
+                            # as-is, then the resulting video reframed
+                            # to a different ratio (e.g. 1:1)
+                            # afterward, produces two visibly different
+                            # padding styles stacked on top of each
+                            # other. Preparing it first means the AI's
+                            # whole generation starts from something
+                            # that already matches how the final video
+                            # will look.
+                            prepared_bytes = prepare_video_reference_frame(logo.url, shot.ratio, brand_kit_for_frame)
+                            frame_image_url = f"data:image/png;base64,{base64.b64encode(prepared_bytes).decode()}"
+                        else:
+                            logger.warning("[brand_video_shot] shot=%s no Brand Kit yet — using logo as-is, unshaped", shot_id)
+                            frame_image_url = storage.fetch_as_data_url(logo.url)
+                    except Exception as fetch_exc:  # noqa: BLE001
+                        logger.warning("[brand_video_shot] shot=%s could not prepare reference logo %s, generating without it: %s", shot_id, shot.reference_logo_id, fetch_exc)
+                else:
+                    logger.warning("[brand_video_shot] shot=%s reference logo %s no longer exists — generating without it", shot_id, shot.reference_logo_id)
+
+            video_bytes = generate_video(shot.prompt, shot.model_used, duration=shot.duration, resolution="720p", frame_image_url=frame_image_url)
+
+            # Reframe to the company's chosen ratio — AI video models
+            # generate at their own native shape (usually 16:9)
+            # regardless of what's asked for, so getting anything else
+            # means padding after the fact, same pipeline used for every
+            # other video reframe in the app (reuses the company's own
+            # Brand Kit video padding settings for consistency).
+            try:
+                brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == shot.company_id))
+                if brand_kit is not None:
+                    temp_url = storage.upload_bytes(video_bytes, "video/mp4", "mp4")
+                    video_bytes = reframe_video(temp_url, shot.ratio, brand_kit)
+                else:
+                    logger.warning("[brand_video_shot] shot=%s no Brand Kit yet — skipping ratio reframe, using native shape", shot_id)
+            except Exception as reframe_exc:  # noqa: BLE001
+                logger.warning("[brand_video_shot] shot=%s ratio reframe to %s failed, using native shape: %s", shot_id, shot.ratio, reframe_exc)
+
+            if shot.overlay_text and shot.overlay_text.strip():
+                try:
+                    video_bytes = add_text_overlay(video_bytes, shot.overlay_text, shot.overlay_font or "sans", shot.overlay_text_color or "#ffffff", shot.overlay_position or "bottom_center")
+                except Exception as overlay_exc:  # noqa: BLE001
+                    # The clip itself still generated fine — losing just
+                    # the text overlay is far better than losing the
+                    # whole shot over what's a code-side finishing touch.
+                    logger.warning("[brand_video_shot] shot=%s text overlay failed, using plain clip: %s", shot_id, overlay_exc)
+
+            shot.url = storage.upload_bytes(video_bytes, "video/mp4", "mp4")
+            try:
+                poster_bytes = extract_last_frame(video_bytes)
+                shot.poster_url = storage.upload_bytes(poster_bytes, "image/jpeg", "jpg")
+            except Exception as poster_exc:  # noqa: BLE001
+                # Gallery just falls back to no thumbnail — never worth
+                # failing a whole successful generation over.
+                logger.warning("[brand_video_shot] shot=%s poster frame extraction failed: %s", shot_id, poster_exc)
+            shot.status = "ready"
+            db.commit()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[brand_video_shot] shot=%s generation failed: %s", shot_id, exc)
+            shot.status = "failed"
+            shot.error = str(exc)[:1000]
+            models = get_available_models_sync(db)
+            model = next((m for m in models.get("video", []) if m.get("model") == shot.model_used), None)
+            refund = model["credits"] if model else 0
+            if refund > 0:
+                db.add(CreditLedger(company_id=shot.company_id, delta=refund, reason="refund", ref_id=str(shot.id)))
+            db.commit()
+        return "done"
+
+
+def _stitch_intro_outro(db: Session, brief: dict, company_id, video_url: str, log_prefix: str) -> str:
+    """If this ad's brief selected a Brand Kit intro (Start) and/or
+    outro (End) shot, reframes each selected shot to EXACTLY the main
+    video's own pixel dimensions and concatenates [intro?, main,
+    outro?] via ffmpeg — returning the stitched result as the new
+    video_url. Called BEFORE the per-platform ratio reframe pass below,
+    which then operates on whichever url this returns — so the
+    intro/outro end up baked into every platform's final version too,
+    with zero changes needed to that existing per-ratio loop.
+
+    Returns the ORIGINAL video_url unchanged (and never raises) if
+    neither shot is selected, if a selected shot was since deleted, or
+    if stitching fails for any reason — a company's ad still finishes
+    with its plain generated video rather than losing the whole
+    generation over what's fundamentally a bonus finishing touch.
+    """
+    start_id = brief.get("video_start_shot_id")
+    end_id = brief.get("video_end_shot_id")
+    if not start_id and not end_id:
+        return video_url
+    try:
+        brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == company_id))
+        if brand_kit is None:
+            return video_url
+
+        def _load_shot(shot_id):
+            if not shot_id:
+                return None
+            shot = db.get(BrandVideoShot, shot_id)
+            if shot is None or shot.company_id != company_id or shot.status != "ready" or not shot.url:
+                logger.warning("[stitch] %s intro/outro shot %s missing/not ready — skipping it, not the whole generation", log_prefix, shot_id)
+                return None
+            return shot
+
+        start_shot = _load_shot(start_id)
+        end_shot = _load_shot(end_id)
+        if start_shot is None and end_shot is None:
+            return video_url
+
+        tw, th = probe_video_url_dimensions(video_url)
+        clips: list[bytes] = []
+        if start_shot:
+            clips.append(reframe_video_to_dims(start_shot.url, tw, th, brand_kit))
+        main_bytes, _ = storage.fetch_bytes(video_url)
+        clips.append(main_bytes)
+        if end_shot:
+            clips.append(reframe_video_to_dims(end_shot.url, tw, th, brand_kit))
+
+        stitched_bytes = concat_video_clips(clips)
+        stitched_url = storage.upload_bytes(stitched_bytes, "video/mp4", "mp4")
+        logger.info("[stitch] %s produced stitched video (start=%s, end=%s), url=%s", log_prefix, bool(start_shot), bool(end_shot), stitched_url)
+        return stitched_url
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[stitch] %s intro/outro stitching failed, using plain video unaffected: %s", log_prefix, exc)
+        return video_url
 
 
 @celery_app.task(name="app.generate_ad", bind=True, max_retries=0)
@@ -593,6 +753,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                             raise RuntimeError(f"REFERENCE_REJECTED::{frame_exc}") from frame_exc
                         raise
                     video_url = storage.upload_bytes(video_bytes, "video/mp4", "mp4")
+                    video_url = _stitch_intro_outro(db, ad.brief, ad.company_id, video_url, f"job={job_id}")
                     for v in new_results["variants"]:
                         v["video_url"] = video_url
 
@@ -909,6 +1070,7 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
                     raise
 
                 video_url = storage.upload_bytes(video_bytes, "video/mp4", "mp4")
+                video_url = _stitch_intro_outro(db, ad.brief, ad.company_id, video_url, f"job={job_id}")
                 logger.info("[campaign_video] job=%s uploaded video, url=%s", job_id, video_url)
                 for v in variants:
                     v["video_url"] = video_url

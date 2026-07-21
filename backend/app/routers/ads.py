@@ -442,6 +442,8 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
             "image_model_credits": image_model["credits"] if image_model else None,
             "video_model": video_model["model"] if video_model else None,
             "video_model_credits": video_model["credits"] if video_model else None,
+            "video_start_shot_id": data.video_start_shot_id if video_model else None,
+            "video_end_shot_id": data.video_end_shot_id if video_model else None,
             "video_resolution": video_resolution,
             "video_mode": data.video_mode if video_model else None,
             "video_end_frame_image_url": video_end_frame_image_url,

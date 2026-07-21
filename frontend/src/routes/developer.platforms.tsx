@@ -50,23 +50,23 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
   }
 
   return (
-    <div className={`rounded-lg border border-slate-700/50 bg-background/40 p-3 ${!entry.enabled ? "opacity-50" : ""}`}>
+    <div className={`rounded-lg border border-border bg-background/40 p-3 ${!entry.enabled ? "opacity-50" : ""}`}>
       {editing ? (
         <div className="space-y-2">
-          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label, e.g. LinkedIn" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
-          <input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="Client ID" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
-          <input value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} type="password" placeholder={entry.has_secret ? "Leave blank to keep the current secret" : "Client Secret"} className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
-          <input value={redirectUri} onChange={(e) => setRedirectUri(e.target.value)} placeholder="Redirect URI, e.g. http://localhost:8000/connections/linkedin/callback" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
-          <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder="OAuth scope, e.g. openid profile w_member_social" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label, e.g. LinkedIn" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+          <input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="Client ID" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+          <input value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} type="password" placeholder={entry.has_secret ? "Leave blank to keep the current secret" : "Client Secret"} className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+          <input value={redirectUri} onChange={(e) => setRedirectUri(e.target.value)} placeholder="Redirect URI, e.g. http://localhost:8000/connections/linkedin/callback" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+          <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder="OAuth scope, e.g. openid profile w_member_social" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <div>
             <div className="mb-1 text-[10px] text-muted-foreground">Video posting ratio — what the reframe pipeline treats as this platform's required format</div>
-            <select value={videoRatio} onChange={(e) => setVideoRatio(e.target.value)} className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
+            <select value={videoRatio} onChange={(e) => setVideoRatio(e.target.value)} className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
               {ratios.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
           <div className="flex items-center gap-2">
-            <button disabled={saving || !label.trim() || !clientId.trim()} onClick={save} className="rounded-full bg-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">{saving ? "Saving…" : "Save"}</button>
-            <button onClick={() => { setEditing(false); setClientSecret(""); }} className="rounded-full border border-slate-700/50 px-3 py-1 text-[11px] text-muted-foreground">Cancel</button>
+            <button disabled={saving || !label.trim() || !clientId.trim()} onClick={save} className="rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">{saving ? "Saving…" : "Save"}</button>
+            <button onClick={() => { setEditing(false); setClientSecret(""); }} className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground">Cancel</button>
           </div>
         </div>
       ) : (
@@ -75,17 +75,17 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
             <div className="text-xs font-semibold text-foreground">
               {entry.label}
               {!entry.built && <span className="ml-2 rounded-full bg-amber-900/40 px-2 py-0.5 text-[9px] font-normal text-amber-400">NO INTEGRATION CODE YET</span>}
-              {!entry.enabled && <span className="ml-2 rounded-full bg-slate-700 px-2 py-0.5 text-[9px] font-normal text-slate-300">DISABLED</span>}
+              {!entry.enabled && <span className="ml-2 rounded-full bg-foreground px-2 py-0.5 text-[9px] font-normal text-muted-foreground">DISABLED</span>}
             </div>
             <div className="mt-0.5 truncate text-[11px] text-muted-foreground">Client ID: {entry.client_id || "—"} · Secret: {entry.has_secret ? "✓ set" : "not set"} · Ratio: {entry.video_ratio || "1:1"}</div>
             {entry.redirect_uri && <div className="mt-0.5 truncate text-[11px] text-muted-foreground">Redirect: {entry.redirect_uri}</div>}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             <button disabled={togglingEnabled} onClick={toggleEnabled} title={entry.enabled ? "Disable — hide from every company's Connect list" : "Enable — offer this to companies again"}
-              className={`text-[11px] disabled:opacity-50 ${entry.enabled ? "text-slate-400 hover:text-foreground" : "text-emerald-400 hover:text-emerald-300"}`}>
+              className={`text-[11px] disabled:opacity-50 ${entry.enabled ? "text-muted-foreground hover:text-foreground" : "text-emerald-400 hover:text-emerald-300"}`}>
               {togglingEnabled ? "…" : entry.enabled ? "Disable" : "Enable"}
             </button>
-            <button onClick={() => setEditing(true)} className="text-[11px] text-slate-400 hover:text-foreground">Edit</button>
+            <button onClick={() => setEditing(true)} className="text-[11px] text-muted-foreground hover:text-foreground">Edit</button>
             <button disabled={deleting} onClick={remove} className="text-[11px] text-destructive hover:text-destructive/80 disabled:opacity-30">{deleting ? "…" : "Remove"}</button>
           </div>
         </div>
@@ -117,25 +117,25 @@ function AddPlatformForm({ onAdd, ratios }: { onAdd: (body: Record<string, unkno
   }
 
   if (!open) {
-    return <button onClick={() => setOpen(true)} className="w-full rounded-lg border border-dashed border-slate-700/60 py-2.5 text-xs text-muted-foreground hover:border-slate-500 hover:text-foreground">＋ Add platform</button>;
+    return <button onClick={() => setOpen(true)} className="w-full rounded-lg border border-dashed border-border py-2.5 text-xs text-muted-foreground hover:border-ring hover:text-foreground">＋ Add platform</button>;
   }
   return (
-    <div className="rounded-lg border border-slate-600 bg-background/60 p-3 space-y-2">
-      <input value={id} onChange={(e) => setId(e.target.value)} placeholder="Platform id (lowercase, e.g. linkedin, tiktok)" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
-      <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label shown to developers, e.g. LinkedIn" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
-      <input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="Client ID" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
-      <input value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} type="password" placeholder="Client Secret" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
-      <input value={redirectUri} onChange={(e) => setRedirectUri(e.target.value)} placeholder="Redirect URI (must match what's registered with the platform)" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
-      <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder="OAuth scope" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+    <div className="rounded-lg border border-border bg-background/60 p-3 space-y-2">
+      <input value={id} onChange={(e) => setId(e.target.value)} placeholder="Platform id (lowercase, e.g. linkedin, tiktok)" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+      <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label shown to developers, e.g. LinkedIn" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+      <input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="Client ID" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+      <input value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} type="password" placeholder="Client Secret" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+      <input value={redirectUri} onChange={(e) => setRedirectUri(e.target.value)} placeholder="Redirect URI (must match what's registered with the platform)" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+      <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder="OAuth scope" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
       <div>
         <div className="mb-1 text-[10px] text-muted-foreground">Video posting ratio</div>
-        <select value={videoRatio} onChange={(e) => setVideoRatio(e.target.value)} className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
+        <select value={videoRatio} onChange={(e) => setVideoRatio(e.target.value)} className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
           {ratios.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
       </div>
       <div className="flex items-center gap-2">
-        <button disabled={saving || !id.trim() || !label.trim() || !clientId.trim() || !clientSecret.trim()} onClick={add} className="rounded-full bg-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">{saving ? "Adding…" : "Add"}</button>
-        <button onClick={() => setOpen(false)} className="rounded-full border border-slate-700/50 px-3 py-1 text-[11px] text-muted-foreground">Cancel</button>
+        <button disabled={saving || !id.trim() || !label.trim() || !clientId.trim() || !clientSecret.trim()} onClick={add} className="rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">{saving ? "Adding…" : "Add"}</button>
+        <button onClick={() => setOpen(false)} className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground">Cancel</button>
       </div>
     </div>
   );

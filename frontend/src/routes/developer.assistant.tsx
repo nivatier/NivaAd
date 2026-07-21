@@ -62,10 +62,10 @@ function SystemMessageField({
     <div>
       <label className="text-[11px] text-muted-foreground">{title}</label>
       <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={2} placeholder={placeholder}
-        className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs leading-relaxed text-foreground focus:border-slate-500 focus:outline-none" />
+        className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs leading-relaxed text-foreground focus:border-ring focus:outline-none" />
       <div className="mt-1 flex items-center gap-2 flex-wrap">
         <button onClick={save} disabled={busy || !message.trim() || !dirty}
-          className="rounded-full bg-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+          className="rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
           {busy ? "Saving…" : "Save"}
         </button>
         <button onClick={() => hint && onGenerateAudio(hint.id)} disabled={!hint || generating || dirty}
@@ -123,7 +123,7 @@ function SettingsCard({
   }
 
   return (
-    <div className="mb-6 rounded-xl border border-slate-700/50 bg-card/60 p-4 max-w-2xl">
+    <div className="mb-6 rounded-xl border border-border bg-card/60 p-4 max-w-2xl">
       <div className="text-sm font-semibold text-foreground mb-1">Assistant settings</div>
       <p className="text-[11px] text-muted-foreground mb-3">
         Audio is generated via OpenRouter — your existing key works. Model must support audio output modality
@@ -134,41 +134,41 @@ function SettingsCard({
         <div>
           <label className="text-[11px] text-muted-foreground">Assistant name</label>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nova" maxLength={40}
-            className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+            className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <div className="text-[10px] text-muted-foreground mt-0.5">Shown in its own intro speech and throughout the panel</div>
         </div>
         <div>
           <label className="text-[11px] text-muted-foreground">OpenRouter model slug</label>
           <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="openai/gpt-audio-mini"
-            className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none font-mono" />
+            className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none font-mono" />
           <div className="text-[10px] text-muted-foreground mt-0.5">Must support audio output modality</div>
         </div>
         <div>
           <label className="text-[11px] text-muted-foreground">Voice</label>
           <select value={voice} onChange={(e) => setVoice(e.target.value)}
-            className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none">
+            className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
             {TTS_VOICES.map((v) => <option key={v} value={v}>{v}</option>)}
           </select>
         </div>
         <div>
           <label className="text-[11px] text-muted-foreground">Typing speed (ms / character)</label>
           <input type="number" min={8} max={120} value={typing} onChange={(e) => setTyping(Number(e.target.value))}
-            className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+            className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <div className="text-[10px] text-muted-foreground mt-0.5">Default 22 — higher = slower</div>
         </div>
       </div>
       <div className="flex items-center gap-2 mb-3">
         <button onClick={save} disabled={busy}
-          className="rounded-full bg-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+          className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
           {busy ? "Saving…" : "Save settings"}
         </button>
         {saved && <span className="text-xs text-emerald-400">✓ Saved</span>}
       </div>
 
-      <div className="border-t border-slate-700/50 pt-3 mb-3">
+      <div className="border-t border-border pt-3 mb-3">
         <div className="text-[11px] font-semibold text-muted-foreground mb-1">{(name || "Assistant")}'s intro speech (plays on every login)</div>
         <textarea value={introText} onChange={(e) => setIntroText(e.target.value)} rows={3}
-          className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs leading-relaxed text-foreground focus:border-slate-500 focus:outline-none mb-2" />
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs leading-relaxed text-foreground focus:border-ring focus:outline-none mb-2" />
         <div className="flex items-center gap-3 flex-wrap">
           <button onClick={generateIntroAudio} disabled={genBusy || !introText.trim()}
             className="rounded-full border border-primary/50 px-3 py-1.5 text-xs text-primary hover:bg-primary/10 disabled:opacity-50">
@@ -179,7 +179,7 @@ function SettingsCard({
         {settings.intro_audio_url && <div className="mt-1 text-[10px] text-emerald-400">✓ Stored — plays on login</div>}
       </div>
 
-      <div className="border-t border-slate-700/50 pt-3">
+      <div className="border-t border-border pt-3">
         <div className="text-[11px] font-semibold text-muted-foreground mb-2">System messages</div>
         <div className="space-y-3">
           <SystemMessageField
@@ -221,20 +221,20 @@ function EditForm({ hint, busy, onSave, onCancel }: { hint: Hint; busy: boolean;
       <div>
         <label className="text-[11px] text-muted-foreground">Label</label>
         <input value={label} onChange={(e) => setLabel(e.target.value)}
-          className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
       </div>
       <div>
         <label className="text-[11px] text-muted-foreground">Message</label>
         <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3}
-          className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs leading-relaxed text-foreground focus:border-slate-500 focus:outline-none" />
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs leading-relaxed text-foreground focus:border-ring focus:outline-none" />
         <div className="text-[10px] text-muted-foreground mt-0.5">Changing the message clears the stored audio — regenerate after saving.</div>
       </div>
       <div className="flex items-center gap-2">
         <button disabled={busy || !label.trim() || !message.trim()} onClick={() => onSave({ label: label.trim(), message: message.trim() })}
-          className="rounded-full bg-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+          className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
           {busy ? "Saving…" : "Save"}
         </button>
-        <button onClick={onCancel} className="rounded-full border border-slate-700/50 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+        <button onClick={onCancel} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
       </div>
     </div>
   );
@@ -255,32 +255,32 @@ function AddForm({ busy, keyPrefix, onAdd, onCancel }: { busy: boolean; keyPrefi
       <div>
         <label className="text-[11px] text-muted-foreground">Key — must match <code>data-robot-hint-key</code> in the frontend</label>
         {keyPrefix ? (
-          <div className="flex items-center rounded-lg border border-slate-700/50 bg-input/40 focus-within:border-slate-500 overflow-hidden">
+          <div className="flex items-center rounded-lg border border-border bg-input/40 focus-within:border-ring overflow-hidden">
             <span className="pl-2.5 py-1.5 text-xs text-muted-foreground font-mono select-none">{keyPrefix}:</span>
             <input value={suffix} onChange={(e) => setSuffix(e.target.value)} placeholder="some-new-thing"
               className="min-w-0 flex-1 bg-transparent pr-2.5 py-1.5 text-xs text-foreground focus:outline-none font-mono" />
           </div>
         ) : (
           <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="e.g. field:some-new-thing"
-            className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+            className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
         )}
       </div>
       <div>
         <label className="text-[11px] text-muted-foreground">Label</label>
         <input value={label} onChange={(e) => setLabel(e.target.value)}
-          className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
       </div>
       <div>
         <label className="text-[11px] text-muted-foreground">Message</label>
         <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3}
-          className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs leading-relaxed text-foreground focus:border-slate-500 focus:outline-none" />
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs leading-relaxed text-foreground focus:border-ring focus:outline-none" />
       </div>
       <div className="flex items-center gap-2">
         <button disabled={busy || !finalKey || !label.trim() || !message.trim()} onClick={() => onAdd({ key: finalKey, label: label.trim(), message: message.trim() })}
-          className="rounded-full bg-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+          className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
           {busy ? "Adding…" : "Add"}
         </button>
-        <button onClick={onCancel} className="rounded-full border border-slate-700/50 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+        <button onClick={onCancel} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
       </div>
     </div>
   );
@@ -298,7 +298,7 @@ function HintRow({ hint, busy, editing, generating, onEdit, onCancelEdit, onSave
   onRemove: () => void;
 }) {
   return (
-    <div className="rounded-xl border border-slate-700/50 bg-card/60 p-3">
+    <div className="rounded-xl border border-border bg-card/60 p-3">
       {editing ? (
         <EditForm hint={hint} busy={busy} onCancel={onCancelEdit} onSave={onSave} />
       ) : (
@@ -306,14 +306,14 @@ function HintRow({ hint, busy, editing, generating, onEdit, onCancelEdit, onSave
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2 mb-0.5">
               <span className="text-xs font-semibold text-foreground">{hint.label}</span>
-              <code className="rounded bg-slate-800/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">{hint.key}</code>
+              <code className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{hint.key}</code>
               {hint.audio_url ? <span className="text-[10px] text-emerald-400">🔊 audio ready</span> : <span className="text-[10px] text-amber-400">⚠ no audio (uses browser voice)</span>}
             </div>
             <div className="text-[11px] text-muted-foreground">{hint.message}</div>
             {hint.audio_url && <audio controls src={hint.audio_url} className="mt-1.5 h-6" />}
           </div>
           <div className="flex flex-col gap-1 shrink-0">
-            <button onClick={onEdit} className="rounded-full border border-slate-700/50 px-2.5 py-0.5 text-[11px] text-muted-foreground hover:text-foreground">Edit</button>
+            <button onClick={onEdit} className="rounded-full border border-border px-2.5 py-0.5 text-[11px] text-muted-foreground hover:text-foreground">Edit</button>
             <button onClick={onGenerateAudio} disabled={generating}
               className="rounded-full border border-primary/50 px-2.5 py-0.5 text-[11px] text-primary hover:bg-primary/10 disabled:opacity-50">
               {generating ? "…" : "🔊 Gen"}
@@ -355,7 +355,7 @@ function GroupBox({
 }) {
   const isAdding = addingGroup === prefix;
   return (
-    <div className="rounded-xl border border-slate-700/50 bg-card/40 overflow-hidden">
+    <div className="rounded-xl border border-border bg-card/40 overflow-hidden">
       <button type="button" onClick={onToggle}
         className="w-full flex items-center justify-between gap-2 px-4 py-3 text-left hover:bg-card/60 transition-colors">
         <span className="flex items-center gap-2 min-w-0">
@@ -368,7 +368,7 @@ function GroupBox({
         <div className="px-4 pb-4">
           <div className="mb-3">
             {isAdding ? (
-              <div className="rounded-xl border border-slate-700/50 bg-card/60 p-3">
+              <div className="rounded-xl border border-border bg-card/60 p-3">
                 <AddForm busy={busy} keyPrefix={prefix} onCancel={onCancelAdd} onAdd={onAddHint} />
               </div>
             ) : (
@@ -527,7 +527,7 @@ function DeveloperAssistant() {
       </div>
 
       {showNewGroup ? (
-        <div className="max-w-2xl rounded-xl border border-slate-700/50 bg-card/60 p-3">
+        <div className="max-w-2xl rounded-xl border border-border bg-card/60 p-3">
           <AddForm busy={busy} onCancel={() => setShowNewGroup(false)} onAdd={add} />
         </div>
       ) : (

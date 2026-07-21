@@ -50,9 +50,9 @@ function DeveloperCompanies() {
           placeholder="Search by name…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="rounded-lg border border-slate-700/50 bg-input/40 px-3 py-2 text-sm text-foreground focus:border-slate-500 focus:outline-none"
+          className="rounded-lg border border-border bg-input/40 px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none"
         />
-        <select value={tierFilter} onChange={(e) => setTierFilter(e.target.value)} className="rounded-lg border border-slate-700/50 bg-input/40 px-3 py-2 text-sm text-foreground">
+        <select value={tierFilter} onChange={(e) => setTierFilter(e.target.value)} className="rounded-lg border border-border bg-input/40 px-3 py-2 text-sm text-foreground">
           <option value="">All plans</option>
           <option value="free">Free</option>
           <option value="starter">Starter</option>
@@ -65,10 +65,10 @@ function DeveloperCompanies() {
       {companies === null ? (
         <div className="text-sm text-muted-foreground">Loading…</div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-700/50">
+        <div className="overflow-hidden rounded-xl border border-border">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-700/50 bg-card/60 text-left text-xs text-muted-foreground">
+              <tr className="border-b border-border bg-card/60 text-left text-xs text-muted-foreground">
                 <th className="px-4 py-3 font-medium">Company</th>
                 <th className="px-4 py-3 font-medium">Plan</th>
                 <th className="px-4 py-3 font-medium">Sub status</th>
@@ -78,7 +78,7 @@ function DeveloperCompanies() {
                 <th className="px-4 py-3 font-medium">Signed up</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-700/30">
+            <tbody className="divide-y divide-border">
               {filtered.map((c) => (
                 <tr key={c.id} className="bg-card/30 hover:bg-card/50">
                   <td className="px-4 py-3 text-foreground">{c.name}</td>

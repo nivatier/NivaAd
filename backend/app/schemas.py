@@ -757,6 +757,8 @@ class AdCreateIn(BaseModel):
     text_model_id: str | None = None  # same, for text — text generation is no longer free/bundled; if outputs.text is true this is required, resolved to a real credit cost like image/video
     video_resolution: str | None = None  # which of the chosen video model's offered resolutions to generate at (validated against that model's own list); defaults server-side to the model's first offered resolution if omitted
     video_audio: bool = False  # whether to generate with native audio, for models that support the choice (see AvailableModelOut.supports_audio) — genuinely affects both the output AND the price for dynamically-priced models; ignored for models without an audio toggle
+    video_start_shot_id: str | None = None  # a Brand Kit intro clip (see /brand-kit/video-shots, kind="intro") to prepend via ffmpeg concat — null/omitted means no intro, same as any other optional field here
+    video_end_shot_id: str | None = None  # same, for a Brand Kit outro/credits clip (kind="outro") appended at the end
 
 
 class RefineIn(BaseModel):
@@ -880,11 +882,72 @@ class ProductOut(BaseModel):
 
 # ---------- Brand kit ----------
 
+class BrandVideoShotOut(BaseModel):
+    id: str
+    kind: str
+    status: str
+    label: str
+    prompt: str
+    duration: int
+    ratio: str
+    url: str | None
+    poster_url: str | None = None
+    error: str | None
+    created_at: datetime
+    reference_logo_id: str | None = None
+    overlay_text: str | None = None
+    overlay_font: str | None = None
+    overlay_text_color: str | None = None
+    overlay_position: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class GenerateBrandVideoShotIn(BaseModel):
+    kind: str = Field(pattern="^(intro|outro)$")
+    label: str = Field(default="", max_length=120)  # optional — falls back to a truncated prompt in the UI when blank
+    prompt: str = Field(min_length=1, max_length=1000)
+    duration: int = Field(ge=2, le=5)
+    ratio: str = "16:9"  # must be one of the company's available ratios (GET /connections/video-ratios) — validated server-side
+    model_id: str
+    reference_logo_id: str | None = None  # a Brand Logo (see /brand-kit/logos) to send as the video's starting frame — the AI generates around/animates this actual logo instead of guessing at one from words alone
+    overlay_text: str | None = Field(default=None, max_length=200)  # e.g. contact info / website — burned in via ffmpeg AFTER generation, not left to the AI to render as text
+    overlay_font: str = Field(default="sans", pattern="^(sans|sans_bold|serif)$")
+    overlay_text_color: str = "#ffffff"
+    # 9 anchors — 8 edge/corner + middle_center (for text-only shots with
+    # no logo reference). When a logo IS referenced, steer away from
+    # middle_center toward an edge/corner instead — the AI tends to
+    # place a referenced logo somewhere in the middle of frame, and
+    # there's no way to know its exact position in advance.
+    overlay_position: str = Field(default="bottom_center", pattern="^(top_left|top_center|top_right|middle_left|middle_center|middle_right|bottom_left|bottom_center|bottom_right)$")
+
+
+class UpdateBrandVideoShotIn(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
+
+
+class BrandLogoOut(BaseModel):
+    id: str
+    url: str
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AddBrandLogoIn(BaseModel):
+    logo: str = Field(min_length=1)  # base64 data URL
+
+
 class BrandKitUpdateIn(BaseModel):
     logo: str | None = None
     primary_color: str | None = None
     tagline: str | None = None
     logo_placement: str | None = None
+    # Video padding (existing fields — unchanged meaning, now explicitly
+    # video-only since image gets its own independent set below).
     vertical_pad_mode: str | None = Field(default=None, pattern="^(blurred_video|image|color)$")
     horizontal_pad_mode: str | None = Field(default=None, pattern="^(blurred_video|image|color)$")
     pad_top_image: str | None = None  # raw base64 data URL, freshly uploaded
@@ -893,6 +956,15 @@ class BrandKitUpdateIn(BaseModel):
     pad_right_image: str | None = None
     vertical_pad_color: str | None = None
     horizontal_pad_color: str | None = None
+    # Image padding — independent from video (see services/reframe.py).
+    image_vertical_pad_mode: str | None = Field(default=None, pattern="^(blurred_video|image|color)$")
+    image_horizontal_pad_mode: str | None = Field(default=None, pattern="^(blurred_video|image|color)$")
+    image_pad_top_image: str | None = None
+    image_pad_bottom_image: str | None = None
+    image_pad_left_image: str | None = None
+    image_pad_right_image: str | None = None
+    image_vertical_pad_color: str | None = None
+    image_horizontal_pad_color: str | None = None
 
 
 class BrandKitOut(BaseModel):
@@ -908,6 +980,14 @@ class BrandKitOut(BaseModel):
     pad_right_image_url: str | None
     vertical_pad_color: str | None
     horizontal_pad_color: str | None
+    image_vertical_pad_mode: str
+    image_horizontal_pad_mode: str
+    image_pad_top_image_url: str | None
+    image_pad_bottom_image_url: str | None
+    image_pad_left_image_url: str | None
+    image_pad_right_image_url: str | None
+    image_vertical_pad_color: str | None
+    image_horizontal_pad_color: str | None
     platform_ratio_overrides: dict[str, str] = Field(default_factory=dict)  # {platform_id: ratio} — only platforms this company has overridden; anything absent uses the developer's platform-wide default
 
     class Config:
@@ -967,6 +1047,8 @@ class PhaseScheduleIn(BaseModel):
     video_end_frame_image_url: str | None = None
     video_mode: str = "single_reference"  # "single_reference" | "first_last_frame" — same as Create Ad
     video_resolution: str | None = None
+    video_start_shot_id: str | None = None  # same Brand Kit intro/outro selection as Create Ad
+    video_end_shot_id: str | None = None
     video_prompt_override: str | None = None  # applies for any shot count now, same as Create Ad
     refine_video_prompt: bool = False  # opt-in — the developer-configured review model (if any) only runs when this is explicitly checked; off by default since the raw customer wording isn't always worse
     refine_video_frame: bool = False  # opt-in — same as Create Ad, only meaningful in single_reference mode

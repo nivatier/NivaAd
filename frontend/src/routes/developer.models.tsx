@@ -36,14 +36,14 @@ function CatalogPickerModal({ kind, onPick, onClose }: {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg max-h-[80vh] overflow-hidden flex flex-col rounded-2xl border border-slate-700 bg-card/95 backdrop-blur-xl">
-        <div className="flex items-center justify-between border-b border-slate-700/50 px-4 py-3">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg max-h-[80vh] overflow-hidden flex flex-col rounded-2xl border border-border bg-card/95 backdrop-blur-xl">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="text-sm font-semibold text-foreground">OpenRouter's live {kind} model catalog</div>
           <button onClick={onClose} className="text-lg leading-none text-muted-foreground hover:text-foreground">✕</button>
         </div>
-        <div className="border-b border-slate-700/50 p-3">
+        <div className="border-b border-border p-3">
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or identifier…" autoFocus
-            className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-3 py-2 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+            className="w-full rounded-lg border border-border bg-input/40 px-3 py-2 text-xs text-foreground focus:border-ring focus:outline-none" />
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {err && <div className="text-xs text-destructive">{err}</div>}
@@ -51,7 +51,7 @@ function CatalogPickerModal({ kind, onPick, onClose }: {
           {catalog && filtered.length === 0 && <div className="text-xs text-muted-foreground">{catalog.length === 0 ? `OpenRouter's catalog listed no ${kind}-output models — you can still add one manually.` : "No matches for that search."}</div>}
           {filtered.map((m) => (
             <button key={m.slug} onClick={() => onPick(m)}
-              className="w-full rounded-lg border border-slate-700/50 bg-background/40 p-3 text-left hover:border-slate-500">
+              className="w-full rounded-lg border border-border bg-background/40 p-3 text-left hover:border-ring">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-foreground">{m.name}</div>
@@ -79,7 +79,7 @@ function ResolutionPicker({ value, onChange }: { value: string[]; onChange: (v: 
       <span className="text-[11px] text-muted-foreground">Resolutions offered:</span>
       {COMMON_RESOLUTIONS.map((r) => (
         <button key={r} onClick={() => onChange(value.includes(r) ? value.filter((x) => x !== r) : [...value, r])}
-          className={`rounded-full border px-2 py-0.5 text-[10px] ${value.includes(r) ? "border-slate-400 bg-slate-700 text-slate-100" : "border-slate-700/50 text-muted-foreground"}`}>
+          className={`rounded-full border px-2 py-0.5 text-[10px] ${value.includes(r) ? "border-ring bg-foreground text-background" : "border-border text-muted-foreground"}`}>
           {value.includes(r) ? "☑" : "☐"} {r}
         </button>
       ))}
@@ -156,24 +156,24 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
   }
 
   return (
-    <div className={`rounded-lg border border-slate-700/50 bg-background/40 p-3 ${entry.enabled === false ? "opacity-50" : ""}`}>
+    <div className={`rounded-lg border border-border bg-background/40 p-3 ${entry.enabled === false ? "opacity-50" : ""}`}>
       {editing ? (
         <div className="space-y-2">
-          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label shown to companies" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
-          <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Model identifier" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label shown to companies" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+          <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Model identifier" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <div className="flex items-center gap-2">
-            <input type="number" min={1} max={50} value={credits} onChange={(e) => setCredits(e.target.value)} className="w-20 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+            <input type="number" min={1} max={50} value={credits} onChange={(e) => setCredits(e.target.value)} className="w-20 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
             <span className="text-[11px] text-muted-foreground">credits</span>
           </div>
           {kind === "video" && (
             <>
               <div className="flex items-center gap-2">
-                <input type="number" min={1} max={60} value={minD} onChange={(e) => setMinD(e.target.value)} placeholder="min" className="w-16 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+                <input type="number" min={1} max={60} value={minD} onChange={(e) => setMinD(e.target.value)} placeholder="min" className="w-16 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
                 <span className="text-[11px] text-muted-foreground">to</span>
-                <input type="number" min={1} max={60} value={maxD} onChange={(e) => setMaxD(e.target.value)} placeholder="max" className="w-16 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+                <input type="number" min={1} max={60} value={maxD} onChange={(e) => setMaxD(e.target.value)} placeholder="max" className="w-16 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
                 <span className="text-[11px] text-muted-foreground">seconds total (ignored if exact durations are set below)</span>
               </div>
-              <input value={durationOptions} onChange={(e) => setDurationOptions(e.target.value)} placeholder="Exact durations only, e.g. 4, 6, 8 (leave blank for a normal range)" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+              <input value={durationOptions} onChange={(e) => setDurationOptions(e.target.value)} placeholder="Exact durations only, e.g. 4, 6, 8 (leave blank for a normal range)" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
               <ResolutionPicker value={resolutions} onChange={setResolutions} />
               <label className="flex items-center gap-1.5 text-[11px] text-foreground">
                 <input type="checkbox" checked={supportsAudio} onChange={(e) => setSupportsAudio(e.target.checked)} />
@@ -192,7 +192,7 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
                   placeholder={kind === "video"
                     ? '{\n  "rates_usd_per_second": {\n    "720p": {"audio": 0.10, "no_audio": 0.08},\n    "1080p": {"audio": 0.12, "no_audio": 0.10}\n  },\n  "supports_audio": true\n}'
                     : '{"cost_usd": 0.03}'}
-                  className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 font-mono text-[11px] text-foreground focus:border-slate-500 focus:outline-none"
+                  className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 font-mono text-[11px] text-foreground focus:border-ring focus:outline-none"
                 />
                 {pricingError && <div className="mt-1 text-[11px] text-destructive">{pricingError}</div>}
                 <p className="mt-1 text-[10px] text-muted-foreground">When set, the real cost is computed live per generation (resolution × audio × duration for video) and marked up by the global multiplier — see the Pricing section below. Leave blank and this model just uses the flat credits number above, unchanged.</p>
@@ -207,14 +207,14 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
                 onChange={(e) => setPricingJson(e.target.value)}
                 rows={2}
                 placeholder='{"cost_usd": 0.001}'
-                className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 font-mono text-[11px] text-foreground focus:border-slate-500 focus:outline-none"
+                className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 font-mono text-[11px] text-foreground focus:border-ring focus:outline-none"
               />
               {pricingError && <div className="mt-1 text-[11px] text-destructive">{pricingError}</div>}
             </div>
           )}
           <div className="flex items-center gap-2">
-            <button disabled={saving || !label.trim() || !model.trim()} onClick={save} className="rounded-full bg-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">{saving ? "Saving…" : "Save"}</button>
-            <button onClick={() => setEditing(false)} className="rounded-full border border-slate-700/50 px-3 py-1 text-[11px] text-muted-foreground">Cancel</button>
+            <button disabled={saving || !label.trim() || !model.trim()} onClick={save} className="rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">{saving ? "Saving…" : "Save"}</button>
+            <button onClick={() => setEditing(false)} className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground">Cancel</button>
           </div>
         </div>
       ) : (
@@ -222,7 +222,7 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
           <div className="min-w-0">
             <div className="text-xs font-semibold text-foreground">
               {entry.label}
-              {entry.enabled === false && <span className="ml-2 rounded-full bg-slate-700 px-2 py-0.5 text-[9px] font-normal text-slate-300">DISABLED</span>}
+              {entry.enabled === false && <span className="ml-2 rounded-full bg-foreground px-2 py-0.5 text-[9px] font-normal text-muted-foreground">DISABLED</span>}
             </div>
             <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{entry.model}</div>
             <div className="mt-0.5 text-xs font-semibold text-foreground">
@@ -234,14 +234,14 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             <button disabled={togglingEnabled} onClick={toggleEnabled} title={entry.enabled === false ? "Enable — show this in Create Ad again" : "Disable — hide from Create Ad without deleting"}
-              className={`text-[11px] disabled:opacity-50 ${entry.enabled === false ? "text-emerald-400 hover:text-emerald-300" : "text-slate-400 hover:text-foreground"}`}>
+              className={`text-[11px] disabled:opacity-50 ${entry.enabled === false ? "text-emerald-400 hover:text-emerald-300" : "text-muted-foreground hover:text-foreground"}`}>
               {togglingEnabled ? "…" : entry.enabled === false ? "Enable" : "Disable"}
             </button>
             <div className="flex flex-col">
-              <button disabled={!canMoveUp} onClick={onMoveUp} title="Move up" className="text-[10px] leading-none text-slate-400 hover:text-foreground disabled:opacity-20">▲</button>
-              <button disabled={!canMoveDown} onClick={onMoveDown} title="Move down" className="text-[10px] leading-none text-slate-400 hover:text-foreground disabled:opacity-20">▼</button>
+              <button disabled={!canMoveUp} onClick={onMoveUp} title="Move up" className="text-[10px] leading-none text-muted-foreground hover:text-foreground disabled:opacity-20">▲</button>
+              <button disabled={!canMoveDown} onClick={onMoveDown} title="Move down" className="text-[10px] leading-none text-muted-foreground hover:text-foreground disabled:opacity-20">▼</button>
             </div>
-            <button onClick={() => setEditing(true)} className="text-[11px] text-slate-400 hover:text-foreground">Edit</button>
+            <button onClick={() => setEditing(true)} className="text-[11px] text-muted-foreground hover:text-foreground">Edit</button>
             <button disabled={!canDelete || deleting} onClick={remove} title={!canDelete ? "Can't remove the last option for this kind" : undefined} className="text-[11px] text-destructive hover:text-destructive/80 disabled:opacity-30">
               {deleting ? "…" : "Remove"}
             </button>
@@ -305,32 +305,32 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
       {!open ? (
         <div className="flex gap-2">
           {kind !== "text" && (
-            <button onClick={() => setShowCatalog(true)} className="flex-1 rounded-lg border border-dashed border-slate-500 py-2.5 text-xs font-semibold text-slate-300 hover:border-slate-400 hover:text-foreground">
+            <button onClick={() => setShowCatalog(true)} className="flex-1 rounded-lg border border-dashed border-ring py-2.5 text-xs font-semibold text-muted-foreground hover:border-ring hover:text-foreground">
               ＋ Fetch from OpenRouter
             </button>
           )}
-          <button onClick={() => setOpen(true)} className={`rounded-lg border border-dashed border-slate-700/60 px-3 py-2.5 text-xs text-muted-foreground hover:border-slate-500 hover:text-foreground ${kind === "text" ? "flex-1" : ""}`}>
+          <button onClick={() => setOpen(true)} className={`rounded-lg border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground hover:border-ring hover:text-foreground ${kind === "text" ? "flex-1" : ""}`}>
             {kind === "text" ? "＋ Add manually" : "Add manually"}
           </button>
         </div>
       ) : (
-        <div className="rounded-lg border border-slate-600 bg-background/60 p-3 space-y-2">
+        <div className="rounded-lg border border-border bg-background/60 p-3 space-y-2">
           {pricePerSec != null && <div className="text-[11px] text-amber-400/80">Provider cost: ${pricePerSec.toFixed(3)}/second — use this to set a sensible credit price below.</div>}
-          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label shown to companies" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
-          <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Model identifier" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label shown to companies" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+          <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Model identifier" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <div className="flex items-center gap-2">
-            <input type="number" min={1} max={50} value={credits} onChange={(e) => setCredits(e.target.value)} className="w-20 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+            <input type="number" min={1} max={50} value={credits} onChange={(e) => setCredits(e.target.value)} className="w-20 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
             <span className="text-[11px] text-muted-foreground">credits (token-to-cost mapping comes later — set a sensible number for now)</span>
           </div>
           {kind === "video" && (
             <>
               <div className="flex items-center gap-2">
-                <input type="number" min={1} max={60} value={minD} onChange={(e) => setMinD(e.target.value)} className="w-16 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+                <input type="number" min={1} max={60} value={minD} onChange={(e) => setMinD(e.target.value)} className="w-16 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
                 <span className="text-[11px] text-muted-foreground">to</span>
-                <input type="number" min={1} max={60} value={maxD} onChange={(e) => setMaxD(e.target.value)} className="w-16 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+                <input type="number" min={1} max={60} value={maxD} onChange={(e) => setMaxD(e.target.value)} className="w-16 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
                 <span className="text-[11px] text-muted-foreground">seconds total (ignored if exact durations are set below)</span>
               </div>
-              <input value={durationOptions} onChange={(e) => setDurationOptions(e.target.value)} placeholder="Exact durations only, e.g. 4, 6, 8 (leave blank for a normal range)" className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none" />
+              <input value={durationOptions} onChange={(e) => setDurationOptions(e.target.value)} placeholder="Exact durations only, e.g. 4, 6, 8 (leave blank for a normal range)" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
               <ResolutionPicker value={resolutions} onChange={setResolutions} />
               <label className="flex items-center gap-1.5 text-[11px] text-foreground">
                 <input type="checkbox" checked={supportsAudio} onChange={(e) => setSupportsAudio(e.target.checked)} />
@@ -343,8 +343,8 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
             </>
           )}
           <div className="flex items-center gap-2">
-            <button disabled={saving || !label.trim() || !model.trim()} onClick={add} className="rounded-full bg-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">{saving ? "Adding…" : "Add"}</button>
-            <button onClick={() => setOpen(false)} className="rounded-full border border-slate-700/50 px-3 py-1 text-[11px] text-muted-foreground">Cancel</button>
+            <button disabled={saving || !label.trim() || !model.trim()} onClick={add} className="rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">{saving ? "Adding…" : "Add"}</button>
+            <button onClick={() => setOpen(false)} className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground">Cancel</button>
           </div>
         </div>
       )}
@@ -393,7 +393,7 @@ function RawJsonEditor({ onSaved }: { onSaved: () => void }) {
   }
 
   return (
-    <div className="mb-6 max-w-4xl rounded-xl border border-slate-700/50 bg-card/60 p-4">
+    <div className="mb-6 max-w-4xl rounded-xl border border-border bg-card/60 p-4">
       <button onClick={() => { setOpen(!open); if (!open && !loaded) loadRaw(); }} className="flex w-full items-center justify-between text-left">
         <div>
           <div className="text-sm font-semibold text-foreground">🗂️ Bulk edit as JSON</div>
@@ -412,13 +412,13 @@ function RawJsonEditor({ onSaved }: { onSaved: () => void }) {
                 onChange={(e) => setText(e.target.value)}
                 rows={24}
                 spellCheck={false}
-                className="w-full rounded-lg border border-slate-700/50 bg-input/40 px-3 py-2 font-mono text-[11px] leading-relaxed text-foreground focus:border-slate-500 focus:outline-none"
+                className="w-full rounded-lg border border-border bg-input/40 px-3 py-2 font-mono text-[11px] leading-relaxed text-foreground focus:border-ring focus:outline-none"
               />
               <div className="mt-3 flex items-center gap-3">
-                <button onClick={saveRaw} disabled={saving} className="rounded-full bg-slate-700 px-4 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+                <button onClick={saveRaw} disabled={saving} className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
                   {saving ? "Saving…" : "Save all"}
                 </button>
-                <button onClick={loadRaw} className="rounded-full border border-slate-700/60 px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+                <button onClick={loadRaw} className="rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground">
                   Reload (discard changes)
                 </button>
                 {saved && <span className="text-xs text-emerald-400">✓ Saved — every model updated atomically</span>}
@@ -539,14 +539,14 @@ function DeveloperModels() {
 
       <RawJsonEditor onSaved={load} />
 
-      <div className="mb-6 rounded-xl border border-slate-700/50 bg-card/60 p-4 max-w-md">
+      <div className="mb-6 rounded-xl border border-border bg-card/60 p-4 max-w-md">
         <div className="text-sm font-semibold text-foreground">💰 Global markup multiplier</div>
         <p className="mt-1 text-[11px] text-muted-foreground">Applied to every dynamically-priced model's real OpenRouter cost before converting to credits. Agreed target: 1.6–1.8x nets a 20% margin after infra and Stripe fees. Doesn't affect models still on flat legacy credits.</p>
         <div className="mt-3 flex items-center gap-2">
           <input type="number" step="0.05" min={1} max={10} value={markup} onChange={(e) => setMarkup(e.target.value)}
-            className="w-24 rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-slate-500 focus:outline-none" />
+            className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
           <span className="text-xs text-muted-foreground">×</span>
-          <button disabled={savingMarkup} onClick={saveMarkup} className="rounded-full bg-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:opacity-50">
+          <button disabled={savingMarkup} onClick={saveMarkup} className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
             {savingMarkup ? "Saving…" : "Save"}
           </button>
           {markupSaved && <span className="text-xs text-emerald-400">✓ Saved</span>}
@@ -559,16 +559,16 @@ function DeveloperModels() {
       ) : (
         <div className="grid gap-4 md:grid-cols-3">
           {(["text", "image", "video"] as const).map((kind) => (
-            <div key={kind} className="rounded-xl border border-slate-700/50 bg-card/60 p-4">
+            <div key={kind} className="rounded-xl border border-border bg-card/60 p-4">
               <div className="text-sm font-semibold capitalize text-foreground">{kind} generation</div>
               {kind === "video" && (
-                <div className="mt-3 space-y-3 rounded-lg border border-slate-700/50 bg-background/40 p-3">
+                <div className="mt-3 space-y-3 rounded-lg border border-border bg-background/40 p-3">
                   <div>
                     <div className="text-[11px] font-semibold text-foreground">Text Prompt <span className="font-normal text-muted-foreground">— reviews and improves each shot's wording before generation</span></div>
                     <select
                       value={promptReviewModelId}
                       onChange={(e) => { setPromptReviewModelId(e.target.value); saveVideoPrep(e.target.value, videoPrepImageModelId); }}
-                      className="mt-1 w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none"
+                      className="mt-1 w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
                     >
                       <option value="">Off — use the customer's wording as-is</option>
                       {models?.text.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
@@ -579,7 +579,7 @@ function DeveloperModels() {
                     <select
                       value={videoPrepImageModelId}
                       onChange={(e) => { setVideoPrepImageModelId(e.target.value); saveVideoPrep(promptReviewModelId, e.target.value); }}
-                      className="mt-1 w-full rounded-lg border border-slate-700/50 bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-slate-500 focus:outline-none"
+                      className="mt-1 w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
                     >
                       <option value="">Off — use the reference photo as-is for the starting frame</option>
                       {models?.image.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
