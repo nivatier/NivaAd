@@ -845,12 +845,7 @@ function CreateAd() {
 
       {step === 1 && !blocked && (
         <Panel>
-          <div className="rounded-xl border border-primary/30 bg-primary/[0.03] p-5">
-            <div className="text-xs font-medium uppercase tracking-widest text-primary">⚡ Quick start</div>
-            <p className="mt-1 text-[11px] text-muted-foreground">URL import isn't wired up yet — fill the fields below directly.</p>
-          </div>
-
-          <h2 className="mt-6 font-display text-xl font-bold text-foreground">Tick what you need generated</h2>
+          <h2 className="font-display text-xl font-bold text-foreground">Tick what you need generated</h2>
           <p className="mt-1 text-xs text-muted-foreground">Ad Text is always included. You can also generate an AI Image OR an AI Video — not both at once.</p>
 
           <div className="mt-4 grid gap-4 md:grid-cols-3">

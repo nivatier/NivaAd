@@ -249,7 +249,7 @@ class ScheduledPost(Base):
     ad_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ads.id"), index=True)
     platform: Mapped[str] = mapped_column(String(20))
     scheduled_at: Mapped[datetime] = mapped_column(DateTime, index=True)
-    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)  # pending|posted|canceled|failed
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)  # pending|review_required|posted|canceled|failed
     posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
@@ -325,6 +325,23 @@ class CompanyAgentSettings(Base):
     config: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class Notification(Base):
+    """In-app notification for a company user — created by the Celery
+    beat task when Agent Niva generates or schedules an event ad.
+    company_id scoped so all admins of a company see the same pool;
+    dismissed_by is a JSON list of user_ids who've dismissed it so
+    one admin dismissing doesn't hide it from others."""
+    __tablename__ = "notifications"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
+    type: Mapped[str] = mapped_column(String(40))  # "agent_draft_ready" | "agent_review_required" | "agent_auto_posting_soon" | "agent_posted"
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(Text, default="")
+    action_url: Mapped[str | None] = mapped_column(String(500), nullable=True)  # e.g. "/app/calendar" or "/app/my-ads"
+    dismissed_by: Mapped[list] = mapped_column(JSON, default=list)  # list of user_id strings who dismissed
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class RoleCapability(Base):
     """Per-company configuration of what the 'editor' and 'poster' roles
     can do — admin always has every capability implicitly (not stored,
@@ -358,8 +375,10 @@ class AgentEvent(Base):
     platforms: Mapped[list] = mapped_column(JSON, default=list)
     product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id"), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    skipped_years: Mapped[list] = mapped_column(JSON, default=list)  # e.g. [2026] — this occurrence only, definition stays intact
-    last_run_year: Mapped[int | None] = mapped_column(Integer, nullable=True)  # guards against firing twice in the same year if the beat task runs more than once on the trigger day
+    approval_mode: Mapped[str] = mapped_column(String(30), default="draft_only")  # "draft_only" | "schedule_review" | "auto_post"
+    skipped_years: Mapped[list] = mapped_column(JSON, default=list)
+    draft_run_year: Mapped[int | None] = mapped_column(Integer, nullable=True)  # year the draft was created (Trigger 1)
+    last_run_year: Mapped[int | None] = mapped_column(Integer, nullable=True)   # year the post was generated (Trigger 2) — kept for back-compat
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

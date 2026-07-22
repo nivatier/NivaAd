@@ -28,3 +28,13 @@ Professional advertising video for a product called "Smart Home Blues". We provi
 
 
 A slow push-in from a blueprint on a table, then a match-cut dissolve into a time-lapse of a house rising from foundation to completion under warm golden-hour light, with dust motes floating and scaffolders moving, ending on a fully finished home with warm interior window glow.
+
+
+Our Logo Assembling from glowing particles, dark background
+contact.support@nivatier.com
+www.nivatier.com
+
+
+
+
+what i need is the following, on teh home sreen i wan have hero section. i wan tto make it full screen width as currently ithere are lot of whote space left and right.  only teh header will remain as it is with the border changing animation etc. but the hero section will be full page width and heightwidened and the  and belwo sections as well will changed accordigily. also iw an to ass a ideo section, where i will

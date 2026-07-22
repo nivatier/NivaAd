@@ -1,16 +1,37 @@
 cd "F:\MY WORKS\00-NIVATIER\00-PRODUCTS\02-NivaAd"
 docker compose up -d
+
+docker compose restart api worker
+
 docker compose up -d --build
+docker compose up -d --build api worker
+
+docker compose exec api alembic upgrade head
 
 docker compose down
 
-docker compose logs api --tail 60
 
-docker compose logs worker --tail 150
+A few useful variations:
+# Last 50 lines then follow
+docker compose logs -f --tail=50 api
 
+# Multiple services at once
+docker compose logs -f api worker beat
+
+# All services at once
+docker compose logs -f
+
+# No follow, just dump and exit
+docker compose logs --tail=100 api
+
+docker compose logs -f postgres
+docker compose logs -f redis
+docker compose logs -f minio
 docker compose logs -f worker
-
 docker compose logs -f api
+docker compose logs -f beat
+docker compose logs -f stripe-cli
+docker compose logs -f mailpit
 
 
 Worth testing specifically: since the cleanup job itself runs on a daily schedule and is hard to observe live without waiting, you can trigger it manually once deployed

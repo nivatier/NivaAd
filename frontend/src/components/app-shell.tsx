@@ -1,7 +1,7 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  BarChart3, Bot, CalendarDays, Crown, GalleryHorizontal, Images, Link2, Megaphone, Package, Palette,
+  BarChart3, Bell, Bot, CalendarDays, Crown, GalleryHorizontal, Images, Link2, Megaphone, Package, Palette,
   Settings as SettingsIcon, ShieldCheck, Sparkles, type LucideIcon,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -76,6 +76,9 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
   const [showBuyCredits, setShowBuyCredits] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [billingBanner, setBillingBanner] = useState("");
+  const [notifications, setNotifications] = useState<{ id: string; type: string; title: string; body: string; action_url: string | null; created_at: string }[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
   useEffect(() => { setOpen(false); }, [pathname]);
 
   // Checkout can redirect back to whatever page the customer started
@@ -100,6 +103,29 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
       setTimeout(() => setBillingBanner(""), 6000);
       return () => clearInterval(poll);
     }
+  }, []);
+
+  // Poll for notifications every 60s
+  useEffect(() => {
+    if (!isAuthed) return;
+    async function fetchNotifs() {
+      try {
+        const data = await fetch("/api/agent/notifications", { headers: { Authorization: `Bearer ${localStorage.getItem("token") || ""}` } });
+        if (data.ok) setNotifications(await data.json());
+      } catch { /* ignore */ }
+    }
+    fetchNotifs();
+    const t = setInterval(fetchNotifs, 60_000);
+    return () => clearInterval(t);
+  }, [isAuthed]);
+
+  // Click outside notifications panel to close
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setShowNotifications(false);
+    }
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
   }, []);
 
   // Auth guard: every /app/* page renders through AppShell, so gating here
@@ -170,7 +196,10 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
   );
 
   const CreditsCard = (
-    <div className="m-3 rounded-xl border border-border bg-card/60 p-4 neon-bg">
+    <div className="relative m-3 overflow-hidden rounded-2xl border border-white/[0.09] p-4 bg-card/70 backdrop-blur-xl
+      shadow-[0_0_0_1px_oklch(1_0_0_/_0.06),0_4px_24px_-4px_oklch(0_0_0_/_0.4),inset_0_1px_0_oklch(1_0_0_/_0.12),inset_0_-1px_0_oklch(0_0_0_/_0.15)]
+      neon-bg">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
       <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Credits available</div>
       <div className="mt-1 font-display text-3xl font-bold text-foreground text-glow">{credits}</div>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -212,7 +241,10 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
       {/* Main */}
       <main className="flex-1 min-w-0">
         {/* Mobile top bar */}
-        <div className="sticky top-0 z-30 flex items-center gap-3 border-b border-border bg-background/85 px-4 py-3 backdrop-blur lg:hidden">
+        <div className="sticky top-0 z-30 flex items-center gap-3 border-b border-white/[0.07] px-4 py-3
+          bg-gradient-to-r from-[oklch(from_var(--background)_l_c_h_/_0.85)] to-[oklch(from_var(--background)_l_c_h_/_0.80)]
+          backdrop-blur-xl
+          shadow-[0_1px_0_oklch(1_0_0_/_0.06),0_4px_16px_-4px_oklch(0_0_0_/_0.3)] lg:hidden">
           <Link to="/" className="flex items-center gap-2">
             <div className="grid h-8 w-8 place-items-center rounded-md bg-gold-gradient font-display text-sm font-bold text-background shadow-[var(--shadow-neon)]">N</div>
             <span className="font-display font-bold tracking-tight text-glow">NivaAd</span>
@@ -249,7 +281,11 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
         </div>
 
         {/* Page header */}
-        <header className="sticky top-[57px] z-20 border-b border-border bg-background/80 px-5 py-5 backdrop-blur lg:top-0 lg:px-10 lg:py-6">
+        <header className="sticky top-[57px] z-20 border-b border-white/[0.07] px-5 py-5
+          bg-gradient-to-r from-[oklch(from_var(--background)_l_c_h_/_0.82)] to-[oklch(from_var(--background)_l_c_h_/_0.75)]
+          backdrop-blur-xl
+          shadow-[0_1px_0_oklch(1_0_0_/_0.06),0_4px_24px_-8px_oklch(0_0_0_/_0.25)]
+          lg:top-0 lg:px-10 lg:py-6">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 sm:flex sm:justify-between">
             <div className="min-w-0">
               {eyebrow && <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-primary">{eyebrow}</div>}
@@ -264,6 +300,58 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
                 <span className="mt-1 text-[11px] text-muted-foreground">{me?.user.full_name || me?.user.email} · {roleLabel[me?.user.role || ""] || me?.user.role}</span>
               </div>
               <ThemeToggle />
+              {/* Notifications bell */}
+              <div className="relative" ref={notifRef}>
+                <button onClick={() => setShowNotifications((v) => !v)} title="Notifications"
+                  className="relative grid h-9 w-9 place-items-center rounded-full border border-border bg-card/60 text-muted-foreground hover:border-primary/40 hover:text-foreground transition">
+                  <Bell className="h-4 w-4" strokeWidth={2} />
+                  {notifications.length > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white animate-pulse shadow-[0_0_8px_2px_rgba(239,68,68,0.5)]">
+                      {notifications.length > 9 ? "9+" : notifications.length}
+                    </span>
+                  )}
+                </button>
+                {showNotifications && (
+                  <div className="absolute right-0 top-11 z-50 w-80 rounded-2xl border border-white/[0.09] overflow-hidden
+                    bg-gradient-to-b from-[oklch(from_var(--card)_l_c_h_/_0.92)] to-[oklch(from_var(--card)_l_c_h_/_0.80)]
+                    backdrop-blur-2xl
+                    shadow-[0_0_0_1px_oklch(1_0_0_/_0.08),0_16px_48px_-8px_oklch(0_0_0_/_0.6),0_32px_64px_-16px_oklch(0_0_0_/_0.4),inset_0_1px_0_oklch(1_0_0_/_0.14)]">
+                    <div className="border-b border-white/[0.07] px-4 py-3 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-foreground">Notifications</span>
+                      {notifications.length > 0 && (
+                        <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400">{notifications.length} new</span>
+                      )}
+                    </div>
+                    <div className="max-h-80 overflow-y-auto divide-y divide-white/[0.05]">
+                      {notifications.length === 0 ? (
+                        <div className="px-4 py-8 text-center text-xs text-muted-foreground">No notifications</div>
+                      ) : notifications.map((n) => (
+                        <div key={n.id} className="px-4 py-3 hover:bg-white/[0.03] transition">
+                          <div className="text-xs font-semibold text-foreground">{n.title}</div>
+                          {n.body && <div className="mt-0.5 text-[11px] text-muted-foreground leading-relaxed">{n.body}</div>}
+                          <div className="mt-2 flex items-center gap-2">
+                            {n.action_url && (
+                              <a href={n.action_url} onClick={() => setShowNotifications(false)}
+                                className="rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">
+                                Review →
+                              </a>
+                            )}
+                            <button onClick={async () => {
+                              try {
+                                const token = localStorage.getItem("token") || "";
+                                const res = await fetch(`/api/agent/notifications/${n.id}/dismiss`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+                                if (res.ok) setNotifications(await res.json());
+                              } catch { /* ignore */ }
+                            }} className="text-[10px] text-muted-foreground hover:text-foreground transition">
+                              Dismiss
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
               <button
                 onClick={() => setShowProfile(true)}
                 title="Your profile"
@@ -283,7 +371,15 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
 }
 
 export function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`rounded-2xl border border-border bg-card p-6 shadow-[0_0_0_1px_transparent,0_0_40px_-20px_oklch(0.78_0.12_85/0.35)] ${className}`}>{children}</div>;
+  return (
+    <div className={`relative rounded-2xl border border-white/[0.09] p-6 overflow-hidden bg-card/80 backdrop-blur-2xl
+      shadow-[0_0_0_1px_oklch(1_0_0_/_0.08),0_4px_24px_-4px_oklch(0_0_0_/_0.5),0_16px_48px_-8px_oklch(0_0_0_/_0.35),0_0_60px_-20px_oklch(0.66_0.26_305_/_0.25),inset_0_1px_0_oklch(1_0_0_/_0.15),inset_0_-1px_0_oklch(0_0_0_/_0.2)]
+      ${className}`}>
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-4 bottom-0 h-px bg-gradient-to-r from-transparent via-white/[0.05] to-transparent" />
+      {children}
+    </div>
+  );
 }
 
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
-from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, BrandKit, BrandLogo, BrandVideoShot, CreditLedger, GenerationJob, PlatformConnection, Product, ScheduledPost
+from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, BrandKit, BrandLogo, BrandVideoShot, CreditLedger, GenerationJob, Notification, PlatformConnection, Product, ScheduledPost
 from app.services import storage
 from app.services import linkedin
 from app.services.agent_scraper import scrape_company_website
@@ -1459,69 +1459,166 @@ def _create_agent_ad_sync(db, company_id, product_name: str, description: str, p
 
 @celery_app.task(name="app.check_agent_events", bind=True, max_retries=0)
 def check_agent_events(self):
-    """Celery Beat, once daily: for every enabled recurring event whose
-    trigger date (month/day minus lead_days) is today and hasn't
-    already fired this year, generates the ad and — per the platform's
-    agent_settings.event_approval_mode — either leaves it a draft,
-    schedules it for the event date (still cancellable from My Ads /
-    Calendar up to then), or schedules it with nothing further to do
-    (the existing fire_due_scheduled_posts beat task posts it
-    automatically either way — "auto_post" vs "schedule_review" differ
-    only in framing to the customer, not in what's stored)."""
+    """Celery Beat, once daily at 5 AM UTC.
+
+    Two-trigger flow per recurring event, per year:
+
+    Trigger 1 — event_date minus lead_days (user-configured):
+        Creates a DRAFT ad for all three approval modes.
+        Notifies the user the draft is ready to review.
+
+    Trigger 2 — event_date minus POST_WINDOW_DAYS (fixed at 7):
+        Takes the draft (in whatever state the user left it) and:
+        - draft_only      → keeps draft, notifies to schedule manually.
+        - schedule_review → creates ScheduledPost status=review_required
+                            (fire_due_scheduled_posts ignores this status).
+                            Notifies user to approve before it posts.
+        - auto_post       → creates ScheduledPost status=pending (will auto-post).
+                            Sends advance warning notification.
+
+    Trigger 3 — event_date minus 2 days (auto_post only):
+        Final warning notification before the auto-post fires.
+
+    draft_run_year tracks Trigger 1; last_run_year tracks Trigger 2.
+    Both reset each year so the cycle repeats.
+    """
+    from app.models import Notification  # local import avoids circular at module level
+    POST_WINDOW_DAYS = 7
+    FINAL_WARN_DAYS  = 2
+
     with Session(sync_engine) as db:
-        today = date.today()
-
+        today  = date.today()
         events = db.scalars(select(AgentEvent).where(AgentEvent.enabled == True)).all()  # noqa: E712
-        fired = 0
+        fired  = 0
         skipped_budget = 0
+
         for ev in events:
-            if ev.last_run_year == today.year or today.year in (ev.skipped_years or []):
+            year = today.year
+            if year in (ev.skipped_years or []):
                 continue
-            # Fetch this company's own Agent Niva settings — each company can
-            # have a different policy, so we load inside the loop rather than
-            # once globally.  get_agent_settings_sync falls back to defaults
-            # if the company hasn't customised anything yet.
-            settings_ = get_agent_settings_sync(db, ev.company_id)
-            mode = settings_.get("event_approval_mode", "draft_only")
-            budget_mode = settings_.get("credit_cap_mode", "monthly_budget")
-            monthly_budget = settings_.get("monthly_credit_budget", 200)
             try:
-                trigger_date = date(today.year, ev.month, ev.day) - timedelta(days=ev.lead_days)
+                event_date = date(year, ev.month, ev.day)
+                draft_date = event_date - timedelta(days=ev.lead_days)
+                post_date  = event_date - timedelta(days=POST_WINDOW_DAYS)
+                warn_date  = event_date - timedelta(days=FINAL_WARN_DAYS)
             except ValueError:
-                continue  # e.g. Feb 30 — malformed, skip rather than crash the whole daily run
-            if trigger_date != today:
                 continue
 
-            if budget_mode == "monthly_budget":
-                month_start = datetime(today.year, today.month, 1)
-                spent = db.scalar(
-                    select(func.coalesce(func.sum(GenerationJob.credits_cost), 0))
-                    .select_from(GenerationJob).join(Ad, Ad.id == GenerationJob.ad_id)
-                    .where(Ad.company_id == ev.company_id, Ad.agent_source.isnot(None), GenerationJob.created_at >= month_start)
-                ) or 0
-                if spent >= monthly_budget:
-                    logger.info("[agent-events] company=%s event=%s skipped — monthly agent budget (%s) reached", ev.company_id, ev.id, monthly_budget)
-                    skipped_budget += 1
-                    ev.last_run_year = today.year  # don't retry every day for the rest of the month once budget's hit
-                    db.commit()
+            settings_      = get_agent_settings_sync(db, ev.company_id)
+            budget_mode    = settings_.get("credit_cap_mode", "monthly_budget")
+            monthly_budget = settings_.get("monthly_credit_budget", 200)
+            mode           = ev.approval_mode or "draft_only"
+
+            # ── Trigger 3: final auto_post warning (2 days before event) ──
+            if mode == "auto_post" and today == warn_date and ev.last_run_year == year:
+                db.add(Notification(
+                    company_id=ev.company_id, type="agent_auto_posting_soon",
+                    title=f"\u23f0 {ev.name} posts in {FINAL_WARN_DAYS} days",
+                    body=f"Your Agent Niva ad for {ev.name} is scheduled to post automatically on {event_date.strftime('%b %d')}. Open My Ads or Calendar to make any last-minute changes.",
+                    action_url="/app/calendar", dismissed_by=[],
+                ))
+                db.commit()
+                continue
+
+            # ── Trigger 2: draft → post (7 days before event) ─────────────
+            if today == post_date and ev.draft_run_year == year and ev.last_run_year != year:
+                draft_ad = db.scalar(
+                    select(Ad).where(
+                        Ad.company_id == ev.company_id,
+                        Ad.agent_event_id == ev.id,
+                        Ad.status == "draft",
+                    ).order_by(Ad.created_at.desc())
+                )
+                if draft_ad is None:
+                    logger.warning("[agent-events] event=%s Trigger 2: no draft found, skipping", ev.id)
                     continue
 
-            try:
-                event_date = date(today.year, ev.month, ev.day)
-                ad = _create_agent_ad_sync(
-                    db, ev.company_id, product_name=ev.name, description=ev.guidance or f"An ad for {ev.name}",
-                    platforms=ev.platforms or ["facebook", "instagram"], agent_source="event", agent_event_id=ev.id, product_id=ev.product_id,
-                )
-                if mode in ("schedule_review", "auto_post"):
-                    scheduled_at = datetime.combine(event_date, datetime.min.time().replace(hour=10))
-                    for p in (ev.platforms or ["facebook", "instagram"]):
-                        db.add(ScheduledPost(company_id=ev.company_id, ad_id=ad.id, platform=p, scheduled_at=scheduled_at))
-                    ad.status = "scheduled" if ad.status == "ready" else ad.status
-                ev.last_run_year = today.year
+                scheduled_at = datetime.combine(event_date, datetime.min.time().replace(hour=10))
+
+                if mode == "draft_only":
+                    db.add(Notification(
+                        company_id=ev.company_id, type="agent_draft_ready",
+                        title=f"\U0001f4cb {ev.name} draft is ready to schedule",
+                        body=f"Agent Niva has prepared your {ev.name} draft ({event_date.strftime('%b %d')}). Open My Ads to review and schedule it yourself.",
+                        action_url="/app/my-ads", dismissed_by=[],
+                    ))
+
+                elif mode == "schedule_review":
+                    for p in (draft_ad.platforms or ev.platforms or ["facebook", "instagram"]):
+                        db.add(ScheduledPost(
+                            company_id=ev.company_id, ad_id=draft_ad.id,
+                            platform=p, scheduled_at=scheduled_at,
+                            status="review_required",
+                        ))
+                    draft_ad.status = "scheduled"
+                    db.add(Notification(
+                        company_id=ev.company_id, type="agent_review_required",
+                        title=f"\U0001f440 {ev.name} needs your approval before it posts",
+                        body=f"The ad for {ev.name} is scheduled for {event_date.strftime('%b %d')} but won\'t post until you approve it. Open Calendar to review and confirm.",
+                        action_url="/app/calendar", dismissed_by=[],
+                    ))
+
+                elif mode == "auto_post":
+                    for p in (draft_ad.platforms or ev.platforms or ["facebook", "instagram"]):
+                        db.add(ScheduledPost(
+                            company_id=ev.company_id, ad_id=draft_ad.id,
+                            platform=p, scheduled_at=scheduled_at,
+                            status="pending",
+                        ))
+                    draft_ad.status = "scheduled"
+                    db.add(Notification(
+                        company_id=ev.company_id, type="agent_auto_posting_soon",
+                        title=f"\U0001f916 {ev.name} ad scheduled — posts automatically on {event_date.strftime('%b %d')}",
+                        body=f"Agent Niva has scheduled your {ev.name} ad to post automatically. You have {POST_WINDOW_DAYS} days to make changes in My Ads or Calendar.",
+                        action_url="/app/calendar", dismissed_by=[],
+                    ))
+
+                ev.last_run_year = year
                 db.commit()
                 fired += 1
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("[agent-events] event=%s generation failed: %s", ev.id, exc)
-                db.rollback()
+                continue
+
+            # ── Trigger 1: create draft (lead_days before event) ───────────
+            if today == draft_date and ev.draft_run_year != year:
+                if budget_mode == "monthly_budget":
+                    month_start = datetime(year, today.month, 1)
+                    spent = db.scalar(
+                        select(func.coalesce(func.sum(GenerationJob.credits_cost), 0))
+                        .select_from(GenerationJob).join(Ad, Ad.id == GenerationJob.ad_id)
+                        .where(Ad.company_id == ev.company_id, Ad.agent_source.isnot(None), GenerationJob.created_at >= month_start)
+                    ) or 0
+                    if spent >= monthly_budget:
+                        logger.info("[agent-events] company=%s event=%s skipped — monthly budget reached", ev.company_id, ev.id)
+                        skipped_budget += 1
+                        ev.draft_run_year = year
+                        db.commit()
+                        continue
+
+                try:
+                    ad = _create_agent_ad_sync(
+                        db, ev.company_id,
+                        product_name=ev.name,
+                        description=ev.guidance or f"An ad for {ev.name}",
+                        platforms=ev.platforms or ["facebook", "instagram"],
+                        agent_source="event", agent_event_id=ev.id, product_id=ev.product_id,
+                    )
+                    ad.status = "draft"
+                    ev.draft_run_year = year
+                    mode_msg = {
+                        "draft_only":      f"Review it in My Ads and schedule it yourself before {event_date.strftime('%b %d')}.",
+                        "schedule_review": f"Edit the draft anytime before {post_date.strftime('%b %d')} — that\'s when the post is generated from it.",
+                        "auto_post":       f"Edit the draft before {post_date.strftime('%b %d')} if you\'d like changes — after that it schedules automatically.",
+                    }.get(mode, "")
+                    db.add(Notification(
+                        company_id=ev.company_id, type="agent_draft_ready",
+                        title=f"\u270f\ufe0f {ev.name} draft ready — event in {ev.lead_days} days",
+                        body=f"Agent Niva has created a draft ad for {ev.name} ({event_date.strftime('%b %d')}). {mode_msg}",
+                        action_url="/app/my-ads", dismissed_by=[],
+                    ))
+                    db.commit()
+                    fired += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[agent-events] event=%s Trigger 1 failed: %s", ev.id, exc)
+                    db.rollback()
 
         return f"fired={fired} skipped_budget={skipped_budget}"

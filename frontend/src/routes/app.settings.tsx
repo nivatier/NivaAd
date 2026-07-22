@@ -138,7 +138,6 @@ function Settings() {
   const allowed = useRequireCapability("view_settings");
 
   const { me, refresh } = useAuth();
-  const [approval, setApproval] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [showBuyCredits, setShowBuyCredits] = useState(false);
@@ -208,18 +207,6 @@ function Settings() {
           </div>
           {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
           <p className="mt-4 text-xs text-muted-foreground">Payments run through Stripe (sandbox/test mode). Manage billing opens Stripe's own portal for invoices and payment method.</p>
-        </Panel>
-
-        <Panel>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="text-sm font-semibold text-foreground">📋 Require approval before posting</div>
-              <p className="mt-1 text-xs text-muted-foreground">Not backend-wired yet (local toggle only) — full approval workflow is a later phase.</p>
-            </div>
-            <button onClick={() => setApproval((v) => !v)} className={`relative h-6 w-11 shrink-0 rounded-full transition ${approval ? "bg-gold-gradient" : "bg-muted"}`}>
-              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background transition-all ${approval ? "left-[22px]" : "left-0.5"}`} />
-            </button>
-          </div>
         </Panel>
 
         <AgentNivaSettingsPanel />

@@ -1229,6 +1229,7 @@ class AgentEventIn(BaseModel):
     platforms: list[str] = Field(min_length=1)
     product_id: uuid.UUID | None = None
     enabled: bool = True
+    approval_mode: str | None = Field(default=None, pattern="^(draft_only|schedule_review|auto_post)$")
 
 
 class AgentEventOut(BaseModel):
@@ -1241,9 +1242,22 @@ class AgentEventOut(BaseModel):
     platforms: list[str]
     product_id: str | None = None
     enabled: bool
+    approval_mode: str
     skipped_years: list[int]
     last_run_year: int | None = None
-    next_run_date: str | None = None  # computed — this year's (or next year's, if already past) trigger date, for display only
+    next_run_date: str | None = None  # computed
+
+    class Config:
+        from_attributes = True
+
+
+class NotificationOut(BaseModel):
+    id: str
+    type: str
+    title: str
+    body: str
+    action_url: str | None = None
+    created_at: datetime
 
     class Config:
         from_attributes = True

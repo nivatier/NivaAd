@@ -6,10 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.deps import get_current_user, require_capability, require_role
-from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, GenerationJob, User
+from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, GenerationJob, Notification, User
 from app.schemas import (
     AdCreateIn, AgentEventIn, AgentEventOut, AgentRecommendationOut,
-    AgentScrapeJobOut, AgentSettingsOut, AgentSettingsUpdateIn, QuickStartIn,
+    AgentScrapeJobOut, AgentSettingsOut, AgentSettingsUpdateIn, NotificationOut, QuickStartIn,
 )
 from app.services import agent_settings as agent_settings_svc
 from app.services import credits as credit_svc
@@ -37,7 +37,8 @@ def _event_out(ev: AgentEvent) -> AgentEventOut:
     return AgentEventOut(
         id=str(ev.id), name=ev.name, month=ev.month, day=ev.day, lead_days=ev.lead_days,
         guidance=ev.guidance, platforms=ev.platforms or [], product_id=str(ev.product_id) if ev.product_id else None,
-        enabled=ev.enabled, skipped_years=ev.skipped_years or [], last_run_year=ev.last_run_year,
+        enabled=ev.enabled, approval_mode=ev.approval_mode or "draft_only",
+        skipped_years=ev.skipped_years or [], last_run_year=ev.last_run_year,
         next_run_date=_next_run_date(ev),
     )
 
@@ -170,6 +171,7 @@ async def create_event(data: AgentEventIn, user: User = Depends(require_capabili
     ev = AgentEvent(
         company_id=user.company_id, name=data.name, month=data.month, day=data.day, lead_days=data.lead_days,
         guidance=data.guidance, platforms=data.platforms, product_id=data.product_id, enabled=data.enabled,
+        approval_mode=data.approval_mode or "draft_only",
     )
     db.add(ev)
     await db.commit()
@@ -187,6 +189,8 @@ async def update_event(event_id: str, data: AgentEventIn, user: User = Depends(r
         raise HTTPException(422, f"{data.month}/{data.day} isn't a valid date.")
     ev.name, ev.month, ev.day, ev.lead_days = data.name, data.month, data.day, data.lead_days
     ev.guidance, ev.platforms, ev.product_id, ev.enabled = data.guidance, data.platforms, data.product_id, data.enabled
+    if data.approval_mode:
+        ev.approval_mode = data.approval_mode
     await db.commit()
     return _event_out(ev)
 
@@ -246,3 +250,58 @@ async def update_company_agent_settings(data: AgentSettingsUpdateIn, user: User 
     and posters can use Agent Niva but can't change how it behaves."""
     updated = await agent_settings_svc.update_agent_settings(db, user.company_id, data.model_dump())
     return AgentSettingsOut(**updated)
+
+
+# ── Notifications ─────────────────────────────────────────────────────
+
+@router.get("/notifications", response_model=list[NotificationOut])
+async def list_notifications(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Returns all undismissed notifications for this company — scoped
+    company-wide so every admin sees the same pool. Ordered newest first."""
+    rows = (await db.scalars(
+        select(Notification)
+        .where(Notification.company_id == user.company_id)
+        .order_by(Notification.created_at.desc())
+        .limit(50)
+    )).all()
+    user_id = str(user.id)
+    return [
+        NotificationOut(
+            id=str(n.id), type=n.type, title=n.title, body=n.body,
+            action_url=n.action_url, created_at=n.created_at,
+        )
+        for n in rows
+        if user_id not in (n.dismissed_by or [])
+    ]
+
+
+@router.post("/notifications/{notification_id}/dismiss", response_model=list[NotificationOut])
+async def dismiss_notification(notification_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Dismisses a notification for this user only — other company
+    members still see it until they dismiss it themselves."""
+    n = await db.get(Notification, notification_id)
+    if n is None or n.company_id != user.company_id:
+        raise HTTPException(404, "No such notification")
+    dismissed = list(n.dismissed_by or [])
+    user_id = str(user.id)
+    if user_id not in dismissed:
+        dismissed.append(user_id)
+        n.dismissed_by = dismissed
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(n, "dismissed_by")
+        await db.commit()
+    # Return remaining undismissed notifications
+    rows = (await db.scalars(
+        select(Notification)
+        .where(Notification.company_id == user.company_id)
+        .order_by(Notification.created_at.desc())
+        .limit(50)
+    )).all()
+    return [
+        NotificationOut(
+            id=str(r.id), type=r.type, title=r.title, body=r.body,
+            action_url=r.action_url, created_at=r.created_at,
+        )
+        for r in rows
+        if user_id not in (r.dismissed_by or [])
+    ]
