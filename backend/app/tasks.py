@@ -138,7 +138,7 @@ def _multi_shot_video_prompt(brief: dict, shots: list[dict]) -> str:
     format OpenAI's own Sora documentation recommends for multi-shot
     sequences ("Shot 1 (0-4s): ... Shot 2 (4-8s): ..."); the model
     itself handles continuity and transitions between shots — there is
-    no video-processing/stitching step on NivaAd's side at all."""
+    no video-processing/stitching step on NivaSpark's side at all."""
     product = brief.get("product_name", "the product")
     intro = (
         f'Professional advertising video for "{product}". '
@@ -1372,7 +1372,13 @@ def generate_quick_start_recommendations(self, job_id: str):
         job.status = "running"
         db.commit()
         try:
-            site_text = scrape_company_website(job.url)
+            # If content was pre-filled (from a saved ScrapedSite), skip the crawl
+            if job.content:
+                site_text = job.content
+            else:
+                site_text = scrape_company_website(job.url)
+                job.content = site_text  # store so caller can save it as a ScrapedSite
+                db.commit()
             text_models = [m for m in get_available_models_sync(db).get("text", []) if m.get("enabled", True)]
             if not text_models:
                 raise RuntimeError("No enabled text model configured.")

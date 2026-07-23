@@ -6,10 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.deps import get_current_user, require_capability, require_role
-from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, GenerationJob, Notification, User
+from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, GenerationJob, Notification, ScrapedSite, User
 from app.schemas import (
     AdCreateIn, AgentEventIn, AgentEventOut, AgentRecommendationOut,
     AgentScrapeJobOut, AgentSettingsOut, AgentSettingsUpdateIn, NotificationOut, QuickStartIn,
+    ScrapedSiteOut, ScrapedSiteLabelIn,
 )
 from app.services import agent_settings as agent_settings_svc
 from app.services import credits as credit_svc
@@ -305,3 +306,135 @@ async def dismiss_notification(notification_id: str, user: User = Depends(get_cu
         for r in rows
         if user_id not in (r.dismissed_by or [])
     ]
+
+
+# ── Scraped Sites ─────────────────────────────────────────────────────────────
+
+@router.get("/scraped-sites", response_model=list[ScrapedSiteOut])
+async def list_scraped_sites(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """All cached site scrapes for this company, newest first."""
+    rows = (await db.scalars(
+        select(ScrapedSite)
+        .where(ScrapedSite.company_id == user.company_id)
+        .order_by(ScrapedSite.scraped_at.desc())
+    )).all()
+    return [ScrapedSiteOut.model_validate(r) for r in rows]
+
+
+@router.post("/scraped-sites", response_model=ScrapedSiteOut)
+async def save_scraped_site(
+    data: ScrapedSiteLabelIn,
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save (or update) the scraped content from a completed quick-start
+    job as a reusable ScrapedSite for this company.
+    If a row for the same URL already exists it is updated in-place;
+    otherwise a new one is created. The job must belong to this company
+    and must be in status 'ready'."""
+    from app.models import AgentScrapeJob as _Job
+    job = await db.get(_Job, job_id)
+    if not job or job.company_id != user.company_id:
+        raise HTTPException(404, "Job not found")
+    if job.status != "ready":
+        raise HTTPException(400, "Job must be completed (status=ready) before saving")
+
+    # Retrieve the scraped text — stored on the job row by the task
+    if not job.content:
+        raise HTTPException(400, "No scraped content found on this job")
+
+    # Upsert: update existing row for same URL, or create new
+    existing = await db.scalar(
+        select(ScrapedSite).where(
+            ScrapedSite.company_id == user.company_id,
+            ScrapedSite.url == job.url,
+        )
+    )
+    from datetime import datetime as _dt
+    if existing:
+        existing.label = data.label
+        existing.content = job.content
+        existing.scraped_at = _dt.utcnow()
+        await db.commit()
+        await db.refresh(existing)
+        return ScrapedSiteOut.model_validate(existing)
+    else:
+        site = ScrapedSite(
+            company_id=user.company_id,
+            url=job.url,
+            label=data.label,
+            content=job.content,
+            scraped_at=_dt.utcnow(),
+        )
+        db.add(site)
+        await db.commit()
+        await db.refresh(site)
+        return ScrapedSiteOut.model_validate(site)
+
+
+@router.patch("/scraped-sites/{site_id}", response_model=ScrapedSiteOut)
+async def rename_scraped_site(
+    site_id: str,
+    data: ScrapedSiteLabelIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rename a saved site."""
+    import uuid as _uuid
+    site = await db.get(ScrapedSite, _uuid.UUID(site_id))
+    if not site or site.company_id != user.company_id:
+        raise HTTPException(404, "Site not found")
+    site.label = data.label
+    await db.commit()
+    await db.refresh(site)
+    return ScrapedSiteOut.model_validate(site)
+
+
+@router.delete("/scraped-sites/{site_id}", status_code=204)
+async def delete_scraped_site(
+    site_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a saved site scrape."""
+    import uuid as _uuid
+    site = await db.get(ScrapedSite, _uuid.UUID(site_id))
+    if not site or site.company_id != user.company_id:
+        raise HTTPException(404, "Site not found")
+    await db.delete(site)
+    await db.commit()
+
+
+@router.post("/quick-start/from-site/{site_id}", response_model=AgentScrapeJobOut)
+async def quick_start_from_saved_site(
+    site_id: str,
+    data: "QuickStartFromSiteIn",
+    user: User = Depends(require_capability("create_ads")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate recommendations from a previously saved site scrape —
+    no re-crawl, uses the stored content directly."""
+    import uuid as _uuid
+    from app.schemas import QuickStartFromSiteIn as _In
+    site = await db.get(ScrapedSite, _uuid.UUID(site_id))
+    if not site or site.company_id != user.company_id:
+        raise HTTPException(404, "Saved site not found")
+    job = AgentScrapeJob(
+        company_id=user.company_id,
+        url=site.url,
+        count=data.count,
+        focus=data.focus or None,
+        status="queued",
+        content=site.content,  # pre-filled — task will skip scraping
+    )
+    db.add(job)
+    await db.flush()
+    job_id = job.id
+    await db.commit()
+    from app.worker import celery_app as _celery
+    _celery.send_task("app.generate_quick_start_recommendations", args=[str(job_id)])
+    return AgentScrapeJobOut.model_validate(job)

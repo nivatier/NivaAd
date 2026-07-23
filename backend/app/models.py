@@ -414,4 +414,22 @@ class AgentScrapeJob(Base):
     focus: Mapped[str | None] = mapped_column(String(500), nullable=True)  # optional subject/topic the customer wants to focus on
     status: Mapped[str] = mapped_column(String(20), default="queued")  # "queued" | "running" | "ready" | "failed"
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)  # cached scrape text — set by the task after scraping, or pre-filled when generating from a saved ScrapedSite (skips re-crawl)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ScrapedSite(Base):
+    """Cached website scrape for Agent Niva's Quick Start — stores the
+    raw extracted text from a previous scrape so the company doesn't
+    need to re-crawl every time they want new ad ideas from the same
+    site. One row per unique URL per company; re-scraping updates the
+    existing row rather than creating a duplicate. The `label` field
+    lets the user give it a friendly name (e.g. "Main site", "Blog")
+    instead of showing the raw URL everywhere."""
+    __tablename__ = "scraped_sites"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
+    url: Mapped[str] = mapped_column(String(500))
+    label: Mapped[str] = mapped_column(String(200), default="")  # user-editable friendly name; falls back to url in UI when blank
+    content: Mapped[str] = mapped_column(Text)  # raw scraped text, capped at MAX_CHARS (same limit as live scrape)
+    scraped_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

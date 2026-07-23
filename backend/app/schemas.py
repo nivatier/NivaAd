@@ -1261,3 +1261,24 @@ class NotificationOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── Scraped Sites ────────────────────────────────────────────────────
+
+class ScrapedSiteOut(BaseModel):
+    id: uuid.UUID
+    url: str
+    label: str
+    scraped_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ScrapedSiteLabelIn(BaseModel):
+    label: str = Field(max_length=200)
+
+
+class QuickStartFromSiteIn(BaseModel):
+    count: int = Field(default=5, ge=1, le=10)
+    focus: str | None = Field(default=None, max_length=500)

@@ -510,6 +510,8 @@ function EventsTab() {
 
 // ── Quick Start Tab ────────────────────────────────────────────────────
 
+type SavedSite = { id: string; url: string; label: string; scraped_at: string };
+
 function QuickStartTab() {
   const [url, setUrl] = useState("");
   const [count, setCount] = useState(5);
@@ -519,11 +521,20 @@ function QuickStartTab() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const navigate = useNavigate();
+  // Saved sites
+  const [savedSites, setSavedSites] = useState<SavedSite[]>([]);
+  const [selectedSiteId, setSelectedSiteId] = useState<string>(""); // "" = use URL input
+  const [showSavePrompt, setShowSavePrompt] = useState(false);
+  const [saveLabel, setSaveLabel] = useState("");
+  const [saving, setSaving] = useState(false);
 
   async function loadRecs() {
     try { setRecs(await api("/agent/recommendations")); } catch (e: any) { setErr(e.message || "Could not load recommendations"); }
   }
-  useEffect(() => { loadRecs(); }, []);
+  async function loadSavedSites() {
+    try { setSavedSites(await api("/agent/scraped-sites")); } catch { /* non-fatal */ }
+  }
+  useEffect(() => { loadRecs(); loadSavedSites(); }, []);
 
   useEffect(() => {
     if (!job || !GENERATING.has(job.status)) return;
@@ -531,19 +542,52 @@ function QuickStartTab() {
       try {
         const j = await api(`/agent/quick-start/${job.id}`);
         setJob(j);
-        if (j.status === "ready") loadRecs();
+        if (j.status === "ready") {
+          loadRecs();
+          // Only prompt to save if this was a fresh scrape (no pre-selected saved site)
+          if (!selectedSiteId) setShowSavePrompt(true);
+        }
       } catch { /* transient */ }
     }, 3000);
     return () => clearInterval(t);
-  }, [job]);
+  }, [job, selectedSiteId]);
 
   async function start() {
-    if (!url.trim()) return;
-    setErr("");
+    setErr(""); setShowSavePrompt(false);
     try {
-      const j = await api("/agent/quick-start", { method: "POST", body: { url: url.trim(), count, focus: focus.trim() || null } });
+      let j;
+      if (selectedSiteId) {
+        // Use cached scrape — no re-crawl
+        j = await api(`/agent/quick-start/from-site/${selectedSiteId}`, { method: "POST", body: { count, focus: focus.trim() || null } });
+      } else {
+        if (!url.trim()) return;
+        j = await api("/agent/quick-start", { method: "POST", body: { url: url.trim(), count, focus: focus.trim() || null } });
+      }
       setJob(j);
     } catch (e: any) { setErr(e.message || "Could not start"); }
+  }
+
+  async function saveSite() {
+    if (!job) return;
+    setSaving(true);
+    try {
+      const site = await api(`/agent/scraped-sites?job_id=${job.id}`, { method: "POST", body: { label: saveLabel.trim() || job.url } });
+      setSavedSites((prev) => {
+        const without = prev.filter((s) => s.id !== site.id);
+        return [site, ...without];
+      });
+      setShowSavePrompt(false);
+      setSaveLabel("");
+    } catch (e: any) { setErr(e.message || "Could not save site"); }
+    setSaving(false);
+  }
+
+  async function deleteSavedSite(siteId: string) {
+    try {
+      await api(`/agent/scraped-sites/${siteId}`, { method: "DELETE" });
+      setSavedSites((prev) => prev.filter((s) => s.id !== siteId));
+      if (selectedSiteId === siteId) setSelectedSiteId("");
+    } catch (e: any) { setErr(e.message || "Could not delete"); }
   }
 
   async function createFrom(rec: Recommendation) {
@@ -566,23 +610,57 @@ function QuickStartTab() {
       <div className="rounded-2xl border border-white/[0.07] bg-gradient-to-b from-white/[0.06] to-white/[0.02] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.04),0_8px_32px_-8px_rgba(0,0,0,0.3)] backdrop-blur-sm">
         <div className="text-sm font-semibold text-foreground mb-1">Study a website, get ad ideas <NovaHint hintKey="page:quick-start" /></div>
         <p className="text-xs text-muted-foreground mb-4">Give Agent Niva your URL — it reads the site and recommends concrete ad ideas you can turn into real ads with one click.</p>
+
+        {/* Saved sites dropdown — shown only when there are saved sites */}
+        {savedSites.length > 0 && (
+          <div className="mb-3">
+            <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Use a saved site</label>
+            <div className="flex items-center gap-2">
+              <select value={selectedSiteId} onChange={(e) => setSelectedSiteId(e.target.value)}
+                className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
+                <option value="">— Enter a new URL instead —</option>
+                {savedSites.map((s) => (
+                  <option key={s.id} value={s.id}>{s.label || s.url} · {new Date(s.scraped_at).toLocaleDateString()}</option>
+                ))}
+              </select>
+              {selectedSiteId && (
+                <button onClick={() => deleteSavedSite(selectedSiteId)}
+                  title="Delete this saved site"
+                  className="shrink-0 rounded-full border border-destructive/40 px-3 py-2 text-[11px] text-destructive hover:bg-destructive/10 transition">
+                  🗑 Delete
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* URL input — shown only when no saved site is selected */}
+        {!selectedSiteId && (
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="yourcompany.com"
+              className="flex-1 min-w-[200px] rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition" />
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-2">
-          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="yourcompany.com"
-            className="flex-1 min-w-[200px] rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition" />
           <select value={count} onChange={(e) => setCount(Number(e.target.value))}
             className="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
             {[1, 2, 3, 5, 8, 10].map((n) => <option key={n} value={n}>{n} idea{n > 1 ? "s" : ""}</option>)}
           </select>
-          <div className="w-full">
-            <RequirementChecklist items={[
-              { label: "Website URL", met: !!url.trim() },
-            ]} />
-          </div>
-          <button onClick={start} disabled={!url.trim() || (job !== null && GENERATING.has(job.status))}
+          {!selectedSiteId && (
+            <div className="w-full">
+              <RequirementChecklist items={[
+                { label: "Website URL", met: !!url.trim() },
+              ]} />
+            </div>
+          )}
+          <button onClick={start}
+            disabled={(!selectedSiteId && !url.trim()) || (job !== null && GENERATING.has(job.status))}
             className="rounded-full bg-gold-gradient px-5 py-2.5 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50 transition">
-            {job && GENERATING.has(job.status) ? "Studying site…" : "Get ad ideas"}
+            {job && GENERATING.has(job.status) ? "Studying site…" : selectedSiteId ? "Get new ideas →" : "Get ad ideas"}
           </button>
         </div>
+
         <div className="mt-3">
           <label className="text-xs font-medium text-foreground">Focus on a specific subject <span className="font-normal text-muted-foreground">(optional)</span></label>
           <textarea value={focus} onChange={(e) => setFocus(e.target.value)} placeholder="e.g. our summer sale, the new iOS app, our loyalty programme…"
@@ -590,6 +668,31 @@ function QuickStartTab() {
             className="mt-1.5 w-full rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none transition resize-none" />
           <div className="mt-1 text-right text-[10px] text-muted-foreground">{focus.length}/500</div>
         </div>
+
+        {/* Save prompt — appears after a fresh scrape completes */}
+        {showSavePrompt && job?.status === "ready" && (
+          <div className="mt-4 rounded-xl border border-primary/30 bg-primary/5 p-3">
+            <div className="text-xs font-semibold text-foreground mb-1">💾 Save this site for next time?</div>
+            <p className="text-[11px] text-muted-foreground mb-2">Store the scraped content so you can generate new ideas from it without re-crawling.</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                value={saveLabel}
+                onChange={(e) => setSaveLabel(e.target.value)}
+                placeholder={`Label (e.g. "Main site") — optional`}
+                className="flex-1 min-w-[160px] rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none"
+              />
+              <button onClick={saveSite} disabled={saving}
+                className="rounded-full bg-gold-gradient px-4 py-1.5 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50">
+                {saving ? "Saving…" : "Save"}
+              </button>
+              <button onClick={() => setShowSavePrompt(false)}
+                className="rounded-full border border-white/10 px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+                Not now
+              </button>
+            </div>
+          </div>
+        )}
+
         {job?.status === "failed" && <div className="mt-2 text-xs text-destructive">Couldn't do that: {job.error}</div>}
       </div>
 
