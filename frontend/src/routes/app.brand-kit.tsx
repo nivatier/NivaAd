@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell, Panel, Field, Input } from "@/components/app-shell";
+import { NovaHint } from "@/components/nova-hint";
 import { api, type AvailableModelsOut } from "@/lib/api";
 import { useRequireCapability } from "@/hooks/use-require-capability";
 
 export const Route = createFileRoute("/app/brand-kit")({
   component: BrandKit,
-  head: () => ({ meta: [{ title: "Brand Kit — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Brand Kit — NivaSpark" }] }),
 });
 
 const COLORS = ["#c9a84c", "#22d3ee", "#ef4444", "#f59e0b", "#10b981", "#3b82f6", "#e5e7eb", "#a855f7"];
@@ -526,6 +527,7 @@ function BrandKit() {
   const [tab, setTab] = useState<"logo" | "image" | "video" | "shots">("logo");
   const [logos, setLogos] = useState<BrandLogo[] | null>(null);
   const [logoBusy, setLogoBusy] = useState<string | null>(null); // "upload" | a logo id currently being activated/deleted
+  const [previewLogo, setPreviewLogo] = useState<BrandLogo | null>(null);
   const [color, setColor] = useState(COLORS[0]);
   const [tagline, setTagline] = useState("");
   const [placement, setPlacement] = useState("bottom-right");
@@ -623,10 +625,10 @@ function BrandKit() {
         {err && <div className="mb-4 text-xs text-destructive">{err}</div>}
 
         <div className="mb-6 flex gap-2 border-b border-border pb-3">
-          {([["logo", "Logo & Brand"], ["image", "Image padding"], ["video", "Video padding"], ["shots", "Video Intro (Start) and Credit (End) shots"]] as const).map(([k, l]) => (
+          {([["logo", "Logo & Brand", "page:brand-logo"], ["image", "Image padding", "page:image-padding"], ["video", "Video padding", "page:video-padding"], ["shots", "Video Intro (Start) and Credit (End) shots", "page:video-shots"]] as const).map(([k, l, hk]) => (
             <button key={k} onClick={() => setTab(k)}
               className={`rounded-full px-4 py-2 text-xs font-semibold ${tab === k ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}>
-              {l}
+              {l} <NovaHint hintKey={hk} />
             </button>
           ))}
         </div>
@@ -644,7 +646,18 @@ function BrandKit() {
               <div className="mt-4 flex flex-wrap gap-4">
                 {logos.map((logo) => (
                   <div key={logo.id} className={`flex w-32 flex-col items-center gap-2 rounded-2xl border p-3 ${logo.is_active ? "border-primary bg-primary/5" : "border-border"}`}>
-                    <img src={logo.url} alt="logo" className="h-16 w-16 rounded-xl object-cover border border-border" />
+                    {/* Thumbnail — click opens full preview */}
+                    <button
+                      type="button"
+                      onClick={() => setPreviewLogo(logo)}
+                      className="group relative h-16 w-16 overflow-hidden rounded-xl border border-border focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      aria-label="Preview logo"
+                    >
+                      <img src={logo.url} alt="logo" className="h-full w-full object-contain" />
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-[10px] font-medium text-white opacity-0 transition-all duration-200 group-hover:bg-black/40 group-hover:opacity-100 rounded-xl">
+                        Preview
+                      </span>
+                    </button>
                     {logo.is_active ? (
                       <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-semibold text-primary">✓ Active</span>
                     ) : (
@@ -665,6 +678,69 @@ function BrandKit() {
                     <input type="file" accept="image/*" className="hidden" onChange={uploadLogo} disabled={logoBusy === "upload"} />
                   </label>
                 )}
+              </div>
+            )}
+
+            {/* Logo preview lightbox */}
+            {previewLogo && (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-6"
+                onClick={() => setPreviewLogo(null)}
+              >
+                <div
+                  className="relative max-w-lg w-full rounded-2xl border border-border bg-card p-6 shadow-[var(--shadow-glass-full)]"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="mb-4 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-foreground">Logo preview</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        Uploaded {new Date(previewLogo.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                        {previewLogo.is_active && <span className="ml-2 text-primary font-medium">· Active</span>}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setPreviewLogo(null)}
+                      className="grid h-8 w-8 place-items-center rounded-full border border-border text-muted-foreground hover:text-foreground"
+                      aria-label="Close preview"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  {/* Checkerboard background to show transparency */}
+                  <div
+                    className="flex items-center justify-center rounded-xl border border-border overflow-hidden"
+                    style={{
+                      minHeight: 220,
+                      backgroundImage: "linear-gradient(45deg, #1a1a2e 25%, transparent 25%), linear-gradient(-45deg, #1a1a2e 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #1a1a2e 75%), linear-gradient(-45deg, transparent 75%, #1a1a2e 75%)",
+                      backgroundSize: "16px 16px",
+                      backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0px",
+                    }}
+                  >
+                    <img
+                      src={previewLogo.url}
+                      alt="Logo preview"
+                      className="max-h-56 max-w-full object-contain p-4"
+                    />
+                  </div>
+                  <div className="mt-4 flex gap-2 justify-end">
+                    {!previewLogo.is_active && (
+                      <button
+                        onClick={() => { activateLogo(previewLogo.id); setPreviewLogo(null); }}
+                        disabled={logoBusy === previewLogo.id}
+                        className="rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs text-primary hover:bg-primary/20 disabled:opacity-50"
+                      >
+                        Set as active
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setPreviewLogo(null)}
+                      className="rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 

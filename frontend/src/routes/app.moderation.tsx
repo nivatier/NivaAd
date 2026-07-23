@@ -6,7 +6,7 @@ import { useRequireCapability } from "@/hooks/use-require-capability";
 
 export const Route = createFileRoute("/app/moderation")({
   component: Moderation,
-  head: () => ({ meta: [{ title: "Moderation — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Moderation — NivaSpark" }] }),
 });
 
 type GuardrailRule = { id: string; phrase: string; created_at: string };

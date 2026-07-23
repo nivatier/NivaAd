@@ -174,5 +174,5 @@ def generate_video(prompt: str, model: str, duration: int = 6, resolution: str =
             raise RuntimeError(status.get("error") or f"Video generation {status['status']}")
         # "pending" or "in_progress" — keep polling
 
-    raise RuntimeError(f"Video generation timed out after {MAX_WAIT_SECONDS}s — the job may still complete on OpenRouter's side, but NivaAd stopped waiting.")
+    raise RuntimeError(f"Video generation timed out after {MAX_WAIT_SECONDS}s — the job may still complete on OpenRouter's side, but NivaSpark stopped waiting.")
 

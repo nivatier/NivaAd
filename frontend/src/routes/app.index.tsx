@@ -2,17 +2,19 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { AppShell, Panel, Field, Input, Chip } from "@/components/app-shell";
 import { PLATFORMS, estimateCost, PlatformPreviewCard, PromptConfirmModal, type AdVariant } from "@/components/create-ad-parts";
+import { useConnectedPlatforms } from "@/hooks/use-connected-platforms";
 import { CAROUSEL_MAX_IMAGES, CAROUSEL_MIN_IMAGES, MAX_VIDEO_SHOTS } from "@/lib/constants";
 import { TimezoneSelect } from "@/components/timezone-picker";
 import { detectedTimeZone, zonedWallTimeToUtcNaiveIso } from "@/lib/timezone";
 import { api, type AvailableModelsOut } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { NovaHint } from "@/components/nova-hint";
+import { RequirementChecklist } from "@/components/requirement-checklist";
 import { ImageThemeGrid, VideoThemeGrid, mapImageTheme, type ImageTheme, type ImageThemeField, type VideoTheme } from "@/components/theme-gallery-grid";
 
 export const Route = createFileRoute("/app/")({
   component: CreateAd,
-  head: () => ({ meta: [{ title: "Create Ad — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Create Ad — NivaSpark" }] }),
 });
 
 const STEPS = ["Setup", "Generate", "Preview & Post"];
@@ -320,7 +322,10 @@ function CreateAd() {
   const [imagePrompt, setImagePrompt] = useState("");
   const [videoPrompt, setVideoPrompt] = useState("");
 
-  const chosenPlatforms = PLATFORMS.filter((p) => selected[p.id]);
+  const connectedPlatformIds = useConnectedPlatforms();
+  // Only show platforms the company has connected; fall back to all while loading
+  const availablePlatforms = connectedPlatformIds === null ? PLATFORMS : PLATFORMS.filter((p) => connectedPlatformIds.has(p.id));
+  const chosenPlatforms = availablePlatforms.filter((p) => selected[p.id]);
   const isDataUrlVideoFrame = !!videoFrameImage && videoFrameImage.startsWith("data:");
   const isDataUrlImageReference = !!imageReferenceImage && imageReferenceImage.startsWith("data:");
   const selectedTextModel = availableModels?.text.find((m) => m.id === textModelId) || null;
@@ -1436,7 +1441,7 @@ function CreateAd() {
           <div className="mt-4 rounded-xl border border-border bg-background/40 p-5">
             <div className="text-sm font-medium text-foreground">📢 Target platforms</div>
             <div className="mt-4 grid gap-3 md:grid-cols-3">
-              {PLATFORMS.map((p) => (
+              {availablePlatforms.map((p) => (
                 <button key={p.id} onClick={() => setSelected((s) => ({ ...s, [p.id]: !s[p.id] }))}
                   className={`flex items-center gap-3 rounded-xl p-4 border ${selected[p.id] ? "border-primary bg-primary/5" : "border-border"}`}>
                   <span className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-slate-950" style={{ background: p.color }}>{p.tag}</span>
@@ -1446,6 +1451,18 @@ function CreateAd() {
             </div>
           </div>
 
+          <RequirementChecklist items={[
+            { label: "Product name", met: !!productName.trim() },
+            { label: "Description (min 10 characters)", met: description.trim().length >= 10 },
+            { label: "Target audience", met: !!audience.trim() },
+            { label: "At least one output (text / image / video)", met: !!(outputs.text || outputs.image || outputs.video) },
+            { label: "At least one platform selected", met: chosenPlatforms.length > 0 },
+            { label: connectedPlatformIds !== null && availablePlatforms.length === 0 ? "No platforms connected yet — visit Connections" : "", met: availablePlatforms.length > 0 },
+            { label: "Image model selected", met: !outputs.image || !!imageModelId },
+            { label: "Video model selected", met: !outputs.video || !!videoModelId },
+            { label: "Text model selected", met: !outputs.text || !!textModelId },
+            { label: "Sufficient credits", met: credits >= cost },
+          ]} />
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <button
               disabled={!productName.trim() || description.trim().length < 10 || !audience.trim() || (!outputs.text && !outputs.image && !outputs.video) || !videoShotsValid || (outputs.video && videoMode === "first_last_frame" && (!videoFrameImage || !videoEndFrameImage)) || chosenPlatforms.length === 0 || credits < cost || previewBusy}

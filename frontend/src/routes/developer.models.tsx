@@ -6,7 +6,7 @@ import { devApi, type DeveloperModel, type DeveloperModelsOut, type OpenRouterCa
 
 export const Route = createFileRoute("/developer/models")({
   component: DeveloperModels,
-  head: () => ({ meta: [{ title: "Models — NivaAd Developer" }] }),
+  head: () => ({ meta: [{ title: "Models — NivaSpark Developer" }] }),
 });
 
 const COMMON_RESOLUTIONS = ["480p", "720p", "1080p"];

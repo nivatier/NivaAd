@@ -1,11 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell, EmptyState, Field, Input } from "@/components/app-shell";
+import { RequirementChecklist } from "@/components/requirement-checklist";
 import { api, type ProductOut } from "@/lib/api";
 
 export const Route = createFileRoute("/app/products")({
   component: Products,
-  head: () => ({ meta: [{ title: "Product Library — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Product Library — NivaSpark" }] }),
 });
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -106,6 +107,11 @@ function Products() {
             <input type="file" accept="image/*" onChange={handlePhoto} className="text-xs text-muted-foreground" />
           </Field>
           {err && <div className="md:col-span-2 text-xs text-destructive">{err}</div>}
+          <div className="md:col-span-2">
+            <RequirementChecklist items={[
+              { label: "Product name", met: !!name.trim() },
+            ]} />
+          </div>
           <div className="md:col-span-2 flex gap-2">
             <button type="submit" disabled={!name.trim() || saving} className="rounded-full bg-gold-gradient px-5 py-2 text-xs font-semibold text-background disabled:opacity-50">
               {saving ? "Saving…" : "Save product"}

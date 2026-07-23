@@ -7,7 +7,7 @@ from app.routers import (
     billing, brand_kit, campaigns, connections, developer, moderation, products, schedule, webhooks,
 )
 
-app = FastAPI(title="NivaAd API", version="0.14.0")
+app = FastAPI(title="NivaSpark API", version="0.14.0")
 
 app.add_middleware(
     CORSMiddleware,

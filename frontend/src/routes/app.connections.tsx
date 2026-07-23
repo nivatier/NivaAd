@@ -6,7 +6,7 @@ import { useRequireCapability } from "@/hooks/use-require-capability";
 
 export const Route = createFileRoute("/app/connections")({
   component: Connections,
-  head: () => ({ meta: [{ title: "Connections — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Connections — NivaSpark" }] }),
 });
 
 const CONNECTION_META: Record<string, { initials: string; color: string }> = {

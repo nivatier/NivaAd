@@ -8,7 +8,7 @@ import { useRequireCapability } from "@/hooks/use-require-capability";
 
 export const Route = createFileRoute("/app/settings")({
   component: Settings,
-  head: () => ({ meta: [{ title: "Settings — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Settings — NivaSpark" }] }),
 });
 
 const TIER_LABEL: Record<string, string> = { free: "Free", starter: "Starter", growth: "Growth", pro: "Pro" };

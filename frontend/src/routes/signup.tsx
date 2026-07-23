@@ -5,7 +5,7 @@ import { useAuth } from "@/hooks/use-auth";
 
 export const Route = createFileRoute("/signup")({
   component: Signup,
-  head: () => ({ meta: [{ title: "Create your account — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Create your account — NivaSpark" }] }),
 });
 
 function Signup() {
@@ -40,9 +40,10 @@ function Signup() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
       <div className="glow-border w-full max-w-md rounded-2xl border border-border bg-card/70 p-8 backdrop-blur-xl">
         <Link to="/" className="mb-6 flex items-center gap-2.5">
-          <div className="grid h-9 w-9 place-items-center rounded-lg bg-gold-gradient font-display font-bold text-background">N</div>
-          <div className="leading-tight">
-            <div className="font-display font-bold tracking-tight">NivaAd</div>
+          <img src="/logo-icon.png" alt="NivaSpark icon" className="h-9 w-9 shrink-0 object-contain" />
+          <div className="leading-tight min-w-0">
+            <img src="/logo-wording-dark.png" alt="NivaSpark" className="hidden dark:block h-7 object-contain object-left" />
+            <img src="/logo-wording-light.png" alt="NivaSpark" className="block dark:hidden h-7 object-contain object-left" />
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Powered by Nivatier</div>
           </div>
         </Link>

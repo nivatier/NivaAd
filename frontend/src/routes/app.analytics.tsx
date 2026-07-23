@@ -8,7 +8,7 @@ import { api } from "@/lib/api";
 
 export const Route = createFileRoute("/app/analytics")({
   component: Analytics,
-  head: () => ({ meta: [{ title: "Analytics — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Analytics — NivaSpark" }] }),
 });
 
 type AnalyticsData = {
@@ -142,7 +142,7 @@ function Analytics() {
             </Panel>
           </div>
 
-          <p className="mt-6 text-xs text-muted-foreground">Post-performance metrics (reach, clicks) appear here once direct platform posting is live — everything above reflects your real activity in NivaAd today.</p>
+          <p className="mt-6 text-xs text-muted-foreground">Post-performance metrics (reach, clicks) appear here once direct platform posting is live — everything above reflects your real activity in NivaSpark today.</p>
         </>
       )}
     </AppShell>

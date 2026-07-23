@@ -80,6 +80,9 @@ export function RobotMascot() {
   const [introAudioUrl, setIntroAudioUrl] = useState<string | null>(null);
   const introAudioUrlRef = useRef<string | null>(null); // ref so intro timer closure always reads latest URL
   const [muted, setMuted] = useState<boolean>(() => localStorage.getItem("novaMuted") === "true");
+  // ref mirrors muted so async callbacks (fetchAndCacheAudio .then) always
+  // read the CURRENT value, not the stale closure value from when they were scheduled
+  const mutedRef = useRef(muted);
   // Gates the login intro so it always types out the actual developer-configured
   // intro text (and matches whatever audio was generated for it) instead of a
   // hardcoded fallback string that could silently drift out of sync with it.
@@ -87,6 +90,7 @@ export function RobotMascot() {
   const introTextRef = useRef<string | null>(null);
 
   useEffect(() => {
+    mutedRef.current = muted;
     localStorage.setItem("novaMuted", String(muted));
     if (muted) {
       window.speechSynthesis?.cancel();
@@ -96,28 +100,40 @@ export function RobotMascot() {
 
   const audioElRef = useRef<HTMLAudioElement | null>(null);
 
+  // Stop audio when the user navigates away (page visibility change or tab blur)
+  useEffect(() => {
+    function stopAudio() {
+      window.speechSynthesis?.cancel();
+      if (audioElRef.current) {
+        audioElRef.current.pause();
+        audioElRef.current.currentTime = 0;
+      }
+    }
+    document.addEventListener("visibilitychange", stopAudio);
+    return () => document.removeEventListener("visibilitychange", stopAudio);
+  }, []);
+
   function playOrSpeak(text: string, audioUrl?: string) {
-    if (muted) return;
+    // Use mutedRef (not muted state) so this is always current even inside async callbacks
+    if (mutedRef.current) return;
     if (audioUrl) {
       if (audioElRef.current) { audioElRef.current.pause(); audioElRef.current.currentTime = 0; }
-      // fetchAndCacheAudio: checks IndexedDB first (instant), falls back to
-      // network fetch + stores result so subsequent plays need zero network.
-      // When audio is regenerated the URL changes, so the new URL just misses
-      // cache and fetches once — no manual invalidation needed.
       fetchAndCacheAudio(audioUrl)
         .then((blobUrl) => {
+          // Check mutedRef again — mute may have been toggled while the fetch was in flight
+          if (mutedRef.current) return;
           const a = new Audio(blobUrl);
           audioElRef.current = a;
           a.play().catch(() => speak(text));
         })
-        .catch(() => speak(text)); // network/IDB failure → fall back to speech synthesis
+        .catch(() => speak(text));
     } else {
       speak(text);
     }
   }
 
   function speak(text: string) {
-    if (muted || !window.speechSynthesis) return;
+    if (mutedRef.current || !window.speechSynthesis) return;
     window.speechSynthesis.cancel();
     const utt = new SpeechSynthesisUtterance(text);
     utt.rate = 1.0;

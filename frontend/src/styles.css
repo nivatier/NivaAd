@@ -70,158 +70,278 @@
 
 :root {
   --radius: 0.75rem;
-  /* Cyber Violet — bg #050810, primary #A855F7 (violet), secondary #00E5FF (cyan) */
-  --background: oklch(0.08 0.02 265);   /* deeper — gives glass cards more contrast to float against */
-  --foreground: oklch(0.97 0.02 280);
-  --surface: oklch(0.14 0.03 270);
-  --elevated: oklch(0.19 0.05 275);
-  --card: oklch(0.18 0.04 270);         /* lifted from 0.16 — more visible glass layer */
-  --card-foreground: oklch(0.97 0.02 280);
-  --popover: oklch(0.16 0.03 270);
-  --popover-foreground: oklch(0.97 0.02 280);
-  --gold: oklch(0.66 0.26 305);            /* violet #A855F7 */
-  --gold-glow: oklch(0.85 0.18 210);       /* cyan #00E5FF */
+
+  /* ── DARK MODE: Slate Indigo "Cosmic Command" ──────────────────────
+     Deep navy-indigo base with violet+cyan accent scene behind glass.
+     Three-layer depth: bg (#090912) → sidebar/topbar glass → cards.
+  ─────────────────────────────────────────────────────────────────── */
+  --background: oklch(0.07 0.025 270);    /* #090912 — deep indigo-navy */
+  --foreground: oklch(0.96 0.015 280);
+  --surface: oklch(0.12 0.035 275);
+  --elevated: oklch(0.17 0.05 272);
+  --card: oklch(0.17 0.045 272);          /* indigo-tinted glass base */
+  --card-foreground: oklch(0.96 0.015 280);
+  --popover: oklch(0.14 0.04 270);
+  --popover-foreground: oklch(0.96 0.015 280);
+
+  /* Brand — violet primary, cyan secondary (unchanged) */
+  --gold: oklch(0.66 0.26 305);
+  --gold-glow: oklch(0.85 0.18 210);
   --gold-muted: oklch(0.5 0.2 305);
   --primary: oklch(0.66 0.26 305);
   --primary-foreground: oklch(0.11 0.02 265);
   --secondary: oklch(0.85 0.18 210);
   --secondary-foreground: oklch(0.11 0.02 265);
-  --muted: oklch(0.22 0.04 275);
-  --muted-foreground: oklch(0.72 0.05 280);
-  --accent: oklch(0.32 0.12 300);
-  --accent-foreground: oklch(0.97 0.02 280);
+
+  --muted: oklch(0.20 0.045 272);
+  --muted-foreground: oklch(0.72 0.05 280);   /* brighter — section labels like LIBRARY, SETUP */
+  --accent: oklch(0.30 0.10 295);
+  --accent-foreground: oklch(0.96 0.015 280);
   --destructive: oklch(0.62 0.22 25);
   --destructive-foreground: oklch(0.98 0.01 85);
-  --border: oklch(0.38 0.07 285);
-  --input: oklch(0.34 0.06 275);
+
+  /* Border — slightly indigo-tinted so glass edges have colour */
+  --border: oklch(0.30 0.06 280);
+  --input: oklch(0.15 0.04 272);
   --ring: oklch(0.66 0.26 305);
+
+  /* Charts */
   --chart-1: oklch(0.66 0.26 305);
   --chart-2: oklch(0.85 0.18 210);
   --chart-3: oklch(0.58 0.24 315);
   --chart-4: oklch(0.7 0.2 260);
   --chart-5: oklch(0.9 0.14 200);
-  --sidebar: oklch(0.09 0.02 265);
-  --sidebar-foreground: oklch(0.92 0.03 280);
+
+  /* Sidebar tokens — tuned for semi-transparent indigo glass */
+  --sidebar: oklch(0.10 0.03 270);
+  --sidebar-foreground: oklch(0.95 0.02 278);          /* bright white-lavender text */
   --sidebar-primary: oklch(0.66 0.26 305);
   --sidebar-primary-foreground: oklch(0.11 0.02 265);
-  --sidebar-accent: oklch(0.19 0.04 280);
-  --sidebar-accent-foreground: oklch(0.97 0.02 280);
-  --sidebar-border: oklch(0.26 0.05 285);
+  --sidebar-accent: oklch(0.32 0.08 275 / 0.70);       /* lighter hover — was 0.20, almost invisible */
+  --sidebar-accent-foreground: oklch(0.97 0.015 280);
+  --sidebar-border: oklch(0.50 0.10 282 / 0.35);       /* visible indigo border */
   --sidebar-ring: oklch(0.66 0.26 305);
+
+  /* Gradients & glows */
   --gradient-gold: linear-gradient(135deg, oklch(0.66 0.26 305), oklch(0.85 0.18 210));
+  --gradient-neon: linear-gradient(135deg, oklch(0.66 0.26 305), oklch(0.6 0.25 300) 50%, oklch(0.85 0.18 210));
   --shadow-gold: 0 8px 40px -12px oklch(0.66 0.26 305 / 0.55);
   --neon-cyan: oklch(0.85 0.18 210);
   --neon-magenta: oklch(0.66 0.26 305);
   --neon-violet: oklch(0.6 0.25 300);
-  --shadow-neon: 0 0 24px oklch(0.66 0.26 305 / 0.6), 0 0 60px oklch(0.85 0.18 210 / 0.28);
-  --shadow-neon-cyan: 0 0 20px oklch(0.85 0.18 210 / 0.65), 0 0 48px oklch(0.85 0.18 210 / 0.3);
-  --gradient-neon: linear-gradient(135deg, oklch(0.66 0.26 305), oklch(0.6 0.25 300) 50%, oklch(0.85 0.18 210));
+  --shadow-neon: 0 0 24px oklch(0.66 0.26 305 / 0.55), 0 0 60px oklch(0.85 0.18 210 / 0.25);
+  --shadow-neon-cyan: 0 0 20px oklch(0.85 0.18 210 / 0.6), 0 0 48px oklch(0.85 0.18 210 / 0.28);
 
-  /* ── Glass system ─────────────────────────────────────────────────── */
-  /* Outer drop shadow — deep ambient + primary colour bleed */
-  --shadow-glass:        0 0 0 1px oklch(1 0 0 / 0.08), 0 4px 24px -4px oklch(0 0 0 / 0.7), 0 16px 48px -8px oklch(0 0 0 / 0.5), 0 0 80px -20px oklch(0.66 0.26 305 / 0.35), 0 0 40px -15px oklch(0.85 0.18 210 / 0.12);
-  /* Lifted state on hover */
-  --shadow-glass-hover:  0 0 0 1px oklch(1 0 0 / 0.13), 0 8px 32px -4px oklch(0 0 0 / 0.75), 0 24px 64px -8px oklch(0 0 0 / 0.55), 0 0 100px -16px oklch(0.66 0.26 305 / 0.45), 0 0 50px -12px oklch(0.85 0.18 210 / 0.18);
-  /* Inner top-edge rim — simulates light catching the glass lip */
-  --shadow-inner-rim:    inset 0 1px 0 oklch(1 0 0 / 0.18), inset 0 -1px 0 oklch(0 0 0 / 0.35), inset 1px 0 0 oklch(1 0 0 / 0.04), inset -1px 0 0 oklch(1 0 0 / 0.04);
-  /* Combined: outer glow + inner rim — use on cards */
-  --shadow-glass-full:   0 0 0 1px oklch(1 0 0 / 0.08), 0 4px 24px -4px oklch(0 0 0 / 0.7), 0 16px 48px -8px oklch(0 0 0 / 0.5), 0 0 80px -20px oklch(0.66 0.26 305 / 0.35), 0 0 40px -15px oklch(0.85 0.18 210 / 0.12), inset 0 1px 0 oklch(1 0 0 / 0.18), inset 0 -1px 0 oklch(0 0 0 / 0.35);
-  /* Focused input glow */
-  --shadow-input-focus:  0 0 0 1px oklch(0.66 0.26 305 / 0.7), 0 0 20px -2px oklch(0.66 0.26 305 / 0.45), inset 0 1px 3px oklch(0 0 0 / 0.4);
-  /* Ambient colour bleed behind a card */
-  --glow-ambient-violet: radial-gradient(70% 55% at 50% 110%, oklch(0.66 0.26 305 / 0.22), transparent), radial-gradient(50% 40% at 80% 0%, oklch(0.85 0.18 210 / 0.08), transparent);
+  /* ── Glass system — dark ──────────────────────────────────────────
+     Coloured rim light (violet) instead of pure white.
+     Sidebar/topbar: blur(14px), cards: blur(10px).
+  ─────────────────────────────────────────────────────────────────── */
+  --shadow-glass:        0 0 0 1px oklch(1 0 0 / 0.07), 0 4px 24px -4px oklch(0 0 0 / 0.65), 0 16px 48px -8px oklch(0 0 0 / 0.45), 0 0 80px -20px oklch(0.66 0.26 305 / 0.30), 0 0 40px -15px oklch(0.85 0.18 210 / 0.10);
+  --shadow-glass-hover:  0 0 0 1px oklch(1 0 0 / 0.12), 0 8px 32px -4px oklch(0 0 0 / 0.70), 0 24px 64px -8px oklch(0 0 0 / 0.50), 0 0 100px -16px oklch(0.66 0.26 305 / 0.40), 0 0 50px -12px oklch(0.85 0.18 210 / 0.15);
+  --shadow-inner-rim:    inset 0 1px 0 oklch(0.78 0.15 290 / 0.22), inset 0 -1px 0 oklch(0 0 0 / 0.30), inset 1px 0 0 oklch(0.78 0.15 290 / 0.06), inset -1px 0 0 oklch(0.78 0.15 290 / 0.06);
+  --shadow-glass-full:   0 0 0 1px oklch(1 0 0 / 0.07), 0 4px 24px -4px oklch(0 0 0 / 0.65), 0 16px 48px -8px oklch(0 0 0 / 0.45), 0 0 80px -20px oklch(0.66 0.26 305 / 0.30), 0 0 40px -15px oklch(0.85 0.18 210 / 0.10), inset 0 1px 0 oklch(0.78 0.15 290 / 0.22), inset 0 -1px 0 oklch(0 0 0 / 0.30);
+  --shadow-input-focus:  0 0 0 1px oklch(0.66 0.26 305 / 0.65), 0 0 20px -2px oklch(0.66 0.26 305 / 0.40), inset 0 1px 3px oklch(0 0 0 / 0.4);
+  --glow-ambient-violet: radial-gradient(70% 55% at 50% 110%, oklch(0.66 0.26 305 / 0.18), transparent), radial-gradient(50% 40% at 80% 0%, oklch(0.85 0.18 210 / 0.07), transparent);
+
+  /* Theme-aware sidebar/topbar glass — used in app-shell inline styles */
+  --glass-sidebar:  oklch(0.22 0.07 272 / 0.42);
+  --glass-topbar:   oklch(0.20 0.06 270 / 0.38);
+  --glass-sidebar-shadow: inset 0 1px 0 oklch(0.78 0.15 290 / 0.22), inset 1px 0 0 oklch(0.78 0.15 290 / 0.06);
+  --glass-topbar-shadow:  inset 0 1px 0 oklch(0.78 0.15 290 / 0.18), 0 1px 0 oklch(0 0 0 / 0.08), 0 4px 24px -8px oklch(0 0 0 / 0.22);
+  --glass-blur-sidebar: blur(14px) saturate(1.5);
+  --glass-blur-topbar:  blur(12px) saturate(1.4);
+  /* Visible indigo border for sidebar/topbar panels */
+  --glass-panel-border: oklch(0.72 0.14 285 / 0.35);
+
+  /* Background scene — the vivid colour that bleeds through the glass */
+  --bg-scene: radial-gradient(ellipse 90% 70% at 10% 5%, oklch(0.45 0.22 295 / 0.65) 0%, transparent 52%),
+              radial-gradient(ellipse 70% 60% at 85% 85%, oklch(0.38 0.18 258 / 0.50) 0%, transparent 52%),
+              radial-gradient(ellipse 55% 50% at 55% 45%, oklch(0.72 0.16 218 / 0.25) 0%, transparent 52%),
+              radial-gradient(ellipse 40% 35% at 72% 18%, oklch(0.55 0.20 305 / 0.35) 0%, transparent 48%);
 }
 
-.dark {
-  color-scheme: dark;
+/* In dark mode, html carries the background scene — body must be transparent */
+html.dark body {
+  background-color: transparent;
+  color: var(--color-foreground);
 }
 
-/* Light theme — blue sky: airy white base with soft cyan-to-azure sky wash
-   and slow-drifting cloud-like blobs. */
+/* Dark mode nav — explicit overrides so nav items are clearly readable
+   on the semi-transparent frosted sidebar glass                        */
+html.dark nav a:not([class*="bg-primary"]) {
+  color: oklch(0.88 0.03 278);
+}
+html.dark nav a:not([class*="bg-primary"]):hover {
+  background: oklch(0.32 0.08 275 / 0.55) !important;
+  color: oklch(0.97 0.02 280) !important;
+}
+/* Section labels: LIBRARY, SETUP, INSIGHTS, CREATE */
+html.dark nav div[class*="text-muted-foreground"] {
+  color: oklch(0.72 0.08 282) !important;
+}
+
+/* ── LIGHT MODE: Golden Sand "Warm Premium" ────────────────────────────
+   Warm amber-gold base (#fffdf5) with an amber-to-orange gradient scene
+   behind white frosted glass. CTAs shift to amber-orange to match.
+─────────────────────────────────────────────────────────────────────── */
 html.light {
   color-scheme: light;
-  --background: oklch(0.985 0.01 240);
-  --foreground: oklch(0.22 0.06 260);
-  --surface: oklch(0.97 0.02 235);
-  --elevated: oklch(0.99 0.008 235);
-  --card: oklch(1 0 0 / 0.78);
-  --card-foreground: oklch(0.22 0.06 260);
+
+  --background: oklch(0.992 0.008 85);   /* #fffdf5 — warm white with golden tint */
+  --foreground: oklch(0.22 0.05 60);     /* deep warm-brown text */
+  --surface: oklch(0.975 0.012 80);
+  --elevated: oklch(0.995 0.005 85);
+  --card: oklch(1 0 0 / 0.92);
+  --card-foreground: oklch(0.22 0.05 60);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.22 0.06 260);
-  --gold: oklch(0.62 0.18 240);
-  --gold-glow: oklch(0.8 0.13 220);
-  --gold-muted: oklch(0.72 0.12 235);
-  --primary: oklch(0.58 0.19 240);
-  --primary-foreground: oklch(0.99 0.005 240);
-  --secondary: oklch(0.75 0.14 220);
-  --secondary-foreground: oklch(0.2 0.05 260);
-  --muted: oklch(0.94 0.02 235);
-  --muted-foreground: oklch(0.44 0.05 260);
-  --accent: oklch(0.9 0.06 230);
-  --accent-foreground: oklch(0.22 0.06 240);
+  --popover-foreground: oklch(0.22 0.05 60);
+
+  /* Brand — amber primary, orange secondary in light mode */
+  --gold: oklch(0.65 0.18 55);           /* rich amber */
+  --gold-glow: oklch(0.75 0.16 45);      /* orange-gold glow */
+  --gold-muted: oklch(0.78 0.12 65);
+  --primary: oklch(0.60 0.18 52);        /* amber — replaces blue for light mode */
+  --primary-foreground: oklch(0.99 0.005 85);
+  --secondary: oklch(0.70 0.16 42);      /* orange */
+  --secondary-foreground: oklch(0.99 0.005 85);
+
+  --muted: oklch(0.95 0.015 78);
+  --muted-foreground: oklch(0.45 0.06 60);
+  --accent: oklch(0.92 0.04 75);
+  --accent-foreground: oklch(0.28 0.07 55);
   --destructive: oklch(0.62 0.22 25);
   --destructive-foreground: oklch(0.99 0.005 85);
-  --border: oklch(0.88 0.025 230);
-  --input: oklch(0.95 0.02 235);
-  --ring: oklch(0.58 0.19 240);
-  --sidebar: oklch(0.97 0.025 230 / 0.85);
-  --sidebar-foreground: oklch(0.25 0.06 260);
-  --sidebar-primary: oklch(0.58 0.19 240);
-  --sidebar-primary-foreground: oklch(0.99 0.005 240);
-  --sidebar-accent: oklch(0.92 0.04 220);
-  --sidebar-accent-foreground: oklch(0.22 0.06 260);
-  --sidebar-border: oklch(0.88 0.025 230);
-  --sidebar-ring: oklch(0.58 0.19 240);
-  --gradient-gold: linear-gradient(135deg, oklch(0.58 0.19 240), oklch(0.8 0.13 220));
-  --gradient-neon: linear-gradient(135deg, oklch(0.58 0.19 240), oklch(0.7 0.16 230) 50%, oklch(0.85 0.11 210));
-  --shadow-gold: 0 12px 40px -14px oklch(0.58 0.19 240 / 0.4);
-  --shadow-neon: 0 0 24px oklch(0.62 0.18 240 / 0.3), 0 0 60px oklch(0.8 0.13 220 / 0.22);
-  --shadow-neon-cyan: 0 0 20px oklch(0.8 0.13 220 / 0.45), 0 0 44px oklch(0.7 0.16 230 / 0.22);
 
-  --shadow-glass:        0 0 0 1px oklch(0.58 0.19 240 / 0.08), 0 4px 24px -4px oklch(0 0 0 / 0.08), 0 16px 48px -8px oklch(0 0 0 / 0.06), 0 0 60px -20px oklch(0.58 0.19 240 / 0.12);
-  --shadow-glass-hover:  0 0 0 1px oklch(0.58 0.19 240 / 0.14), 0 8px 32px -4px oklch(0 0 0 / 0.12), 0 24px 64px -8px oklch(0 0 0 / 0.08), 0 0 80px -16px oklch(0.58 0.19 240 / 0.18);
-  --shadow-inner-rim:    inset 0 1px 0 oklch(1 0 0 / 0.7), inset 0 -1px 0 oklch(0.58 0.19 240 / 0.08);
-  --shadow-glass-full:   0 0 0 1px oklch(0.58 0.19 240 / 0.08), 0 4px 24px -4px oklch(0 0 0 / 0.08), 0 16px 48px -8px oklch(0 0 0 / 0.06), 0 0 60px -20px oklch(0.58 0.19 240 / 0.12), inset 0 1px 0 oklch(1 0 0 / 0.7), inset 0 -1px 0 oklch(0.58 0.19 240 / 0.08);
-  --shadow-input-focus:  0 0 0 1px oklch(0.58 0.19 240 / 0.5), 0 0 16px -2px oklch(0.58 0.19 240 / 0.2), inset 0 1px 3px oklch(0 0 0 / 0.06);
-  --glow-ambient-violet: radial-gradient(60% 50% at 50% 100%, oklch(0.58 0.19 240 / 0.08), transparent);
+  /* Border — warm amber tint for crisp glass edges */
+  --border: oklch(0.86 0.03 75);
+  --input: oklch(0.97 0.01 80);
+  --ring: oklch(0.60 0.18 52);
+
+  /* Charts — warm-toned */
+  --chart-1: oklch(0.60 0.18 52);
+  --chart-2: oklch(0.70 0.16 42);
+  --chart-3: oklch(0.75 0.14 30);
+  --chart-4: oklch(0.55 0.14 65);
+  --chart-5: oklch(0.80 0.12 80);
+
+  /* Sidebar — warm-tinted glass base */
+  --sidebar: oklch(0.99 0.006 82 / 0.88);
+  --sidebar-foreground: oklch(0.25 0.06 58);
+  --sidebar-primary: oklch(0.60 0.18 52);
+  --sidebar-primary-foreground: oklch(0.99 0.005 85);
+  --sidebar-accent: oklch(0.93 0.03 72);
+  --sidebar-accent-foreground: oklch(0.28 0.07 55);
+  --sidebar-border: oklch(0.84 0.035 72);
+  --sidebar-ring: oklch(0.60 0.18 52);
+
+  /* Gradients — amber to orange (matches the warm scene) */
+  --gradient-gold: linear-gradient(135deg, oklch(0.60 0.18 52), oklch(0.72 0.18 38));
+  --gradient-neon: linear-gradient(135deg, oklch(0.60 0.18 52), oklch(0.68 0.17 45) 50%, oklch(0.75 0.15 30));
+  --shadow-gold: 0 12px 40px -14px oklch(0.60 0.18 52 / 0.45);
+  --shadow-neon: 0 0 24px oklch(0.60 0.18 52 / 0.28), 0 0 60px oklch(0.70 0.16 42 / 0.18);
+  --shadow-neon-cyan: 0 0 20px oklch(0.70 0.16 42 / 0.40), 0 0 44px oklch(0.68 0.17 45 / 0.20);
+
+  /* ── Glass system — light ─────────────────────────────────────────
+     White rim light (top edge catches daylight).
+     Stronger opacity 55–62% vs dark 35–40% (light-on-light needs it).
+     Coloured border (amber) so glass edges read on white backgrounds.
+  ─────────────────────────────────────────────────────────────────── */
+  --shadow-glass:        0 0 0 1px oklch(0.60 0.18 52 / 0.10), 0 4px 24px -4px oklch(0 0 0 / 0.08), 0 16px 48px -8px oklch(0 0 0 / 0.05), 0 0 60px -20px oklch(0.60 0.18 52 / 0.10);
+  --shadow-glass-hover:  0 0 0 1px oklch(0.60 0.18 52 / 0.18), 0 8px 32px -4px oklch(0 0 0 / 0.12), 0 24px 64px -8px oklch(0 0 0 / 0.07), 0 0 80px -16px oklch(0.60 0.18 52 / 0.15);
+  --shadow-inner-rim:    inset 0 1px 0 oklch(1 0 0 / 0.92), inset 0 -1px 0 oklch(0.60 0.18 52 / 0.08);
+  --shadow-glass-full:   0 0 0 1px oklch(0.60 0.18 52 / 0.10), 0 4px 20px -4px oklch(0 0 0 / 0.08), 0 12px 40px -8px oklch(0 0 0 / 0.05), 0 0 60px -20px oklch(0.60 0.18 52 / 0.10), inset 0 1px 0 oklch(1 0 0 / 0.92), inset 0 -1px 0 oklch(0.60 0.18 52 / 0.06);
+  --shadow-input-focus:  0 0 0 1px oklch(0.60 0.18 52 / 0.55), 0 0 16px -2px oklch(0.60 0.18 52 / 0.22), inset 0 1px 3px oklch(0 0 0 / 0.05);
+  --glow-ambient-violet: radial-gradient(60% 50% at 50% 100%, oklch(0.60 0.18 52 / 0.07), transparent);
+
+  /* Theme-aware sidebar/topbar glass — light mode: white frosted, amber border */
+  --glass-sidebar:  oklch(1 0 0 / 0.68);
+  --glass-topbar:   oklch(1 0 0 / 0.62);
+  --glass-sidebar-shadow: inset 0 1px 0 oklch(1 0 0 / 0.95), 2px 0 12px oklch(0.60 0.18 52 / 0.05);
+  --glass-topbar-shadow:  inset 0 1px 0 oklch(1 0 0 / 0.95), 0 1px 0 oklch(0.60 0.18 52 / 0.06), 0 4px 24px -8px oklch(0 0 0 / 0.06);
+  --glass-blur-sidebar: blur(14px) saturate(1.15);
+  --glass-blur-topbar:  blur(12px) saturate(1.15);
+  /* Visible amber border for sidebar/topbar panels */
+  --glass-panel-border: oklch(0.60 0.18 52 / 0.22);
+
+  /* Background scene — warm amber-gold radials behind glass */
+  --bg-scene: radial-gradient(ellipse 88% 65% at 10% 5%, oklch(0.85 0.14 68 / 0.32) 0%, transparent 55%),
+              radial-gradient(ellipse 70% 55% at 88% 85%, oklch(0.80 0.16 45 / 0.24) 0%, transparent 55%),
+              radial-gradient(ellipse 55% 48% at 50% 50%, oklch(0.90 0.10 78 / 0.15) 0%, transparent 55%);
 }
 
-/* Sky gradient: pale white at the top fading to soft azure, with drifting cloud blobs */
+/* Golden Sand body — rich warm amber scene, not grey */
 html.light body {
-  background-color: oklch(0.99 0.005 240);
+  background-color: oklch(0.985 0.018 82);
   background-image:
-    linear-gradient(to bottom, oklch(0.995 0.003 240) 0%, oklch(0.95 0.04 230) 55%, oklch(0.88 0.07 230) 100%),
-    radial-gradient(55% 45% at 15% 20%, oklch(1 0 0 / 0.9), transparent 65%),
-    radial-gradient(50% 40% at 82% 30%, oklch(1 0 0 / 0.85), transparent 65%),
-    radial-gradient(60% 45% at 40% 85%, oklch(1 0 0 / 0.8), transparent 65%),
-    radial-gradient(45% 35% at 88% 78%, oklch(1 0 0 / 0.85), transparent 65%);
-  background-attachment: fixed;
-  background-blend-mode: normal, screen, screen, screen, screen;
+    /* Top-left: rich warm amber bloom */
+    radial-gradient(ellipse 75% 60% at 8% 0%,  oklch(0.88 0.14 72 / 0.55) 0%, transparent 60%),
+    /* Top-right: soft peach-coral accent */
+    radial-gradient(ellipse 55% 45% at 92% 5%,  oklch(0.84 0.16 48 / 0.40) 0%, transparent 55%),
+    /* Centre: warm cream fill so the mid-page doesn't go grey */
+    radial-gradient(ellipse 80% 60% at 50% 50%, oklch(0.96 0.025 80 / 0.60) 0%, transparent 65%),
+    /* Bottom-right: deep amber anchor */
+    radial-gradient(ellipse 60% 50% at 90% 95%, oklch(0.82 0.18 52 / 0.35) 0%, transparent 55%),
+    /* Base gradient: warm cream → golden tan */
+    linear-gradient(160deg, oklch(0.997 0.006 90) 0%, oklch(0.975 0.028 74) 50%, oklch(0.955 0.038 60) 100%);
 }
+/* Warm daylight highlights — brightens corners so nothing looks grey */
 html.light body::before {
   content: "";
   position: fixed;
-  inset: -15%;
+  inset: 0;
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(30% 22% at 25% 30%, oklch(1 0 0 / 0.9), transparent 70%),
-    radial-gradient(26% 18% at 70% 25%, oklch(1 0 0 / 0.85), transparent 70%),
-    radial-gradient(28% 20% at 50% 75%, oklch(1 0 0 / 0.85), transparent 70%),
-    radial-gradient(22% 16% at 85% 65%, oklch(1 0 0 / 0.8), transparent 70%);
-  filter: blur(24px);
-  animation: cloud-drift 40s ease-in-out infinite alternate;
+    radial-gradient(40% 30% at 15% 20%, oklch(1 0 0 / 0.82), transparent 70%),
+    radial-gradient(35% 25% at 82% 15%, oklch(1 0.01 88 / 0.78), transparent 70%),
+    radial-gradient(30% 22% at 50% 88%, oklch(0.99 0.02 78 / 0.65), transparent 70%);
 }
 
-@keyframes cloud-drift {
-  0%   { transform: translate3d(0, 0, 0) scale(1); }
-  50%  { transform: translate3d(3%, -1.5%, 0) scale(1.04); }
-  100% { transform: translate3d(-2%, 2%, 0) scale(1.02); }
-}
-
-/* Soften glow text in light mode so it doesn't burn on the sky */
+/* Warm amber glow on text in Golden Sand light mode */
 html.light .text-glow {
-  text-shadow: 0 0 18px oklch(0.8 0.13 220 / 0.35), 0 0 32px oklch(0.58 0.19 240 / 0.2);
+  text-shadow: 0 0 18px oklch(0.75 0.16 55 / 0.30), 0 0 32px oklch(0.65 0.18 52 / 0.18);
+}
+
+/* ── Tutorial CTA box — theme-aware ───────────────────────────────────
+   Dark mode: deep indigo-navy (original feel).
+   Light mode: rich warm amber-gold so it stands out on the warm page.
+────────────────────────────────────────────────────────────────────── */
+.tutorial-cta-box {
+  background: linear-gradient(135deg,
+    oklch(0.14 0.04 290 / 0.90) 0%,
+    oklch(0.12 0.03 270 / 0.95) 50%,
+    oklch(0.14 0.04 255 / 0.90) 100%);
+}
+.tutorial-cta-wash {
+  background:
+    radial-gradient(60% 80% at 25% 40%, oklch(0.85 0.2 200 / 0.12), transparent 70%),
+    radial-gradient(50% 70% at 75% 60%, oklch(0.7 0.24 300 / 0.10), transparent 70%);
+}
+html.light .tutorial-cta-box {
+  background: linear-gradient(135deg,
+    oklch(0.62 0.18 52 / 0.92) 0%,
+    oklch(0.58 0.20 44 / 0.95) 45%,
+    oklch(0.55 0.19 36 / 0.92) 100%);
+  border-color: oklch(0.65 0.20 52 / 0.50) !important;
+}
+html.light .tutorial-cta-box h3,
+html.light .tutorial-cta-box p,
+html.light .tutorial-cta-box .text-muted-foreground {
+  color: oklch(0.97 0.01 85) !important;
+}
+html.light .tutorial-cta-box .text-primary {
+  color: oklch(0.97 0.01 85) !important;
+}
+html.light .tutorial-cta-box .border-primary\/40 {
+  border-color: oklch(1 0 0 / 0.30) !important;
+}
+html.light .tutorial-cta-box .bg-primary\/10 {
+  background: oklch(1 0 0 / 0.15) !important;
+}
+html.light .tutorial-cta-wash {
+  background:
+    radial-gradient(60% 80% at 25% 40%, oklch(0.92 0.14 68 / 0.25), transparent 70%),
+    radial-gradient(50% 70% at 75% 60%, oklch(0.85 0.18 42 / 0.20), transparent 70%);
 }
 
 @layer base {
@@ -234,17 +354,29 @@ html.light .text-glow {
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
-    background-image:
-      radial-gradient(1200px 700px at 12% -10%, oklch(0.66 0.26 305 / 0.18), transparent 60%),
-      radial-gradient(1000px 600px at 100% 10%, oklch(0.85 0.18 210 / 0.12), transparent 60%),
-      radial-gradient(900px 700px at 50% 110%, oklch(0.6 0.25 300 / 0.14), transparent 60%);
-    background-attachment: fixed;
+    min-height: 100vh;
   }
 
   h1, h2, h3, h4 {
     font-family: var(--font-display);
     letter-spacing: -0.02em;
   }
+}
+
+/* ── Dark mode — Slate Indigo scene on html element ──────────────────
+   Applied to <html> (which carries the .dark class) so it renders
+   behind every element in the document, including the AppShell div.
+   The AppShell root div is set to bg-transparent so this shows through.
+─────────────────────────────────────────────────────────────────────── */
+html.dark {
+  color-scheme: dark;
+  background-color: oklch(0.07 0.025 270);
+  background-image:
+    radial-gradient(ellipse 80% 55% at 8%  0%,  oklch(0.45 0.22 295 / 0.65) 0%, transparent 52%),
+    radial-gradient(ellipse 65% 50% at 88% 85%, oklch(0.38 0.18 258 / 0.50) 0%, transparent 52%),
+    radial-gradient(ellipse 55% 45% at 50% 50%, oklch(0.72 0.16 218 / 0.25) 0%, transparent 52%),
+    radial-gradient(ellipse 40% 35% at 72% 18%, oklch(0.55 0.20 305 / 0.35) 0%, transparent 48%);
+  min-height: 100vh;
 }
 
 @utility text-gold-gradient {
@@ -347,8 +479,8 @@ html.light .text-glow {
   100% { transform: translate3d(0, 30%, 0) rotate(4deg)  scale(1.25); }
 }
 @keyframes aurora-hue {
-  0%, 100% { filter: blur(18px) saturate(1.2) hue-rotate(0deg); }
-  50%      { filter: blur(22px) saturate(1.4) hue-rotate(40deg); }
+  0%, 100% { filter: hue-rotate(0deg); }
+  50%      { filter: hue-rotate(30deg); }
 }
 
 @property --border-angle {
@@ -367,9 +499,11 @@ html.light .text-glow {
 @utility animate-drift { animation: drift 14s ease-in-out infinite; }
 @utility animate-sheen { animation: sheen 3.5s ease-in-out infinite; }
 @utility animate-wave { animation: wave-x 14s linear infinite; }
-@utility animate-aurora-a { animation: aurora-a 14s ease-in-out infinite; }
-@utility animate-aurora-b { animation: aurora-b 18s ease-in-out infinite; }
-@utility animate-aurora-c { animation: aurora-c 22s ease-in-out infinite; }
+/* Aurora blobs: will-change promotes each blob to its own GPU layer,
+   contain:paint stops repaints escaping the container boundary */
+@utility animate-aurora-a { animation: aurora-a 14s ease-in-out infinite; will-change: transform; contain: paint; }
+@utility animate-aurora-b { animation: aurora-b 18s ease-in-out infinite; will-change: transform; contain: paint; }
+@utility animate-aurora-c { animation: aurora-c 22s ease-in-out infinite; will-change: transform; contain: paint; }
 @utility animate-aurora-hue { animation: aurora-hue 16s ease-in-out infinite; }
 
 /* Moving light border — a rotating conic-gradient stroke around any rounded element.
@@ -434,13 +568,12 @@ html.light .text-glow {
     oklch(from var(--card) l c h / 0.55) 0%,
     oklch(from var(--card) l c h / 0.35) 100%
   );
-  backdrop-filter: blur(16px) saturate(1.4);
-  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  backdrop-filter: blur(10px) saturate(1.2);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
   border: 1px solid oklch(1 0 0 / 0.09);
   box-shadow: var(--shadow-glass-full);
   transition: box-shadow 0.22s ease, transform 0.22s ease, border-color 0.22s ease;
 
-  /* Ambient colour bleed — very subtle violet glow below the card */
   &::after {
     content: "";
     position: absolute;
@@ -467,8 +600,8 @@ html.light .text-glow {
     oklch(from var(--card) l c h / 0.72) 0%,
     oklch(from var(--card) l c h / 0.52) 100%
   );
-  backdrop-filter: blur(24px) saturate(1.5);
-  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
   border: 1px solid oklch(1 0 0 / 0.11);
   box-shadow: var(--shadow-glass-full);
 }
@@ -488,53 +621,102 @@ html.light .text-glow {
   }
 }
 
-/* ── Global card override ─────────────────────────────────────────────
- * Scoped to html.dark only — light theme is handled separately below.
+/* ── Dark mode card overrides — Slate Indigo glass ───────────────────
+ * ALL in @layer base so specificity beats Tailwind utilities.
+ * Covers EVERY bg-card, bg-background, bg-white, bg-muted variant
+ * including plain (no opacity modifier) used by Panel component.
  * ─────────────────────────────────────────────────────────────────── */
 @layer base {
+  /* ── bg-card: ALL variants including plain bg-card ── */
+  html.dark .bg-card,
+  html.dark .bg-card\/95,
+  html.dark .bg-card\/90,
+  html.dark .bg-card\/80,
+  html.dark .bg-card\/70,
   html.dark .bg-card\/60,
   html.dark .bg-card\/40,
+  html.dark .bg-card\/30,
   html.dark .bg-card\/20 {
     background: linear-gradient(
       145deg,
-      oklch(from var(--card) l c h / 0.55) 0%,
-      oklch(from var(--card) l c h / 0.35) 100%
+      oklch(0.28 0.07 272 / 0.68) 0%,
+      oklch(0.23 0.06 268 / 0.58) 100%
     ) !important;
-    backdrop-filter: blur(16px) saturate(1.4);
-    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    backdrop-filter: blur(10px) saturate(1.4) brightness(1.12);
+    -webkit-backdrop-filter: blur(10px) saturate(1.4) brightness(1.12);
+    box-shadow: inset 0 1px 0 oklch(0.85 0.15 290 / 0.28), 0 4px 16px oklch(0 0 0 / 0.26);
   }
 
-  html.dark .bg-card:not(.bg-card\/60):not(.bg-card\/40):not(.bg-card\/20) {
+  /* ── bg-background: ALL variants including plain bg-background ── */
+  html.dark .bg-background,
+  html.dark .bg-background\/80,
+  html.dark .bg-background\/70,
+  html.dark .bg-background\/60,
+  html.dark .bg-background\/50,
+  html.dark .bg-background\/40,
+  html.dark .bg-background\/30,
+  html.dark .bg-background\/25 {
     background: linear-gradient(
       145deg,
-      oklch(from var(--card) l c h / 0.72) 0%,
-      oklch(from var(--card) l c h / 0.52) 100%
+      oklch(0.32 0.08 272 / 0.75) 0%,
+      oklch(0.28 0.07 268 / 0.65) 100%
     ) !important;
-    backdrop-filter: blur(20px) saturate(1.5);
-    -webkit-backdrop-filter: blur(20px) saturate(1.5);
+    backdrop-filter: blur(8px) saturate(1.35) brightness(1.14);
+    -webkit-backdrop-filter: blur(8px) saturate(1.35) brightness(1.14);
+    box-shadow: inset 0 1px 0 oklch(0.85 0.15 290 / 0.30), 0 2px 8px oklch(0 0 0 / 0.20);
   }
 
+  /* ── bg-white: ALL variants including plain bg-white ── */
+  html.dark .bg-white,
+  html.dark .bg-white\/40,
+  html.dark .bg-white\/8,
+  html.dark .bg-white\/5,
+  html.dark .bg-white\/4,
+  html.dark .bg-white\/3 {
+    background: linear-gradient(
+      145deg,
+      oklch(0.30 0.08 272 / 0.70) 0%,
+      oklch(0.26 0.07 268 / 0.60) 100%
+    ) !important;
+    backdrop-filter: blur(8px) saturate(1.3) brightness(1.12);
+    -webkit-backdrop-filter: blur(8px) saturate(1.3) brightness(1.12);
+    box-shadow: inset 0 1px 0 oklch(0.85 0.15 290 / 0.26), 0 2px 8px oklch(0 0 0 / 0.18);
+  }
+
+  /* ── bg-muted: ALL variants including plain bg-muted ── */
+  html.dark .bg-muted,
+  html.dark .bg-muted\/40,
+  html.dark .bg-muted\/30,
+  html.dark .bg-muted\/20 {
+    background: oklch(0.26 0.07 272 / 0.60) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  /* ── Borders — visible indigo hairline ── */
   html.dark .border-border {
-    border-color: oklch(1 0 0 / 0.09) !important;
+    border-color: oklch(0.72 0.12 285 / 0.32) !important;
+  }
+  html.dark .border-border\/60,
+  html.dark .border-border\/70 {
+    border-color: oklch(0.72 0.12 285 / 0.22) !important;
   }
 
   html.dark [class*="rounded"][class*="border-border"] {
-    box-shadow: var(--shadow-glass-full);
     transition: box-shadow 0.22s ease, transform 0.22s ease;
   }
 
-  html.dark [class*="rounded"][class*="border-border"]:where(button, a, [role="button"]) {
-    &:hover {
-      box-shadow: var(--shadow-glass-hover);
-      transform: translateY(-1px);
-    }
+  html.dark [class*="rounded"][class*="border-border"]:where(button, a, [role="button"]):hover {
+    box-shadow: var(--shadow-glass-hover);
+    transform: translateY(-1px);
   }
 
+  /* ── Inputs — recessed indigo ── */
   html.dark .bg-input\/40 {
-    background: oklch(from var(--input) l c h / 0.30) !important;
+    background: oklch(0.18 0.055 272 / 0.80) !important;
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
-    box-shadow: inset 0 1px 3px oklch(0 0 0 / 0.2), inset 0 -1px 0 oklch(1 0 0 / 0.04);
+    box-shadow: inset 0 2px 4px oklch(0 0 0 / 0.38), inset 0 -1px 0 oklch(1 0 0 / 0.08) !important;
   }
 
   html.dark input.bg-input\/40:focus,
@@ -545,34 +727,38 @@ html.light .text-glow {
   }
 }
 
-/* Light-mode glass adjustments — lighter blur, white card glass */
+
+
+
+/* Light-mode glass — Golden Sand: white frosted panels over warm scene */
 html.light {
   .bg-card\/60,
   .bg-card\/40,
   .bg-card\/20 {
     background: linear-gradient(
       145deg,
-      oklch(1 0 0 / 0.78) 0%,
-      oklch(1 0 0 / 0.60) 100%
+      oklch(1 0 0 / 0.62) 0%,
+      oklch(1 0 0 / 0.50) 100%
     ) !important;
-    backdrop-filter: blur(16px) saturate(1.3);
-    -webkit-backdrop-filter: blur(16px) saturate(1.3);
+    backdrop-filter: blur(10px) saturate(1.15);
+    -webkit-backdrop-filter: blur(10px) saturate(1.15);
     box-shadow: var(--shadow-glass-full);
   }
 
   .bg-card:not(.bg-card\/60):not(.bg-card\/40):not(.bg-card\/20) {
     background: linear-gradient(
       145deg,
-      oklch(1 0 0 / 0.92) 0%,
-      oklch(1 0 0 / 0.78) 100%
+      oklch(1 0 0 / 0.88) 0%,
+      oklch(1 0 0 / 0.72) 100%
     ) !important;
-    backdrop-filter: blur(20px) saturate(1.4);
-    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    backdrop-filter: blur(12px) saturate(1.15);
+    -webkit-backdrop-filter: blur(12px) saturate(1.15);
     box-shadow: var(--shadow-glass-full);
   }
 
+  /* Amber-tinted border so glass edges read on warm background */
   .border-border {
-    border-color: oklch(0.58 0.19 240 / 0.12) !important;
+    border-color: oklch(0.60 0.18 52 / 0.14) !important;
   }
 
   [class*="rounded"][class*="border-border"] {
@@ -581,10 +767,10 @@ html.light {
   }
 
   .bg-input\/40 {
-    background: oklch(1 0 0 / 0.65) !important;
+    background: oklch(1 0 0 / 0.72) !important;
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
-    box-shadow: inset 0 1px 3px oklch(0 0 0 / 0.06), inset 0 -1px 0 oklch(1 0 0 / 0.8);
+    box-shadow: inset 0 1px 3px oklch(0 0 0 / 0.05), inset 0 -1px 0 oklch(1 0 0 / 0.85);
   }
 
   input.bg-input\/40:focus,
@@ -595,42 +781,4 @@ html.light {
   }
 }
 
-/* Dark-mode glass — explicit overrides since --card lightness (0.18) is
-   too close to --background (0.08) for the CSS-variable approach to read
-   distinctly. Use fixed oklch values tuned for the Cyber Violet palette. */
-html.dark {
-  .bg-card\/60,
-  .bg-card\/40,
-  .bg-card\/20 {
-    background: linear-gradient(
-      145deg,
-      oklch(0.21 0.05 275 / 0.75) 0%,
-      oklch(0.17 0.04 270 / 0.55) 100%
-    ) !important;
-    backdrop-filter: blur(20px) saturate(1.6) brightness(1.05);
-    -webkit-backdrop-filter: blur(20px) saturate(1.6) brightness(1.05);
-  }
 
-  .bg-card:not(.bg-card\/60):not(.bg-card\/40):not(.bg-card\/20) {
-    background: linear-gradient(
-      145deg,
-      oklch(0.23 0.06 275 / 0.88) 0%,
-      oklch(0.18 0.04 270 / 0.70) 100%
-    ) !important;
-    backdrop-filter: blur(24px) saturate(1.7) brightness(1.08);
-    -webkit-backdrop-filter: blur(24px) saturate(1.7) brightness(1.08);
-  }
-
-  /* Slightly brighter border in dark mode so the glass edge reads */
-  .border-border {
-    border-color: oklch(1 0 0 / 0.11) !important;
-  }
-
-  /* Inputs — visibly recessed into the card */
-  .bg-input\/40 {
-    background: oklch(0.13 0.03 270 / 0.8) !important;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    box-shadow: inset 0 2px 4px oklch(0 0 0 / 0.5), inset 0 -1px 0 oklch(1 0 0 / 0.06) !important;
-  }
-}

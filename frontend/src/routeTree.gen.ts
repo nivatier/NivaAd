@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as Index_oldRouteImport } from './routes/index_old'
 import { Route as DeveloperLoginRouteImport } from './routes/developer-login'
 import { Route as AcceptInviteRouteImport } from './routes/accept-invite'
 import { Route as IndexRouteImport } from './routes/index'
@@ -52,6 +53,11 @@ const PricingRoute = PricingRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const Index_oldRoute = Index_oldRouteImport.update({
+  id: '/index_old',
+  path: '/index_old',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DeveloperLoginRoute = DeveloperLoginRouteImport.update({
@@ -189,6 +195,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/accept-invite': typeof AcceptInviteRoute
   '/developer-login': typeof DeveloperLoginRoute
+  '/index_old': typeof Index_oldRoute
   '/login': typeof LoginRoute
   '/pricing': typeof PricingRoute
   '/signup': typeof SignupRoute
@@ -220,6 +227,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/accept-invite': typeof AcceptInviteRoute
   '/developer-login': typeof DeveloperLoginRoute
+  '/index_old': typeof Index_oldRoute
   '/login': typeof LoginRoute
   '/pricing': typeof PricingRoute
   '/signup': typeof SignupRoute
@@ -252,6 +260,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/accept-invite': typeof AcceptInviteRoute
   '/developer-login': typeof DeveloperLoginRoute
+  '/index_old': typeof Index_oldRoute
   '/login': typeof LoginRoute
   '/pricing': typeof PricingRoute
   '/signup': typeof SignupRoute
@@ -285,6 +294,7 @@ export interface FileRouteTypes {
     | '/'
     | '/accept-invite'
     | '/developer-login'
+    | '/index_old'
     | '/login'
     | '/pricing'
     | '/signup'
@@ -316,6 +326,7 @@ export interface FileRouteTypes {
     | '/'
     | '/accept-invite'
     | '/developer-login'
+    | '/index_old'
     | '/login'
     | '/pricing'
     | '/signup'
@@ -347,6 +358,7 @@ export interface FileRouteTypes {
     | '/'
     | '/accept-invite'
     | '/developer-login'
+    | '/index_old'
     | '/login'
     | '/pricing'
     | '/signup'
@@ -379,6 +391,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AcceptInviteRoute: typeof AcceptInviteRoute
   DeveloperLoginRoute: typeof DeveloperLoginRoute
+  Index_oldRoute: typeof Index_oldRoute
   LoginRoute: typeof LoginRoute
   PricingRoute: typeof PricingRoute
   SignupRoute: typeof SignupRoute
@@ -428,6 +441,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/index_old': {
+      id: '/index_old'
+      path: '/index_old'
+      fullPath: '/index_old'
+      preLoaderRoute: typeof Index_oldRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/developer-login': {
@@ -619,6 +639,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AcceptInviteRoute: AcceptInviteRoute,
   DeveloperLoginRoute: DeveloperLoginRoute,
+  Index_oldRoute: Index_oldRoute,
   LoginRoute: LoginRoute,
   PricingRoute: PricingRoute,
   SignupRoute: SignupRoute,

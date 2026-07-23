@@ -34,7 +34,7 @@ MAX_DEPTH = 2
 MAX_PAGES = 12
 MAX_CHARS = 12000  # combined across all crawled pages — keeps the AI recommendation prompt a sane size
 BLACKLIST_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png", ".gif", ".zip", ".exe", ".svg", ".webp", ".mp4", ".mp3")
-USER_AGENT = "Mozilla/5.0 (compatible; NivaAdAgent/1.0)"
+USER_AGENT = "Mozilla/5.0 (compatible; NivaSparkAgent/1.0)"
 PAGE_TIMEOUT_MS = 20000
 
 

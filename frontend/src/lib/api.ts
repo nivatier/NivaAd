@@ -1,4 +1,4 @@
-// NivaAd API client — talks to the FastAPI backend, stores JWT tokens,
+// NivaSpark API client — talks to the FastAPI backend, stores JWT tokens,
 // and transparently refreshes the access token once when it expires.
 const BASE = "http://localhost:8000";
 

@@ -46,6 +46,24 @@ STARTER_HINTS = [
     {"id": "field-video-model",  "key": "field:video-model",        "label": "Field — Video Model",          "message": "The AI model that generates your video. Different models support different lengths, resolutions, and whether you can supply a starting frame — check the options below after selecting.",        "audio_url": None},
     {"id": "field-video-ref",    "key": "field:video-reference",    "label": "Field — Video Reference Image","message": "Upload a photo to use as the video's opening frame — the AI animates outward from it. Skip this for a fully AI-generated video described entirely by your prompt.",                              "audio_url": None},
     {"id": "field-video-theme",  "key": "field:video-theme",        "label": "Field — Video Theme",          "message": "Choose a pre-built video theme — each one includes professionally written shot directions and timings that the AI follows. You can still edit the shot prompts after selecting a theme, or choose Custom to write your own from scratch.",  "audio_url": None},
+
+    # ── Themes Gallery ──────────────────────────────────────────────────
+    {"id": "page-image-theme-gallery", "key": "page:image-theme-gallery", "label": "Page — Image Theme Gallery",   "message": "Browse all available image themes — each one gives the AI a distinct visual style to wrap around your product. Click any theme to start creating an ad with that look.", "audio_url": None},
+    {"id": "page-video-theme-gallery", "key": "page:video-theme-gallery", "label": "Page — Video Theme Gallery",   "message": "Browse video themes — each one comes with pre-written shot directions and timings. Selecting one kicks off a new ad in Create Ad with those shots already filled in.", "audio_url": None},
+
+    # ── Agent Niva ──────────────────────────────────────────────────────
+    {"id": "page-quick-start",         "key": "page:quick-start",         "label": "Page — Quick Start",           "message": "Give Agent Niva your website URL and it reads the page, then suggests concrete ad ideas tailored to what it finds. Each suggestion can be turned into a real ad with one click.", "audio_url": None},
+    {"id": "page-recurring-events",    "key": "page:recurring-events",    "label": "Page — Recurring Events",      "message": "Set up yearly occasions — like Christmas, a summer sale, or your brand anniversary — and Agent Niva will automatically generate and schedule an ad a few days before each one, every year.", "audio_url": None},
+
+    # ── Brand Kit ───────────────────────────────────────────────────────
+    {"id": "page-brand-logo",          "key": "page:brand-logo",          "label": "Page — Logo & Brand",          "message": "Upload your logo, set your primary brand colour, and write a tagline here. The active logo gets composited onto generated images when you tick Include logo in Create Ad.", "audio_url": None},
+    {"id": "page-image-padding",       "key": "page:image-padding",       "label": "Page — Image Padding",        "message": "When a generated image doesn't match a platform's required aspect ratio, padding fills the gaps. Choose a blurred version of the image, a solid brand colour, or your own custom bar images for the top, bottom, left, and right sides.", "audio_url": None},
+    {"id": "page-video-padding",       "key": "page:video-padding",       "label": "Page — Video Padding",        "message": "Same as image padding but for generated videos — independently configurable so your videos and images can each have their own look when letterboxed or pillarboxed to fit a platform's required format.", "audio_url": None},
+    {"id": "page-video-shots",         "key": "page:video-shots",         "label": "Page — Video Intro & Credit Shots", "message": "Generate short branded intro and outro clips here — a few seconds each. They get stitched onto the start and end of your AI-generated ads in Create Ad, giving every video a consistent branded opening and closing.", "audio_url": None},
+
+    # ── Admin ───────────────────────────────────────────────────────────
+    {"id": "page-admin-users",         "key": "page:admin-users",         "label": "Page — Admin Users",           "message": "Invite and manage your company's team members here. You can assign roles — admin, editor, or poster — and enable or disable accounts. Invites go out by email with a secure link to set a password.", "audio_url": None},
+    {"id": "page-admin-profiles",      "key": "page:admin-profiles",      "label": "Page — Admin Profiles",        "message": "Control exactly what each role can see and do — which pages appear in the sidebar, and which actions like creating ads or posting are available. Changes take effect immediately and are enforced by the backend on every request.", "audio_url": None},
 ]
 
 

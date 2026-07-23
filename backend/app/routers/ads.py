@@ -6,7 +6,8 @@ from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, delete, exists, func, or_, select
+from sqlalchemy import and_, cast, delete, exists, func, literal, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -483,6 +484,7 @@ async def list_ads(
     campaign_id: uuid.UUID | None = None,
     no_campaign: bool = False,  # filter to ads NOT linked to any campaign
     status_filter: str | None = Query(None, pattern="^(created|scheduled|posted)$"),
+    content_filter: str | None = Query(None, pattern="^(text|text_image|text_video)$"),
     user: User = Depends(require_capability("view_my_ads")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -518,6 +520,30 @@ async def list_ads(
         stmt = stmt.where(has_pending_schedule_expr, ~has_posted)
     elif status_filter == "created":
         stmt = stmt.where(~has_posted, ~has_pending_schedule_expr)
+
+    # content_filter: JSONB containment (@>) on the outputs column.
+    # Both sides must be JSONB — cast the column and wrap literals in cast(literal(), JSONB)
+    # so asyncpg doesn't bind them as VARCHAR.
+    def _jb(val: str):
+        return cast(literal(val), JSONB)
+    _out = cast(Ad.outputs, JSONB)
+    if content_filter == "text":
+        stmt = stmt.where(
+            _out.op("@>")(_jb('{"text": true}')),
+            ~_out.op("@>")(_jb('{"image": true}')),
+            ~_out.op("@>")(_jb('{"video": true}')),
+        )
+    elif content_filter == "text_image":
+        stmt = stmt.where(
+            _out.op("@>")(_jb('{"text": true}')),
+            _out.op("@>")(_jb('{"image": true}')),
+            ~_out.op("@>")(_jb('{"video": true}')),
+        )
+    elif content_filter == "text_video":
+        stmt = stmt.where(
+            _out.op("@>")(_jb('{"text": true}')),
+            _out.op("@>")(_jb('{"video": true}')),
+        )
 
     total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = (await db.scalars(

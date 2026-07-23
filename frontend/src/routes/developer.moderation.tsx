@@ -6,7 +6,7 @@ import { devApi, type GuardrailRuleOut } from "@/lib/dev-api";
 
 export const Route = createFileRoute("/developer/moderation")({
   component: DeveloperModeration,
-  head: () => ({ meta: [{ title: "Moderation — NivaAd Developer" }] }),
+  head: () => ({ meta: [{ title: "Moderation — NivaSpark Developer" }] }),
 });
 
 function DeveloperModeration() {

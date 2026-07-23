@@ -6,7 +6,7 @@ import { devApi, type CompanyAdminOut } from "@/lib/dev-api";
 
 export const Route = createFileRoute("/developer/companies")({
   component: DeveloperCompanies,
-  head: () => ({ meta: [{ title: "Companies — NivaAd Developer" }] }),
+  head: () => ({ meta: [{ title: "Companies — NivaSpark Developer" }] }),
 });
 
 const TIER_LABEL: Record<string, string> = { free: "Free", starter: "Starter", growth: "Growth", pro: "Pro" };

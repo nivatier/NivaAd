@@ -8,6 +8,9 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { BuyCreditsModal } from "@/components/buy-credits-modal";
 import { ProfileModal } from "@/components/profile-modal";
 import { useAuth } from "@/hooks/use-auth";
+import { LiveClock } from "@/components/timezone-picker";
+import { detectedTimeZone } from "@/lib/timezone";
+
 
 // capability: undefined = always visible to any active user (Create Ad
 // and Products stay ungated even in the nav, matching the backend —
@@ -74,6 +77,7 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
   const { loading, isAuthed, me, logout, loggingOutRef, refresh } = useAuth();
   const [open, setOpen] = useState(false);
   const [showBuyCredits, setShowBuyCredits] = useState(false);
+  const timeZone = detectedTimeZone();
   const [showProfile, setShowProfile] = useState(false);
   const [billingBanner, setBillingBanner] = useState("");
   const [notifications, setNotifications] = useState<{ id: string; type: string; title: string; body: string; action_url: string | null; created_at: string }[]>([]);
@@ -164,7 +168,7 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
 
   const nav = visibleNav(me?.user.role, me?.capabilities);
   const NavList = (
-    <nav className="flex-1 space-y-4 overflow-y-auto px-3 pb-6">
+    <nav className="flex-1 space-y-4 overflow-y-auto px-3 pt-10 pb-6">
       {nav.map((group) => (
         <div key={group.section}>
           <div className="px-3 pb-1 text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">{group.section}</div>
@@ -196,58 +200,85 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
   );
 
   const CreditsCard = (
-    <div className="relative m-3 overflow-hidden rounded-2xl border border-white/[0.09] p-4 bg-card/70 backdrop-blur-xl
+    <div className="relative mx-3 mb-3 overflow-hidden rounded-xl border border-white/[0.09] px-3 py-2.5 bg-card/70 backdrop-blur-xl
       shadow-[0_0_0_1px_oklch(1_0_0_/_0.06),0_4px_24px_-4px_oklch(0_0_0_/_0.4),inset_0_1px_0_oklch(1_0_0_/_0.12),inset_0_-1px_0_oklch(0_0_0_/_0.15)]
       neon-bg">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
-      <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Credits available</div>
-      <div className="mt-1 font-display text-3xl font-bold text-foreground text-glow">{credits}</div>
-      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+      <div className="flex items-baseline justify-between">
+        <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Credits</div>
+        <div className="font-display text-xl font-bold text-foreground text-glow">{credits}</div>
+      </div>
+      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
         <div className="h-full bg-neon-gradient" style={{ width: `${pct}%` }} />
       </div>
-      <div className="mt-3 text-[11px] text-muted-foreground">
-        {me?.tier ? me.tier.charAt(0).toUpperCase() + me.tier.slice(1) : "Free"} plan · {planCredits}/mo included
+      <div className="mt-1 text-[10px] text-muted-foreground">
+        {me?.tier ? me.tier.charAt(0).toUpperCase() + me.tier.slice(1) : "Free"} · {planCredits}/mo
         {credits > planCredits ? " · topped up" : ""}
       </div>
-      <button onClick={() => setShowBuyCredits(true)} className="mt-3 block w-full rounded-lg bg-gold-gradient py-2 text-center text-xs font-semibold text-background shadow-[var(--shadow-gold)]">
-        + Buy credits
-      </button>
-      <button onClick={handleLogout} className="mt-2 w-full rounded-lg border border-border py-2 text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground">
-        Log out
-      </button>
+      <div className="mt-2 flex gap-1.5">
+        <button onClick={() => setShowBuyCredits(true)} className="flex-1 rounded-lg bg-gold-gradient py-1.5 text-center text-[11px] font-semibold text-background shadow-[var(--shadow-gold)]">
+          + Buy
+        </button>
+        <button onClick={handleLogout} className="flex-1 rounded-lg border border-border py-1.5 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground">
+          Log out
+        </button>
+      </div>
     </div>
   );
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
+    <div className="flex min-h-screen text-foreground" style={{ background: "transparent" }}>
       {billingBanner && (
         <div className="fixed top-0 left-0 right-0 z-[110] bg-gold-gradient py-2 text-center text-xs font-medium text-background">
           {billingBanner} <button onClick={() => setBillingBanner("")} className="ml-3 underline">dismiss</button>
         </div>
       )}
-      {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border bg-sidebar lg:flex">
-        <Link to="/" className="flex items-center gap-3 px-5 py-6">
-          <div className="grid h-9 w-9 place-items-center rounded-lg bg-gold-gradient font-display font-bold text-background shadow-[var(--shadow-neon)]">N</div>
-          <div className="leading-tight">
-            <div className="font-display font-bold tracking-tight text-sidebar-foreground text-glow">NivaAd</div>
+      {/* Desktop sidebar — glass layer 1, rounded right edge, defined border */}
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col lg:flex"
+        style={{
+          background: "var(--glass-sidebar)",
+          backdropFilter: "var(--glass-blur-sidebar)",
+          WebkitBackdropFilter: "var(--glass-blur-sidebar)",
+          border: "1px solid var(--glass-panel-border)",
+          borderLeft: "none",
+          borderRadius: "0 1.25rem 1.25rem 0",
+          boxShadow: "var(--glass-sidebar-shadow), 4px 0 24px oklch(0 0 0 / 0.12)",
+        }}>
+        <Link to="/" className="flex items-center gap-3 px-5 pt-5 pb-3">
+          <img src="/logo-icon.png" alt="NivaSpark icon" className="h-9 w-9 shrink-0 object-contain" />
+          <div className="leading-tight min-w-0">
+            {/* dark mode: silver/light text wording; light mode: navy text wording */}
+            <img src="/logo-wording-dark.png" alt="NivaSpark" className="hidden dark:block h-7 object-contain object-left" />
+            <img src="/logo-wording-light.png" alt="NivaSpark" className="block dark:hidden h-7 object-contain object-left" />
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Powered by Nivatier</div>
           </div>
         </Link>
+        {/* Live clock — browser timezone, no picker needed */}
+        <div className="mx-3 mb-2 px-3 py-1.5 text-[10px] text-muted-foreground">
+          🕐 <LiveClock timeZone={timeZone} />
+        </div>
         {NavList}
         {CreditsCard}
       </aside>
 
       {/* Main */}
       <main className="flex-1 min-w-0">
-        {/* Mobile top bar */}
-        <div className="sticky top-0 z-30 flex items-center gap-3 border-b border-white/[0.07] px-4 py-3
-          bg-gradient-to-r from-[oklch(from_var(--background)_l_c_h_/_0.85)] to-[oklch(from_var(--background)_l_c_h_/_0.80)]
-          backdrop-blur-xl
-          shadow-[0_1px_0_oklch(1_0_0_/_0.06),0_4px_16px_-4px_oklch(0_0_0_/_0.3)] lg:hidden">
+        {/* Mobile top bar — glass, rounded bottom, theme-aware */}
+        <div className="sticky top-0 z-30 flex items-center gap-3 px-4 py-3 lg:hidden"
+          style={{
+            background: "var(--glass-topbar)",
+            backdropFilter: "var(--glass-blur-topbar)",
+            WebkitBackdropFilter: "var(--glass-blur-topbar)",
+            border: "1px solid var(--glass-panel-border)",
+            borderTop: "none",
+            borderLeft: "none",
+            borderRadius: "0 0 1rem 1rem",
+            boxShadow: "var(--glass-topbar-shadow), 0 4px 16px oklch(0 0 0 / 0.08)",
+          }}>
           <Link to="/" className="flex items-center gap-2">
-            <div className="grid h-8 w-8 place-items-center rounded-md bg-gold-gradient font-display text-sm font-bold text-background shadow-[var(--shadow-neon)]">N</div>
-            <span className="font-display font-bold tracking-tight text-glow">NivaAd</span>
+            <img src="/logo-icon.png" alt="NivaSpark icon" className="h-8 w-8 shrink-0 object-contain" />
+            <img src="/logo-wording-dark.png" alt="NivaSpark" className="hidden dark:block h-6 object-contain" />
+            <img src="/logo-wording-light.png" alt="NivaSpark" className="block dark:hidden h-6 object-contain" />
           </Link>
           <div className="ml-auto flex items-center gap-2">
             <ThemeToggle />
@@ -270,7 +301,7 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
 
         {/* Mobile collapsible menu */}
         <div
-          className={`lg:hidden overflow-hidden border-b border-border bg-sidebar/95 backdrop-blur transition-[max-height] duration-300 ease-out ${
+          className={`lg:hidden overflow-hidden border-b border-sidebar-border backdrop-blur transition-[max-height] duration-300 ease-out ${
             open ? "max-h-[80vh]" : "max-h-0"
           }`}
         >
@@ -280,12 +311,18 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
           </div>
         </div>
 
-        {/* Page header */}
-        <header className="sticky top-[57px] z-20 border-b border-white/[0.07] px-5 py-5
-          bg-gradient-to-r from-[oklch(from_var(--background)_l_c_h_/_0.82)] to-[oklch(from_var(--background)_l_c_h_/_0.75)]
-          backdrop-blur-xl
-          shadow-[0_1px_0_oklch(1_0_0_/_0.06),0_4px_24px_-8px_oklch(0_0_0_/_0.25)]
-          lg:top-0 lg:px-10 lg:py-6">
+        {/* Page header — glass layer 2, rounded bottom, defined border */}
+        <header className="sticky top-[57px] z-20 px-5 py-5 lg:top-0 lg:px-10 lg:py-6"
+          style={{
+            background: "var(--glass-topbar)",
+            backdropFilter: "var(--glass-blur-topbar)",
+            WebkitBackdropFilter: "var(--glass-blur-topbar)",
+            border: "1px solid var(--glass-panel-border)",
+            borderTop: "none",
+            borderLeft: "none",
+            borderRadius: "0 0 1.25rem 1.25rem",
+            boxShadow: "var(--glass-topbar-shadow), 0 8px 24px oklch(0 0 0 / 0.10)",
+          }}>
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 sm:flex sm:justify-between">
             <div className="min-w-0">
               {eyebrow && <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-primary">{eyebrow}</div>}
@@ -372,11 +409,10 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
 
 export function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`relative rounded-2xl border border-white/[0.09] p-6 overflow-hidden bg-card/80 backdrop-blur-2xl
-      shadow-[0_0_0_1px_oklch(1_0_0_/_0.08),0_4px_24px_-4px_oklch(0_0_0_/_0.5),0_16px_48px_-8px_oklch(0_0_0_/_0.35),0_0_60px_-20px_oklch(0.66_0.26_305_/_0.25),inset_0_1px_0_oklch(1_0_0_/_0.15),inset_0_-1px_0_oklch(0_0_0_/_0.2)]
+    <div className={`relative rounded-2xl border border-border/60 p-6 overflow-hidden bg-card
+      shadow-[var(--shadow-glass-full)]
       ${className}`}>
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
-      <div className="pointer-events-none absolute inset-x-4 bottom-0 h-px bg-gradient-to-r from-transparent via-white/[0.05] to-transparent" />
       {children}
     </div>
   );

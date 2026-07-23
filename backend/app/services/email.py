@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def send_email(to: str, subject: str, html_body: str, text_body: str | None = None) -> None:
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = "NivaAd <noreply@nivaad.local>"
+    msg["From"] = "NivaSpark <noreply@nivaad.local>"
     msg["To"] = to
     if text_body:
         msg.attach(MIMEText(text_body, "plain"))
@@ -33,13 +33,13 @@ def send_email(to: str, subject: str, html_body: str, text_body: str | None = No
 
 
 def send_invite_email(to: str, full_name: str, inviter_name: str, company_name: str, accept_url: str) -> None:
-    subject = f"You've been invited to join {company_name} on NivaAd"
+    subject = f"You've been invited to join {company_name} on NivaSpark"
     html = f"""
     <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
-      <h2 style="color: #7c3aed;">You're invited to NivaAd</h2>
+      <h2 style="color: #7c3aed;">You're invited to NivaSpark</h2>
       <p>Hi {full_name or "there"},</p>
       <p><strong>{inviter_name}</strong> has invited you to join <strong>{company_name}</strong>'s
-      NivaAd workspace.</p>
+      NivaSpark workspace.</p>
       <p style="margin: 24px 0;">
         <a href="{accept_url}" style="background: linear-gradient(135deg,#f5c542,#e8a33d);
            color: #1a1a1a; padding: 12px 24px; border-radius: 999px; text-decoration: none;
@@ -48,4 +48,4 @@ def send_invite_email(to: str, full_name: str, inviter_name: str, company_name: 
       <p style="color: #888; font-size: 12px;">If the button doesn't work, copy this link:<br>{accept_url}</p>
     </div>
     """
-    send_email(to, subject, html, text_body=f"You've been invited to join {company_name} on NivaAd. Accept here: {accept_url}")
+    send_email(to, subject, html, text_body=f"You've been invited to join {company_name} on NivaSpark. Accept here: {accept_url}")

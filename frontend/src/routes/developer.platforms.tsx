@@ -6,7 +6,7 @@ import { devApi, type PlatformIntegration } from "@/lib/dev-api";
 
 export const Route = createFileRoute("/developer/platforms")({
   component: DeveloperPlatforms,
-  head: () => ({ meta: [{ title: "Platforms — NivaAd Developer" }] }),
+  head: () => ({ meta: [{ title: "Platforms — NivaSpark Developer" }] }),
 });
 
 function PlatformRow({ entry, onSave, onDelete, ratios }: {

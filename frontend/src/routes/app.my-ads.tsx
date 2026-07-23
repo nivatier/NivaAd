@@ -9,7 +9,7 @@ import { useRequireCapability } from "@/hooks/use-require-capability";
 
 export const Route = createFileRoute("/app/my-ads")({
   component: MyAds,
-  head: () => ({ meta: [{ title: "My Ads — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "My Ads — NivaSpark" }] }),
 });
 
 const PAGE_SIZE = 10;
@@ -32,6 +32,19 @@ function briefTitle(ad: AdOut) {
   return b?.product_name ? `${b.product_name} — ${b.description || ""}` : ad.id;
 }
 
+function contentTypeTag(ad: AdOut): { label: string; icon: string } {
+  const o = ad.outputs as any;
+  const hasText  = !!o?.text;
+  const hasImage = !!o?.image;
+  const hasVideo = !!o?.video;
+  if (hasText && hasVideo)  return { icon: "🎬", label: "Text + Video" };
+  if (hasText && hasImage)  return { icon: "🖼", label: "Text + Image" };
+  if (hasText)              return { icon: "✍️", label: "Text only" };
+  if (hasVideo)             return { icon: "🎬", label: "Video only" };
+  if (hasImage)             return { icon: "🖼", label: "Image only" };
+  return                           { icon: "📄", label: "Ad" };
+}
+
 function MyAds() {
   const allowed = useRequireCapability("view_my_ads");
 
@@ -44,6 +57,7 @@ function MyAds() {
   const [productFilter, setProductFilter] = useState("");
   const [campaignFilter, setCampaignFilter] = useState(""); // "" = all, "none" = not from a campaign, else campaign id
   const [statusFilter, setStatusFilter] = useState(""); // "" = all, "created" | "scheduled" | "posted"
+  const [contentFilter, setContentFilter] = useState(""); // "" = all | "text" | "text_image" | "text_video"
   const [search, setSearch] = useState("");
   const [err, setErr] = useState("");
   const [retentionMonths, setRetentionMonths] = useState<number | null>(null);
@@ -72,6 +86,7 @@ function MyAds() {
     if (campaignFilter === "none") params.set("no_campaign", "true");
     else if (campaignFilter) params.set("campaign_id", campaignFilter);
     if (statusFilter) params.set("status_filter", statusFilter);
+    if (contentFilter) params.set("content_filter", contentFilter);
     try {
       setData(await api(`/ads?${params.toString()}`));
     } catch (e: any) {
@@ -92,7 +107,7 @@ function MyAds() {
     // interval was first set up.
     const interval = setInterval(load, 30000);
     return () => clearInterval(interval);
-  }, [page, dateFrom, dateTo, productFilter, campaignFilter, statusFilter]);
+  }, [page, dateFrom, dateTo, productFilter, campaignFilter, statusFilter, contentFilter]);
 
   async function deleteAd() {
     if (!confirmDeleteAd) return;
@@ -125,13 +140,13 @@ function MyAds() {
     return products.find((p) => p.id === id)?.name || null;
   }
 
-  const filtered = data?.items.filter((a) => briefTitle(a).toLowerCase().includes(search.toLowerCase()));
+  const filtered = data?.items.filter((a) => !search || briefTitle(a).toLowerCase().includes(search.toLowerCase()));
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
 
   function clearFilters() {
-    setDateFrom(""); setDateTo(""); setProductFilter(""); setCampaignFilter(""); setStatusFilter(""); setSearch(""); setPage(1);
+    setDateFrom(""); setDateTo(""); setProductFilter(""); setCampaignFilter(""); setStatusFilter(""); setContentFilter(""); setSearch(""); setPage(1);
   }
-  const hasFilters = dateFrom || dateTo || productFilter || campaignFilter || statusFilter || search;
+  const hasFilters = dateFrom || dateTo || productFilter || campaignFilter || statusFilter || contentFilter || search;
 
   if (!allowed) return null; // redirecting away — this role can't view this page (checked after all hooks, per Rules of Hooks)
 
@@ -182,6 +197,16 @@ function MyAds() {
             <option value="posted">Posted</option>
           </select>
         </div>
+        <div>
+          <div className="text-[11px] text-muted-foreground mb-1">Content type</div>
+          <select value={contentFilter} onChange={(e) => { setContentFilter(e.target.value); setPage(1); }}
+            className="rounded-lg border border-input bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none">
+            <option value="">All types</option>
+            <option value="text">✍️ Text only</option>
+            <option value="text_image">🖼 Text + Image</option>
+            <option value="text_video">🎬 Text + Video</option>
+          </select>
+        </div>
         {hasFilters && <button onClick={clearFilters} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:border-primary/40">Clear filters</button>}
       </div>
 
@@ -212,6 +237,11 @@ function MyAds() {
                             🤖 Agent Niva{ad.agent_source === "event" ? " · event" : ""}
                           </span>
                         )}
+                        {(() => { const t = contentTypeTag(ad); return (
+                          <span className="shrink-0 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+                            {t.icon} {t.label}
+                          </span>
+                        ); })()}
                       </div>
                       <div className="mt-1 text-[11px] text-muted-foreground">
                         {ad.platforms.join(" · ")} · created {new Date(ad.created_at).toLocaleDateString()}

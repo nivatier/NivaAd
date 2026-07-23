@@ -6,7 +6,7 @@ import { devApi, type DeveloperTeamUser } from "@/lib/dev-api";
 
 export const Route = createFileRoute("/developer/team")({
   component: DeveloperTeam,
-  head: () => ({ meta: [{ title: "Team — NivaAd Developer" }] }),
+  head: () => ({ meta: [{ title: "Team — NivaSpark Developer" }] }),
 });
 
 type PermMeta = { keys: string[]; labels: Record<string, string> };

@@ -6,7 +6,7 @@ import { devApi } from "@/lib/dev-api";
 
 export const Route = createFileRoute("/developer/settings")({
   component: DeveloperSettings,
-  head: () => ({ meta: [{ title: "Developer Settings — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Developer Settings — NivaSpark" }] }),
 });
 
 function TeamLimitCard() {

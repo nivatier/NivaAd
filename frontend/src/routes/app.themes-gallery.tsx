@@ -1,13 +1,14 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
+import { NovaHint } from "@/components/nova-hint";
 import { api, type ProductOut } from "@/lib/api";
 import { ImageThemeGrid, VideoThemeGrid, mapImageTheme, type ImageTheme, type VideoTheme } from "@/components/theme-gallery-grid";
 import { ThemeLinkProductModal } from "@/components/theme-link-product-modal";
 
 export const Route = createFileRoute("/app/themes-gallery")({
   component: ThemesGallery,
-  head: () => ({ meta: [{ title: "Themes Gallery — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Themes Gallery — NivaSpark" }] }),
 });
 
 /** Handoff payload to Create Ad — read once on mount there (see
@@ -45,10 +46,10 @@ function ThemesGallery() {
     <AppShell eyebrow="Library" title="Themes Gallery">
       <p className="mb-5 text-xs text-muted-foreground max-w-2xl">Pick a theme to start a new ad — optionally link a saved product first.</p>
       <div className="flex gap-2 mb-5">
-        {([["image", "Image Theme Gallery"], ["video", "Video Theme Gallery"]] as const).map(([k, l]) => (
+        {([["image", "Image Theme Gallery", "page:image-theme-gallery"], ["video", "Video Theme Gallery", "page:video-theme-gallery"]] as const).map(([k, l, hk]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`rounded-full border px-4 py-2 text-sm font-semibold ${tab === k ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
-            {l}
+            {l} <NovaHint hintKey={hk} />
           </button>
         ))}
       </div>

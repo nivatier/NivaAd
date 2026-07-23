@@ -1,16 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell, Panel, Input } from "@/components/app-shell";
+import { NovaHint } from "@/components/nova-hint";
 import { api, type TeamUserOut } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { useRequireCapability } from "@/hooks/use-require-capability";
 
 export const Route = createFileRoute("/app/admin")({
   component: Admin,
-  head: () => ({ meta: [{ title: "Admin — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Admin — NivaSpark" }] }),
 });
 
 const TABS = ["Overview", "Users", "Profiles"];
+const TAB_HINTS = ["", "page:admin-users", "page:admin-profiles"];
 
 
 const ROLE_LABEL: Record<string, string> = { admin: "Admin", editor: "Editor", poster: "Poster" };
@@ -357,7 +359,9 @@ function Admin() {
     >
       <div className="mb-6 flex flex-wrap gap-2 border-b border-border pb-4">
         {TABS.map((t, i) => (
-          <button key={t} onClick={() => setTab(i)} className={`rounded-full border px-4 py-1.5 text-xs font-medium transition ${i === tab ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground"}`}>{t}</button>
+          <button key={t} onClick={() => setTab(i)} className={`rounded-full border px-4 py-1.5 text-xs font-medium transition ${i === tab ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground"}`}>
+            {t}{TAB_HINTS[i] && <NovaHint hintKey={TAB_HINTS[i]} />}
+          </button>
         ))}
       </div>
 

@@ -5,7 +5,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 
 export const Route = createFileRoute("/developer-login")({
   component: DeveloperLogin,
-  head: () => ({ meta: [{ title: "Developer — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Developer — NivaSpark" }] }),
 });
 
 function DeveloperLogin() {
@@ -36,9 +36,10 @@ function DeveloperLogin() {
           normal company login, not just a styling choice. */}
       <div className="w-full max-w-md rounded-2xl border border-border bg-card/70 p-8 backdrop-blur-xl">
         <div className="mb-6 flex items-center gap-2.5">
-          <div className="grid h-9 w-9 place-items-center rounded-lg bg-foreground font-display font-bold text-background">N</div>
-          <div className="leading-tight">
-            <div className="font-display font-bold tracking-tight">NivaAd</div>
+          <img src="/logo-icon.png" alt="NivaSpark icon" className="h-9 w-9 shrink-0 object-contain" />
+          <div className="leading-tight min-w-0">
+            <img src="/logo-wording-dark.png" alt="NivaSpark" className="hidden dark:block h-7 object-contain object-left" />
+            <img src="/logo-wording-light.png" alt="NivaSpark" className="block dark:hidden h-7 object-contain object-left" />
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Platform Operator</div>
           </div>
         </div>

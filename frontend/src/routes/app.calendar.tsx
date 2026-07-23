@@ -9,7 +9,7 @@ import { useRequireCapability } from "@/hooks/use-require-capability";
 
 export const Route = createFileRoute("/app/calendar")({
   component: Calendar,
-  head: () => ({ meta: [{ title: "Calendar — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Calendar — NivaSpark" }] }),
 });
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -124,10 +124,10 @@ function Calendar() {
       {ads === null ? (
         <div className="text-sm text-muted-foreground">Loading…</div>
       ) : (
-        <div className="overflow-x-auto">
-          {/* Weeks as COLUMNS, days-of-week as ROWS, per spec — each week
+        <div className="w-full">
+          {/* Weeks as COLUMNS, days-of-week as ROWS — each week
               gets its own column, walked top-to-bottom Sun→Sat within it. */}
-          <div className="inline-grid gap-2" style={{ gridTemplateColumns: `3rem repeat(${weeks.length}, minmax(11rem, 1fr))` }}>
+          <div className="grid gap-2 w-full" style={{ gridTemplateColumns: `3rem repeat(${weeks.length}, 1fr)` }}>
             <div />
             {weeks.map((_, wi) => (
               <div key={wi} className="text-center text-[11px] font-semibold text-muted-foreground">Week {wi + 1}</div>
@@ -141,7 +141,7 @@ function Calendar() {
                   const isToday = d && dateKey(d) === dateKey(today);
                   const entries = d ? entriesByDay[dateKey(d)] || [] : [];
                   return (
-                    <div key={`${wi}-${dayIdx}`} className={`min-h-[5.5rem] rounded-lg border p-1.5 ${d ? "border-border bg-card/40" : "border-transparent"} ${isToday ? "ring-1 ring-primary" : ""}`}>
+                    <div key={`${wi}-${dayIdx}`} className={`min-h-[6rem] rounded-lg border p-1.5 ${d ? "border-border bg-card/40" : "border-transparent"} ${isToday ? "ring-1 ring-primary" : ""}`}>
                       {d && (
                         <>
                           <div className={`mb-1 text-[10px] ${isToday ? "font-bold text-primary" : "text-muted-foreground"}`}>{d.getDate()}</div>

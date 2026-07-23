@@ -6,7 +6,7 @@ import { devApi } from "@/lib/dev-api";
 
 export const Route = createFileRoute("/developer/themes")({
   component: DeveloperThemes,
-  head: () => ({ meta: [{ title: "Themes — NivaAd Developer" }] }),
+  head: () => ({ meta: [{ title: "Themes — NivaSpark Developer" }] }),
 });
 
 type ImageForImageEntry = { thumbnail: string; prompt: string };

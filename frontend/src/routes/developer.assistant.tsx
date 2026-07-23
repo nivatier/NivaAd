@@ -7,7 +7,7 @@ import { devApi } from "@/lib/dev-api";
 
 export const Route = createFileRoute("/developer/assistant")({
   component: DeveloperAssistant,
-  head: () => ({ meta: [{ title: "Assistant — NivaAd Developer" }] }),
+  head: () => ({ meta: [{ title: "Assistant — NivaSpark Developer" }] }),
 });
 
 type Hint = { id: string; key: string; label: string; message: string; audio_url: string | null };
@@ -24,6 +24,15 @@ const GROUP_LABELS: Record<string, string> = {
   nav: "Navigation",
   field: "Create Ad",
 };
+
+// Maps page: hint suffixes to the route page they belong under, so the
+// "Pages" group renders them in named sub-sections rather than a flat list.
+const PAGE_SUBGROUPS: { label: string; keys: string[] }[] = [
+  { label: "Themes Gallery",  keys: ["page:image-theme-gallery", "page:video-theme-gallery"] },
+  { label: "Agent Niva",      keys: ["page:quick-start", "page:recurring-events"] },
+  { label: "Brand Kit",       keys: ["page:brand-logo", "page:image-padding", "page:video-padding", "page:video-shots"] },
+  { label: "Admin",           keys: ["page:admin-users", "page:admin-profiles"] },
+];
 
 function groupLabelFor(prefix: string) {
   return GROUP_LABELS[prefix] || (prefix.charAt(0).toUpperCase() + prefix.slice(1));
@@ -520,6 +529,84 @@ function GroupBox({
   );
 }
 
+/** Renders one page sub-group (e.g. "Themes Gallery") as its own
+ * collapsible card, exactly like GroupBox but with a fixed key list
+ * rather than a prefix match. */
+function PageSubGroupBox({
+  subLabel, subKeys, allHints, expanded, onToggle, editingId, busy, generatingAudioId,
+  addingGroup, onStartAdd, onCancelAdd, onAddHint,
+  onEdit, onCancelEdit, onSaveHint, onGenerateAudio, onRemove,
+}: {
+  subLabel: string;
+  subKeys: string[];
+  allHints: Hint[];
+  expanded: boolean;
+  onToggle: () => void;
+  editingId: string | null;
+  busy: boolean;
+  generatingAudioId: string | null;
+  addingGroup: string | null;
+  onStartAdd: () => void;
+  onCancelAdd: () => void;
+  onAddHint: (v: { key: string; label: string; message: string }) => void;
+  onEdit: (id: string) => void;
+  onCancelEdit: () => void;
+  onSaveHint: (id: string, v: { label: string; message: string }) => void;
+  onGenerateAudio: (id: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const groupId = "page-sub:" + subLabel;
+  const isAdding = addingGroup === groupId;
+  const hints = subKeys.map((k) => allHints.find((h) => h.key === k)).filter(Boolean) as Hint[];
+
+  return (
+    <div className="rounded-xl border border-border bg-card/40 overflow-hidden">
+      <button type="button" onClick={onToggle}
+        className="w-full flex items-center justify-between gap-2 px-4 py-3 text-left hover:bg-card/60 transition-colors">
+        <span className="flex items-center gap-2 min-w-0">
+          <span className={`inline-block text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`}>▶</span>
+          <span className="text-sm font-semibold text-foreground truncate">{subLabel}</span>
+          <span className="text-[10px] text-muted-foreground shrink-0">{hints.length}/{subKeys.length}</span>
+        </span>
+      </button>
+      {expanded && (
+        <div className="px-4 pb-4">
+          <div className="mb-3">
+            {isAdding ? (
+              <div className="rounded-xl border border-border bg-card/60 p-3">
+                <AddForm busy={busy} keyPrefix="page" onCancel={onCancelAdd} onAdd={onAddHint} />
+              </div>
+            ) : (
+              <button onClick={onStartAdd}
+                className="rounded-full border border-dashed border-primary/50 px-3 py-1 text-[11px] text-primary hover:bg-primary/5">
+                + Add hint
+              </button>
+            )}
+          </div>
+          <div className="space-y-2">
+            {hints.map((h) => (
+              <HintRow
+                key={h.id}
+                hint={h}
+                busy={busy}
+                editing={editingId === h.id}
+                generating={generatingAudioId === h.id}
+                onEdit={() => onEdit(h.id)}
+                onCancelEdit={onCancelEdit}
+                onSave={(v) => onSaveHint(h.id, v)}
+                onGenerateAudio={() => onGenerateAudio(h.id)}
+                onRemove={() => onRemove(h.id)}
+              />
+            ))}
+            {hints.length === 0 && <div className="text-[11px] text-muted-foreground">No hints yet.</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function DeveloperAssistant() {
   const allowed = useRequireDeveloperPermission("assistant");
   const handleAuthError = useDevAuthErrorHandler();
@@ -639,7 +726,7 @@ function DeveloperAssistant() {
           onGenerateAudio={generateAudio}
           onRemove={remove}
         />
-        {groups.map((g) => (
+        {groups.filter((g) => g.prefix !== "page").map((g) => (
           <GroupBox
             key={g.prefix}
             prefix={g.prefix}
@@ -661,6 +748,32 @@ function DeveloperAssistant() {
             onRemove={remove}
           />
         ))}
+        {PAGE_SUBGROUPS.map((sub) => {
+          const groupId = "page-sub:" + sub.label;
+          const pageHints = hints.filter((h) => h.key.startsWith("page:"));
+          return (
+            <PageSubGroupBox
+              key={sub.label}
+              subLabel={sub.label}
+              subKeys={sub.keys}
+              allHints={pageHints}
+              expanded={isExpanded(groupId)}
+              onToggle={() => toggleGroup(groupId)}
+              editingId={editingId}
+              busy={busy}
+              generatingAudioId={generatingAudioId}
+              addingGroup={addingGroup}
+              onStartAdd={() => setAddingGroup(groupId)}
+              onCancelAdd={() => setAddingGroup(null)}
+              onAddHint={add}
+              onEdit={setEditingId}
+              onCancelEdit={() => setEditingId(null)}
+              onSaveHint={save}
+              onGenerateAudio={generateAudio}
+              onRemove={remove}
+            />
+          );
+        })}
       </div>
 
       {showNewGroup ? (

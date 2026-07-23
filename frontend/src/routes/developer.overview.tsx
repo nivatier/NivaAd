@@ -6,7 +6,7 @@ import { devApi, type PlatformOverviewOut, type OpenRouterCreditsOut } from "@/l
 
 export const Route = createFileRoute("/developer/overview")({
   component: DeveloperOverview,
-  head: () => ({ meta: [{ title: "Developer Overview — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Developer Overview — NivaSpark" }] }),
 });
 
 const TIER_LABEL: Record<string, string> = { free: "Free", starter: "Starter", growth: "Growth", pro: "Pro" };

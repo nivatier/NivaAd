@@ -1,10 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell, Panel, Input, EmptyState } from "@/components/app-shell";
+import { RequirementChecklist } from "@/components/requirement-checklist";
 import { PLATFORMS } from "@/components/create-ad-parts";
+import { useConnectedPlatforms } from "@/hooks/use-connected-platforms";
 import { CampaignImageModal } from "@/components/campaign-image-modal";
 import { RepostModal } from "@/components/repost-modal";
-import { TimezoneSelect, LiveClock } from "@/components/timezone-picker";
+
 import { detectedTimeZone, zonedWallTimeToUtcParts, formatInTimeZone } from "@/lib/timezone";
 import { MAX_VIDEO_SHOTS } from "@/lib/constants";
 import { api, type AdOut, type AvailableModel } from "@/lib/api";
@@ -13,7 +15,7 @@ import { useRequireCapability } from "@/hooks/use-require-capability";
 
 export const Route = createFileRoute("/app/campaigns")({
   component: Campaigns,
-  head: () => ({ meta: [{ title: "Campaigns — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Campaigns — NivaSpark" }] }),
 });
 
 const PAGE_SIZE = 10;
@@ -65,9 +67,10 @@ type PhaseFormState = {
   refineVideoPrompt: boolean; refineVideoFrame: boolean;
 };
 
-function PhaseScheduleInput({ label, state, setState, availableImageModels, availableVideoModels }: {
+function PhaseScheduleInput({ label, state, setState, availableImageModels, availableVideoModels, availablePlatforms }: {
   label: string; state: PhaseFormState; setState: (v: PhaseFormState) => void;
   availableImageModels: AvailableModel[] | null; availableVideoModels: AvailableModel[] | null;
+  availablePlatforms: typeof PLATFORMS;
 }) {
   async function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -100,7 +103,7 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
           className="w-24 rounded-lg border border-input bg-input/40 px-2 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none" />
       </div>
       <div className="mt-2 flex flex-wrap gap-1">
-        {PLATFORMS.map((p) => (
+        {availablePlatforms.map((p) => (
           <button key={p.id} type="button" onClick={() => setState({ ...state, platforms: { ...state.platforms, [p.id]: !state.platforms[p.id] } })}
             className={`rounded-full border px-2 py-1 text-[10px] ${state.platforms[p.id] ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
             {state.platforms[p.id] ? "☑" : "☐"} {p.tag}
@@ -323,10 +326,12 @@ function Campaigns() {
 
   const [name, setName] = useState("");
   const [brief, setBrief] = useState("");
-  const [timeZone, setTimeZone] = useState(detectedTimeZone());
+  const timeZone = detectedTimeZone();
   const [teaser, setTeaser] = useState(newPhaseState(2));
   const [availableImageModels, setAvailableImageModels] = useState<AvailableModel[] | null>(null);
   const [availableVideoModels, setAvailableVideoModels] = useState<AvailableModel[] | null>(null);
+  const connectedPlatformIds = useConnectedPlatforms();
+  const availablePlatforms = connectedPlatformIds === null ? PLATFORMS : PLATFORMS.filter((p) => connectedPlatformIds.has(p.id));
   const [launch, setLaunch] = useState(newPhaseState(5));
   const [followup, setFollowup] = useState(newPhaseState(8));
   const [busy, setBusy] = useState(false);
@@ -378,7 +383,7 @@ function Campaigns() {
     const utc = zonedWallTimeToUtcParts(s.date, s.time, timeZone);
     return {
       date: utc.date, time: utc.time,
-      platforms: PLATFORMS.filter((p) => s.platforms[p.id]).map((p) => p.id),
+      platforms: availablePlatforms.filter((p) => s.platforms[p.id]).map((p) => p.id),
       generate_image: s.wantImage,
       env: s.productImage ? s.sceneText || null : null,
       image_scene: !s.productImage ? s.sceneText || null : null,
@@ -447,31 +452,29 @@ function Campaigns() {
 
   return (
     <AppShell eyebrow="Create" title="Launch Campaigns">
-      <p className="mb-6 text-sm text-muted-foreground">Set the date, time, platforms — and optionally your own photo and image prompt — for each phase up front. Ads are created and scheduled automatically.</p>
-
       <Panel>
+        <div className="mb-4">
+          <h2 className="font-display text-base font-semibold text-foreground">Campaign details</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">Name your launch and describe what it's for — this drives the copy for all three phases.</p>
+        </div>
         <div className="grid gap-3 md:grid-cols-2">
           <Input placeholder="Product / launch name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input placeholder="One line: what is it & who's it for" value={brief} onChange={(e) => setBrief(e.target.value)} />
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-background/40 p-3">
-          <div>
-            <div className="text-[11px] text-muted-foreground mb-1">Schedule times below are in</div>
-            <TimezoneSelect value={timeZone} onChange={setTimeZone} />
-          </div>
-          <div className="text-xs text-muted-foreground">
-            🕐 Right now there: <LiveClock timeZone={timeZone} />
-          </div>
-        </div>
 
         <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <PhaseScheduleInput label="Teaser" state={teaser} setState={setTeaser} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} />
-          <PhaseScheduleInput label="Launch" state={launch} setState={setLaunch} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} />
-          <PhaseScheduleInput label="Follow-up" state={followup} setState={setFollowup} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} />
+          <PhaseScheduleInput label="Teaser" state={teaser} setState={setTeaser} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} />
+          <PhaseScheduleInput label="Launch" state={launch} setState={setLaunch} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} />
+          <PhaseScheduleInput label="Follow-up" state={followup} setState={setFollowup} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} />
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">💡 Each phase's image is independent — e.g. skip the image for the Teaser, add your own photo for the Launch.</p>
 
+        <RequirementChecklist items={[
+          { label: "Campaign / product name", met: !!name.trim() },
+          { label: "One-line brief", met: !!brief.trim() },
+          { label: "At least one platform per phase", met: availablePlatforms.some((p) => teaser.platforms[p.id]) && availablePlatforms.some((p) => launch.platforms[p.id]) && availablePlatforms.some((p) => followup.platforms[p.id]) },
+        ]} />
         {err && <div className="mt-3 text-xs text-destructive">{err}</div>}
         <button
           disabled={!name.trim() || !brief.trim() || busy}

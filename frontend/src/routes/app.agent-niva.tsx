@@ -1,12 +1,15 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
+import { NovaHint } from "@/components/nova-hint";
+import { RequirementChecklist } from "@/components/requirement-checklist";
 import { PLATFORMS } from "@/components/create-ad-parts";
+import { useConnectedPlatforms } from "@/hooks/use-connected-platforms";
 import { api, type ProductOut } from "@/lib/api";
 
 export const Route = createFileRoute("/app/agent-niva")({
   component: AgentNiva,
-  head: () => ({ meta: [{ title: "Agent Niva — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Agent Niva — NivaSpark" }] }),
 });
 
 type ScrapeJob = { id: string; url: string; count: number; status: string; error: string | null; created_at: string };
@@ -47,10 +50,10 @@ const APPROVAL_LABELS: Record<string, { label: string; short: string; descriptio
   auto_post:       { label: "Fully automatic",      short: "Auto",     description: "Generates and posts automatically. You'll get two advance notifications — one before generation, one before posting — with a chance to make changes." },
 };
 
-function PlatformChips({ selected, onToggle }: { selected: string[]; onToggle: (id: string) => void }) {
+function PlatformChips({ selected, onToggle, platforms = PLATFORMS }: { selected: string[]; onToggle: (id: string) => void; platforms?: typeof PLATFORMS }) {
   return (
     <div className="flex flex-wrap gap-2">
-      {PLATFORMS.map((p) => (
+      {platforms.map((p) => (
         <button key={p.id} type="button" onClick={() => onToggle(p.id)}
           className={`rounded-full border px-3 py-1.5 text-xs transition-all ${selected.includes(p.id) ? "border-primary bg-primary/15 text-primary shadow-[0_0_10px_-3px_oklch(0.78_0.12_85/0.4)]" : "border-border/50 text-muted-foreground hover:border-primary/40 hover:text-foreground"}`}>
           {p.tag} {p.name}
@@ -78,6 +81,8 @@ function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
   const [platforms, setPlatforms] = useState<string[]>(editing?.platforms ?? ["facebook", "instagram"]);
   const [productId, setProductId] = useState(editing?.product_id ?? "");
   const [approvalMode, setApprovalMode] = useState(editing?.approval_mode ?? defaultApproval);
+  const connectedPlatformIds = useConnectedPlatforms();
+  const availablePlatforms = connectedPlatformIds === null ? PLATFORMS : PLATFORMS.filter((p) => connectedPlatformIds.has(p.id));
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
@@ -186,7 +191,7 @@ function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
           {/* Platforms */}
           <div>
             <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Platforms</label>
-            <div className="mt-2"><PlatformChips selected={platforms} onToggle={togglePlatform} /></div>
+            <div className="mt-2"><PlatformChips selected={platforms} onToggle={togglePlatform} platforms={availablePlatforms} /></div>
           </div>
 
           {err && <div className="text-xs text-destructive">{err}</div>}
@@ -199,10 +204,16 @@ function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
           </button>
           <div className="flex items-center gap-2">
             <button onClick={onClose} className="rounded-full border border-white/10 px-4 py-2 text-xs text-muted-foreground hover:text-foreground transition">Cancel</button>
-            <button onClick={save} disabled={!name.trim() || platforms.length === 0 || saving}
+            <div className="flex flex-col items-end gap-1">
+              <RequirementChecklist items={[
+                { label: "Event name", met: !!name.trim() },
+                { label: "At least one platform", met: platforms.length > 0 },
+              ]} />
+              <button onClick={save} disabled={!name.trim() || platforms.length === 0 || saving}
               className="rounded-full bg-gold-gradient px-5 py-2 text-xs font-semibold text-background disabled:opacity-50 shadow-[var(--shadow-gold)] transition">
               {saving ? "Saving…" : editing ? "Save changes" : "Create event"}
             </button>
+            </div>
           </div>
         </div>
       </div>
@@ -553,7 +564,7 @@ function QuickStartTab() {
     <div className="space-y-6">
       {/* Input card — glass */}
       <div className="rounded-2xl border border-white/[0.07] bg-gradient-to-b from-white/[0.06] to-white/[0.02] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.04),0_8px_32px_-8px_rgba(0,0,0,0.3)] backdrop-blur-sm">
-        <div className="text-sm font-semibold text-foreground mb-1">Study a website, get ad ideas</div>
+        <div className="text-sm font-semibold text-foreground mb-1">Study a website, get ad ideas <NovaHint hintKey="page:quick-start" /></div>
         <p className="text-xs text-muted-foreground mb-4">Give Agent Niva your URL — it reads the site and recommends concrete ad ideas you can turn into real ads with one click.</p>
         <div className="flex flex-wrap items-center gap-2">
           <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="yourcompany.com"
@@ -562,6 +573,11 @@ function QuickStartTab() {
             className="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
             {[1, 2, 3, 5, 8, 10].map((n) => <option key={n} value={n}>{n} idea{n > 1 ? "s" : ""}</option>)}
           </select>
+          <div className="w-full">
+            <RequirementChecklist items={[
+              { label: "Website URL", met: !!url.trim() },
+            ]} />
+          </div>
           <button onClick={start} disabled={!url.trim() || (job !== null && GENERATING.has(job.status))}
             className="rounded-full bg-gold-gradient px-5 py-2.5 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50 transition">
             {job && GENERATING.has(job.status) ? "Studying site…" : "Get ad ideas"}
@@ -632,10 +648,10 @@ function AgentNiva() {
         Your AI marketing agent — studies your site for ad ideas, and keeps seasonal ads generating and scheduling themselves throughout the year.
       </p>
       <div className="flex gap-2 mb-6">
-        {([ ["quick-start", "⚡ Quick Start"], ["events", "📅 Recurring Events"] ] as const).map(([k, l]) => (
+        {([ ["quick-start", "⚡ Quick Start", "page:quick-start"], ["events", "📅 Recurring Events", "page:recurring-events"] ] as const).map(([k, l, hk]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${tab === k ? "border-primary/50 bg-primary/10 text-primary shadow-[0_0_14px_-4px_oklch(0.78_0.12_85/0.3)]" : "border-white/10 text-muted-foreground hover:border-white/20 hover:text-foreground"}`}>
-            {l}
+            {l} <NovaHint hintKey={hk} />
           </button>
         ))}
       </div>

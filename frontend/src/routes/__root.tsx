@@ -80,10 +80,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "NivaAd — AI ad studio for product launches" },
+      { title: "NivaSpark — AI ad studio for product launches" },
       { name: "description", content: "One brief. Ready-to-post ads with copy, image, video and carousels — scored and compliance-checked for every platform." },
       { name: "author", content: "Nivatier" },
-      { property: "og:title", content: "NivaAd — AI ad studio for product launches" },
+      { property: "og:title", content: "NivaSpark — AI ad studio for product launches" },
       { property: "og:description", content: "Describe your product. Post everywhere. AI-generated ads for Instagram, Facebook, LinkedIn, X and TikTok." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

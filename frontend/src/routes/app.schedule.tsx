@@ -9,7 +9,7 @@ import { useRequireCapability } from "@/hooks/use-require-capability";
 
 export const Route = createFileRoute("/app/schedule")({
   component: Schedule,
-  head: () => ({ meta: [{ title: "Schedule — NivaAd" }] }),
+  head: () => ({ meta: [{ title: "Schedule — NivaSpark" }] }),
 });
 
 const PAGE_SIZE = 10;
