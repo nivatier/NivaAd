@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell, Panel, Input, EmptyState } from "@/components/app-shell";
 import { RequirementChecklist } from "@/components/requirement-checklist";
-import { PLATFORMS } from "@/components/create-ad-parts";
+import { PLATFORMS, type Platform } from "@/components/create-ad-parts";
 import { useConnectedPlatforms } from "@/hooks/use-connected-platforms";
 import { CampaignImageModal } from "@/components/campaign-image-modal";
 import { RepostModal } from "@/components/repost-modal";
@@ -19,6 +19,12 @@ export const Route = createFileRoute("/app/campaigns")({
 });
 
 const PAGE_SIZE = 10;
+
+const POSITION_OPTIONS = [
+  "top_left","top_center","top_right",
+  "middle_left","middle_center","middle_right",
+  "bottom_left","bottom_center","bottom_right",
+];
 
 type PhaseInfo = { caption: string; date?: string; time?: string; platforms?: string[]; ad_id?: string | null };
 type Campaign = {
@@ -57,20 +63,37 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+type TextOverlay = {
+  text: string; startTime: number; endTime: number | null;
+  position: string; fontStyle: string; fontSize: string; textColor: string; overlayStyle: string;
+};
+type VideoShot = {
+  prompt: string; duration: number;
+  voiceoverText?: string; showVoiceover?: boolean;
+  textOverlays?: TextOverlay[]; showOverlays?: boolean;
+};
 type PhaseFormState = {
   date: string; time: string; platforms: Record<string, boolean>;
   wantImage: boolean; productImage: string | null; sceneText: string; useBrandKit: boolean;
-  imageModelId: string | null;
+  imageModelId: string | null; imagePromptOverride: string;
   wantVideo: boolean; videoModelId: string | null; videoResolution: string | null;
-  videoFrameImage: string | null; videoShots: { prompt: string; duration: number }[];
-  videoMode: "single_reference" | "first_last_frame"; videoEndFrameImage: string | null;
+  videoFrameImage: string | null; videoEndFrameImage: string | null;
+  videoShots: VideoShot[];
+  videoMode: "single_reference" | "first_last_frame";
+  videoAudio: boolean; videoCameraStyleIds: string[]; videoNegativePrompt: string;
+  videoBackgroundMusicId: string; videoReferencePrompt: string; showVideoReferencePrompt: boolean;
+  videoStartShotId: string | null; videoEndShotId: string | null;
   refineVideoPrompt: boolean; refineVideoFrame: boolean;
 };
 
-function PhaseScheduleInput({ label, state, setState, availableImageModels, availableVideoModels, availablePlatforms }: {
+function PhaseScheduleInput({ label, state, setState, availableImageModels, availableVideoModels, availablePlatforms, connectedPlatformIds, testMode, cameraStylePresets, musicPresets, brandVideoShots }: {
   label: string; state: PhaseFormState; setState: (v: PhaseFormState) => void;
   availableImageModels: AvailableModel[] | null; availableVideoModels: AvailableModel[] | null;
-  availablePlatforms: typeof PLATFORMS;
+  availablePlatforms: Platform[];
+  connectedPlatformIds: Set<string>; testMode: boolean;
+  cameraStylePresets: { id: string; label: string }[];
+  musicPresets: { id: string; label: string }[];
+  brandVideoShots: { id: string; kind: string; status: string; label: string; prompt: string; duration: number }[];
 }) {
   async function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -103,12 +126,23 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
           className="w-24 rounded-lg border border-input bg-input/40 px-2 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none" />
       </div>
       <div className="mt-2 flex flex-wrap gap-1">
-        {availablePlatforms.map((p) => (
-          <button key={p.id} type="button" onClick={() => setState({ ...state, platforms: { ...state.platforms, [p.id]: !state.platforms[p.id] } })}
-            className={`rounded-full border px-2 py-1 text-[10px] ${state.platforms[p.id] ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
-            {state.platforms[p.id] ? "☑" : "☐"} {p.tag}
-          </button>
-        ))}
+        {availablePlatforms.map((p) => {
+          const isConnected = connectedPlatformIds.has(p.id);
+          const isSelectable = testMode || isConnected;
+          const isSelected = !!state.platforms[p.id];
+          return (
+            <button key={p.id} type="button"
+              disabled={!isSelectable}
+              onClick={() => isSelectable && setState({ ...state, platforms: { ...state.platforms, [p.id]: !state.platforms[p.id] } })}
+              className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition-all
+                ${isSelected ? "border-primary bg-primary/10 text-primary" :
+                  isSelectable ? "border-border text-muted-foreground hover:border-primary/40" :
+                  "border-border/40 text-muted-foreground/30 opacity-40 cursor-not-allowed"}`}>
+              <span className="h-3 w-3 rounded-full inline-flex items-center justify-center text-[7px] font-bold text-slate-950 shrink-0" style={{ background: isSelectable ? p.color : "#888" }}>{p.tag}</span>
+              {p.name}
+            </button>
+          );
+        })}
       </div>
 
       <label className={`mt-2 flex items-center gap-1.5 text-[11px] ${state.wantVideo ? "text-muted-foreground/50" : "text-foreground"}`}>
@@ -153,6 +187,15 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
             <input type="checkbox" checked={state.useBrandKit} onChange={(e) => setState({ ...state, useBrandKit: e.target.checked })} />
             🎨 Include brand kit
           </label>
+          <div>
+            <div className="text-[10px] font-semibold text-muted-foreground mb-1">Image prompt override <span className="font-normal">(optional)</span></div>
+            <input
+              value={state.imagePromptOverride}
+              onChange={(e) => setState({ ...state, imagePromptOverride: e.target.value })}
+              placeholder="Override the AI's image prompt entirely…"
+              className="w-full rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none"
+            />
+          </div>
         </div>
       )}
 
@@ -163,140 +206,326 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
 
       {state.wantVideo && (
         <div className="mt-2 space-y-2 rounded-lg border border-border/60 bg-card/40 p-2.5">
+          {/* Model + resolution + audio + duration options */}
           <div>
             <div className="text-[10px] font-semibold text-muted-foreground mb-1">Video Model</div>
-            <select
-              value={state.videoModelId || ""}
+            <select value={state.videoModelId || ""}
               onChange={(e) => {
                 const id = e.target.value;
                 const m = availableVideoModels?.find((x) => x.id === id);
-                setState({
-                  ...state, videoModelId: id,
-                  videoResolution: m?.resolutions?.[0] ?? null,
-                  videoShots: state.videoShots.length === 1 ? [{ ...state.videoShots[0], duration: m?.min_duration ?? state.videoShots[0].duration }] : state.videoShots,
-                });
+                setState({ ...state, videoModelId: id, videoResolution: m?.resolutions?.[0] ?? null,
+                  videoShots: state.videoShots.length === 1 ? [{ ...state.videoShots[0], duration: m?.min_duration ?? state.videoShots[0].duration }] : state.videoShots });
               }}
-              className="w-full rounded-lg border border-input bg-input/40 px-2 py-1.5 text-[11px] text-foreground focus:border-primary focus:outline-none"
-            >
-              {!availableVideoModels && <option value="">Loading options…</option>}
+              className="w-full rounded-lg border border-input bg-input/40 px-2 py-1.5 text-[11px] text-foreground focus:border-primary focus:outline-none">
+              {!availableVideoModels && <option value="">Loading…</option>}
               {availableVideoModels?.map((m) => (
-                <option key={m.id} value={m.id}>{m.label} — {m.credits} credit{m.credits > 1 ? "s" : ""} · {m.min_duration}-{m.max_duration}s</option>
+                <option key={m.id} value={m.id}>{m.label} — {m.credits}cr · {m.duration_options ? m.duration_options.map((d: number) => `${d}s`).join("/") : `${m.min_duration}-${m.max_duration}s`}</option>
               ))}
             </select>
             {selectedVideoModel?.resolutions && selectedVideoModel.resolutions.length > 0 && (
-              <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                <span className="text-[10px] text-muted-foreground">Resolution:</span>
-                {selectedVideoModel.resolutions.map((r) => (
+              <div className="mt-1 flex flex-wrap items-center gap-1">
+                <span className="text-[10px] text-muted-foreground">Res:</span>
+                {selectedVideoModel.resolutions.map((r: string) => (
                   <button key={r} type="button" onClick={() => setState({ ...state, videoResolution: r })}
-                    className={`rounded-full border px-2 py-0.5 text-[10px] ${state.videoResolution === r ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
-                    {r}
-                  </button>
+                    className={`rounded-full border px-2 py-0.5 text-[10px] ${state.videoResolution === r ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>{r}</button>
                 ))}
+              </div>
+            )}
+            <div className="mt-1 flex flex-wrap items-center gap-3">
+              {selectedVideoModel?.supports_audio && (
+                <label className="flex items-center gap-1 text-[10px] text-foreground">
+                  <input type="checkbox" checked={state.videoAudio} onChange={(e) => setState({ ...state, videoAudio: e.target.checked })} />
+                  🔊 Audio {state.videoAudio ? "on" : "off"}
+                </label>
+              )}
+              {selectedVideoModel?.duration_options && state.videoShots.length === 1 && (
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-muted-foreground">Length:</span>
+                  {(selectedVideoModel.duration_options as number[]).map((d) => (
+                    <button key={d} onClick={() => setState({ ...state, videoShots: [{ ...state.videoShots[0], duration: d }] })}
+                      className={`rounded-full border px-2 py-0.5 text-[10px] ${state.videoShots[0].duration === d ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>{d}s</button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Reference image */}
+          <div className="rounded-lg border border-border/60 bg-background/40 p-2">
+            <div className="text-[10px] font-semibold text-foreground mb-1.5">Reference image (optional)</div>
+            {selectedVideoModel?.supports_last_frame && (
+              <div className="flex gap-1.5 mb-1.5">
+                <button type="button" onClick={() => setState({ ...state, videoMode: "single_reference" })}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] ${state.videoMode === "single_reference" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>Single</button>
+                <button type="button" onClick={() => setState({ ...state, videoMode: "first_last_frame" })}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] ${state.videoMode === "first_last_frame" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>Start + end</button>
+              </div>
+            )}
+            {state.videoFrameImage ? (
+              <div className="flex items-center gap-2">
+                <img src={state.videoFrameImage} alt="ref" className="h-10 w-10 rounded object-cover border border-border shrink-0" />
+                <span className="text-[10px] text-emerald-400 flex-1">✓ {state.videoMode === "first_last_frame" ? "Starting frame" : "Reference set"}</span>
+                <button type="button" onClick={() => setState({ ...state, videoFrameImage: null, videoReferencePrompt: "", showVideoReferencePrompt: false })}
+                  className="text-[10px] text-destructive border border-destructive/40 rounded-full px-2 py-0.5">Remove</button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <label className="inline-block cursor-pointer rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">
+                  ⬆ {state.videoMode === "first_last_frame" ? "Start frame" : "Upload image"}
+                  <input type="file" accept="image/*" className="hidden" onChange={handleVideoFrameImage} />
+                </label>
+                {state.productImage && (
+                  <button type="button" onClick={() => setState({ ...state, videoFrameImage: state.productImage })}
+                    className="rounded-full border border-border px-2 py-1 text-[10px] text-foreground">Use product photo</button>
+                )}
+                {state.videoMode === "single_reference" && <span className="text-[10px] text-muted-foreground">No image = text-to-video</span>}
+              </div>
+            )}
+            {state.videoMode === "single_reference" && state.videoFrameImage && (
+              <label className="mt-1.5 flex items-center gap-1.5 text-[10px] text-foreground">
+                <input type="checkbox" checked={state.refineVideoFrame} onChange={(e) => setState({ ...state, refineVideoFrame: e.target.checked })} />
+                🎨 Match background to shot 1 scene
+              </label>
+            )}
+            {state.videoMode === "first_last_frame" && (
+              state.videoEndFrameImage ? (
+                <div className="mt-1.5 flex items-center gap-2 border-t border-border/60 pt-1.5">
+                  <img src={state.videoEndFrameImage} alt="end" className="h-10 w-10 rounded object-cover border border-border shrink-0" />
+                  <span className="text-[10px] text-emerald-400 flex-1">✓ Ending frame</span>
+                  <button type="button" onClick={() => setState({ ...state, videoEndFrameImage: null })}
+                    className="text-[10px] text-destructive border border-destructive/40 rounded-full px-2 py-0.5">Remove</button>
+                </div>
+              ) : (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-1.5">
+                  <label className="inline-block cursor-pointer rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">
+                    ⬆ End frame
+                    <input type="file" accept="image/*" className="hidden" onChange={handleVideoEndFrameImage} />
+                  </label>
+                  <span className="text-[10px] text-muted-foreground">Required for start + end mode</span>
+                </div>
+              )
+            )}
+            {state.videoFrameImage && (
+              <div className="mt-1.5 border-t border-border/60 pt-1.5">
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-[10px] font-semibold text-foreground">🔗 Reference preservation</span>
+                  <button type="button" onClick={() => setState({ ...state, showVideoReferencePrompt: !state.showVideoReferencePrompt })}
+                    className="text-[10px] text-primary hover:underline">{state.showVideoReferencePrompt ? "Hide" : "Edit"}</button>
+                </div>
+                {!state.showVideoReferencePrompt && state.videoReferencePrompt.trim() && (
+                  <p className="text-[11px] text-muted-foreground line-clamp-1 italic">{state.videoReferencePrompt}</p>
+                )}
+                {state.showVideoReferencePrompt && (
+                  <textarea rows={2} value={state.videoReferencePrompt}
+                    onChange={(e) => setState({ ...state, videoReferencePrompt: e.target.value })}
+                    placeholder="Describe how to preserve the reference image style…"
+                    className="w-full rounded-lg border border-input bg-input/40 p-1.5 text-[11px] text-foreground focus:border-primary focus:outline-none resize-y" />
+                )}
               </div>
             )}
           </div>
 
-          {selectedVideoModel?.supports_last_frame && (
-            <div className="flex gap-1.5">
-              <button type="button" onClick={() => setState({ ...state, videoMode: "single_reference" })}
-                className={`rounded-full border px-2 py-0.5 text-[10px] ${state.videoMode === "single_reference" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
-                Single image
-              </button>
-              <button type="button" onClick={() => setState({ ...state, videoMode: "first_last_frame" })}
-                className={`rounded-full border px-2 py-0.5 text-[10px] ${state.videoMode === "first_last_frame" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
-                Start + end frame
-              </button>
-            </div>
-          )}
-
-          {state.videoFrameImage ? (
-            <div className="flex items-center gap-2">
-              <img src={state.videoFrameImage} alt="video reference" className="h-10 w-10 rounded object-cover border border-border" />
-              <span className="text-[10px] text-emerald-400">✓ starting frame</span>
-              <button type="button" onClick={() => setState({ ...state, videoFrameImage: null })} className="text-[10px] text-destructive border border-destructive/40 rounded-full px-2 py-0.5">Remove</button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <label className="inline-block cursor-pointer rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">
-                ⬆ {state.videoMode === "first_last_frame" ? "Upload starting frame" : "Upload reference image"}
-                <input type="file" accept="image/*" className="hidden" onChange={handleVideoFrameImage} />
-              </label>
-              {state.productImage && (
-                <button type="button" onClick={() => setState({ ...state, videoFrameImage: state.productImage })} className="rounded-full border border-border px-3 py-1 text-[10px] text-foreground">Use product photo</button>
-              )}
-              {state.videoMode === "single_reference" && <span className="text-[10px] text-muted-foreground">No image = text-to-video</span>}
-            </div>
-          )}
-
-          {state.videoMode === "single_reference" && state.videoFrameImage && (
-            <label className="flex items-center gap-1.5 text-[10px] text-foreground">
-              <input type="checkbox" checked={state.refineVideoFrame} onChange={(e) => setState({ ...state, refineVideoFrame: e.target.checked })} />
-              🎨 Change background to match shot 1's scene (optional)
-            </label>
-          )}
-
-          {state.videoMode === "first_last_frame" && (
-            state.videoEndFrameImage ? (
-              <div className="flex items-center gap-2 border-t border-border/60 pt-2">
-                <img src={state.videoEndFrameImage} alt="video end frame" className="h-10 w-10 rounded object-cover border border-border" />
-                <span className="text-[10px] text-emerald-400">✓ ending frame</span>
-                <button type="button" onClick={() => setState({ ...state, videoEndFrameImage: null })} className="text-[10px] text-destructive border border-destructive/40 rounded-full px-2 py-0.5">Remove</button>
+          {/* Brand intro / outro */}
+          {(() => {
+            const readyIntros = brandVideoShots.filter((s) => s.kind === "intro" && s.status === "ready");
+            const readyOutros = brandVideoShots.filter((s) => s.kind === "outro" && s.status === "ready");
+            if (readyIntros.length === 0 && readyOutros.length === 0) return null;
+            const shotName = (s: typeof readyIntros[number]) => s.label || (s.prompt.length > 30 ? s.prompt.slice(0, 30) + "…" : s.prompt);
+            return (
+              <div className="rounded-lg border border-border/60 bg-background/40 p-2">
+                <div className="text-[10px] font-semibold text-foreground mb-1.5">Brand intro / outro</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <div className="text-[10px] text-muted-foreground mb-1">Start shot</div>
+                    <select value={state.videoStartShotId || ""} onChange={(e) => setState({ ...state, videoStartShotId: e.target.value || null })}
+                      className="w-full rounded-lg border border-input bg-input/40 px-2 py-1.5 text-[11px] text-foreground focus:border-primary focus:outline-none">
+                      <option value="">None</option>
+                      {readyIntros.map((s) => <option key={s.id} value={s.id}>{shotName(s)} ({s.duration}s)</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground mb-1">End shot</div>
+                    <select value={state.videoEndShotId || ""} onChange={(e) => setState({ ...state, videoEndShotId: e.target.value || null })}
+                      className="w-full rounded-lg border border-input bg-input/40 px-2 py-1.5 text-[11px] text-foreground focus:border-primary focus:outline-none">
+                      <option value="">None</option>
+                      {readyOutros.map((s) => <option key={s.id} value={s.id}>{shotName(s)} ({s.duration}s)</option>)}
+                    </select>
+                  </div>
+                </div>
               </div>
-            ) : (
-              <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-2">
-                <label className="inline-block cursor-pointer rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">
-                  ⬆ Upload ending frame
-                  <input type="file" accept="image/*" className="hidden" onChange={handleVideoEndFrameImage} />
-                </label>
-                <span className="text-[10px] text-muted-foreground">Required for start + end frame mode</span>
+            );
+          })()}
+
+          {/* Camera style */}
+          {cameraStylePresets.length > 0 && (
+            <div>
+              <div className="text-[10px] font-semibold text-muted-foreground mb-1">🎥 Camera style <span className="font-normal">(optional)</span></div>
+              <div className="flex flex-wrap gap-1">
+                {cameraStylePresets.map((p) => {
+                  const active = state.videoCameraStyleIds.includes(p.id);
+                  return (
+                    <button key={p.id} type="button"
+                      onClick={() => setState({ ...state, videoCameraStyleIds: active ? state.videoCameraStyleIds.filter((x) => x !== p.id) : [...state.videoCameraStyleIds, p.id] })}
+                      className={`rounded-full border px-2 py-0.5 text-[10px] transition-colors ${active ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
+                      {active ? "✓ " : ""}{p.label}
+                    </button>
+                  );
+                })}
               </div>
-            )
+            </div>
           )}
 
-          <label className="flex items-center gap-1.5 text-[10px] text-foreground">
-            <input type="checkbox" checked={state.refineVideoPrompt} onChange={(e) => setState({ ...state, refineVideoPrompt: e.target.checked })} />
-            ✨ Refine shot wording with AI (optional)
-          </label>
+          {/* Background music */}
+          {musicPresets.length > 1 && (
+            <div>
+              <div className="text-[10px] font-semibold text-muted-foreground mb-1">🎵 Background music</div>
+              <select value={state.videoBackgroundMusicId} onChange={(e) => setState({ ...state, videoBackgroundMusicId: e.target.value })}
+                className="w-full rounded-lg border border-input bg-input/40 px-2 py-1.5 text-[11px] text-foreground focus:border-primary focus:outline-none">
+                {musicPresets.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              </select>
+            </div>
+          )}
 
+          {/* Negative prompt */}
+          <div>
+            <div className="text-[10px] font-semibold text-muted-foreground mb-1">🚫 Negative prompt <span className="font-normal">(optional)</span></div>
+            <input value={state.videoNegativePrompt} onChange={(e) => setState({ ...state, videoNegativePrompt: e.target.value })}
+              placeholder="e.g. no warped geometry, no flickering, no artifacts"
+              className="w-full rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none" />
+          </div>
+
+          {/* Shots */}
           <div className="rounded-lg border border-border/60 bg-background/40 p-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-semibold text-muted-foreground">Video shots</span>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] font-semibold text-muted-foreground">Shots</span>
               <div className="flex items-center gap-1.5">
                 <button type="button" disabled={state.videoShots.length <= 1}
-                  onClick={() => setState({ ...state, videoShots: state.videoShots.length > 1 ? state.videoShots.slice(0, -1) : state.videoShots })}
-                  className="grid h-5 w-5 place-items-center rounded-full border border-border text-[11px] text-foreground disabled:opacity-40">−</button>
+                  onClick={() => setState({ ...state, videoShots: state.videoShots.slice(0, -1) })}
+                  className="grid h-5 w-5 place-items-center rounded-full border border-border text-[11px] disabled:opacity-40">−</button>
                 <span className="w-4 text-center text-[11px] font-semibold text-foreground">{state.videoShots.length}</span>
                 <button type="button" disabled={state.videoShots.length >= MAX_VIDEO_SHOTS}
-                  onClick={() => setState({ ...state, videoShots: state.videoShots.length < MAX_VIDEO_SHOTS ? [...state.videoShots, { prompt: "", duration: 6 }] : state.videoShots })}
-                  className="grid h-5 w-5 place-items-center rounded-full border border-border text-[11px] text-foreground disabled:opacity-40">＋</button>
+                  onClick={() => setState({ ...state, videoShots: [...state.videoShots, { prompt: "", duration: 6 }] })}
+                  className="grid h-5 w-5 place-items-center rounded-full border border-border text-[11px] disabled:opacity-40">＋</button>
               </div>
             </div>
-            <div className="mt-1.5 space-y-1.5">
+            <div className="space-y-2">
               {state.videoShots.map((shot, i) => (
-                <div key={i} className="flex items-center gap-1.5">
-                  <input
-                    placeholder={state.videoShots.length > 1 ? `Shot ${i + 1} — style, angle, action` : "Describe this shot (optional)"}
-                    value={shot.prompt}
-                    onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, prompt: e.target.value } : x) })}
-                    className="w-full rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none"
-                  />
-                  <input
-                    type="number"
-                    value={shot.duration}
-                    onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, duration: Number(e.target.value) || 0 } : x) })}
-                    className="w-12 shrink-0 rounded-lg border border-input bg-input/40 px-1.5 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none"
-                  />
-                  <span className="shrink-0 text-[10px] text-muted-foreground">sec</span>
+                <div key={i} className="rounded-lg border border-border/60 bg-card/40 p-2 space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-4 shrink-0 text-[10px] text-muted-foreground">#{i + 1}</span>
+                    <input placeholder={state.videoShots.length > 1 ? `Shot ${i + 1} — angle, action` : "Describe this shot (optional)"}
+                      value={shot.prompt}
+                      onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, prompt: e.target.value } : x) })}
+                      className="w-full rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none" />
+                    <input type="number" value={shot.duration}
+                      disabled={!!(selectedVideoModel?.duration_options && state.videoShots.length === 1)}
+                      onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, duration: Number(e.target.value) || 0 } : x) })}
+                      className="w-12 shrink-0 rounded-lg border border-input bg-input/40 px-1.5 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none disabled:opacity-50" />
+                    <span className="shrink-0 text-[10px] text-muted-foreground">s</span>
+                  </div>
+                  {/* Per-shot extras */}
+                  <div className="flex flex-wrap gap-1.5 pl-5">
+                    {!shot.showOverlays ? (
+                      <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, showOverlays: true, textOverlays: x.textOverlays || [] } : x) })}
+                        className="flex items-center gap-0.5 rounded-full border border-dashed border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary/50 hover:text-primary">
+                        <span>＋</span> Text overlay</button>
+                    ) : <span className="text-[10px] font-medium text-primary">💬 Overlays</span>}
+                    {!shot.showVoiceover ? (
+                      <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, showVoiceover: true } : x) })}
+                        className="flex items-center gap-0.5 rounded-full border border-dashed border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-secondary/50 hover:text-secondary">
+                        <span>＋</span> Voice-over</button>
+                    ) : <span className="text-[10px] font-medium text-secondary">🎙 Voice-over</span>}
+                  </div>
+                  {/* Text overlays */}
+                  {shot.showOverlays && (
+                    <div className="pl-5 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-muted-foreground">Text overlays</span>
+                        <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, textOverlays: [...(x.textOverlays || []), { text: "", startTime: 0, endTime: null, position: "bottom-center", fontStyle: "sans", fontSize: "medium", textColor: "#FFFFFF", overlayStyle: "fade" }] } : x) })}
+                          className="rounded-full border border-primary/50 px-1.5 py-0.5 text-[10px] text-primary">＋ Add</button>
+                      </div>
+                      {(shot.textOverlays || []).map((ov, oi) => (
+                        <div key={oi} className="rounded-lg border border-border/60 bg-background/50 p-1.5 space-y-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <input placeholder={`"The wait is almost over."`} value={ov.text}
+                              onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, text: e.target.value } : o) } : x) })}
+                              className="flex-1 rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none" />
+                            <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).filter((_, oi2) => oi2 !== oi) } : x) })}
+                              className="shrink-0 rounded-full border border-destructive/40 px-1.5 py-0.5 text-[10px] text-destructive">✕</button>
+                          </div>
+                          <div className="grid grid-cols-4 gap-1">
+                            <div><label className="text-[9px] text-muted-foreground">Start s</label>
+                              <input type="number" min="0" step="0.5" value={ov.startTime}
+                                onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, startTime: Number(e.target.value) || 0 } : o) } : x) })}
+                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground" /></div>
+                            <div><label className="text-[9px] text-muted-foreground">End s</label>
+                              <input type="number" min="0" step="0.5" value={ov.endTime ?? ""} placeholder="end"
+                                onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, endTime: e.target.value === "" ? null : Number(e.target.value) } : o) } : x) })}
+                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground" /></div>
+                            <div><label className="text-[9px] text-muted-foreground">Position</label>
+                              <select value={ov.position} onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, position: e.target.value } : o) } : x) })}
+                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
+                                {POSITION_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}</select></div>
+                            <div><label className="text-[9px] text-muted-foreground">Style</label>
+                              <select value={ov.overlayStyle} onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, overlayStyle: e.target.value } : o) } : x) })}
+                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
+                                <option value="fade">Fade</option><option value="solid">Solid</option><option value="slide_up">Slide up</option></select></div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-1">
+                            <div><label className="text-[9px] text-muted-foreground">Font</label>
+                              <select value={ov.fontStyle} onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, fontStyle: e.target.value } : o) } : x) })}
+                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
+                                <option value="sans">Sans</option><option value="sans_bold">Bold</option><option value="serif">Serif</option></select></div>
+                            <div><label className="text-[9px] text-muted-foreground">Size</label>
+                              <select value={ov.fontSize} onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, fontSize: e.target.value } : o) } : x) })}
+                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
+                                <option value="small">Sm</option><option value="medium">Md</option><option value="large">Lg</option></select></div>
+                            <div><label className="text-[9px] text-muted-foreground">Color</label>
+                              <div className="flex items-center gap-1">
+                                <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(ov.textColor) ? ov.textColor : "#FFFFFF"}
+                                  onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, textColor: e.target.value } : o) } : x) })}
+                                  className="h-6 w-7 rounded border border-border bg-transparent shrink-0" />
+                                <input value={ov.textColor}
+                                  onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, textColor: e.target.value } : o) } : x) })}
+                                  className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[10px] text-foreground" /></div></div>
+                          </div>
+                          {(shot.textOverlays || []).length > 0 && (
+                            <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, showOverlays: false } : x) })}
+                              className="text-[10px] text-muted-foreground hover:text-foreground">↑ Hide</button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Voiceover */}
+                  {shot.showVoiceover && (
+                    <div className="pl-5 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-semibold text-secondary">🎙 Voice-over</label>
+                        <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, showVoiceover: false, voiceoverText: "" } : x) })}
+                          className="text-[10px] text-muted-foreground hover:text-destructive">✕</button>
+                      </div>
+                      <textarea rows={1} value={shot.voiceoverText || ""}
+                        onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, voiceoverText: e.target.value } : x) })}
+                        placeholder="Narration for this shot…"
+                        className="w-full rounded-lg border border-secondary/30 bg-secondary/5 p-1.5 text-[11px] text-foreground focus:border-secondary/60 focus:outline-none resize-y" />
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
             <div className="mt-1 text-[10px] text-muted-foreground">
               Total: {videoTotalDuration}s
-              {selectedVideoModel && (videoTotalDuration < selectedVideoModel.min_duration! || videoTotalDuration > selectedVideoModel.max_duration!) && (
-                <span className="text-destructive"> — "{selectedVideoModel.label}" needs {selectedVideoModel.min_duration}-{selectedVideoModel.max_duration}s</span>
+              {selectedVideoModel && (videoTotalDuration < (selectedVideoModel as any).min_duration || videoTotalDuration > (selectedVideoModel as any).max_duration) && (
+                <span className="text-destructive"> — needs {(selectedVideoModel as any).min_duration}-{(selectedVideoModel as any).max_duration}s</span>
               )}
             </div>
           </div>
+
+          <label className="flex items-center gap-1.5 text-[10px] text-foreground">
+            <input type="checkbox" checked={state.refineVideoPrompt} onChange={(e) => setState({ ...state, refineVideoPrompt: e.target.checked })} />
+            ✨ Refine shot wording with AI before generating
+          </label>
         </div>
       )}
     </div>
@@ -307,11 +536,13 @@ function newPhaseState(days: number): PhaseFormState {
   return {
     date: defaultDate(days), time: "10:00",
     platforms: { instagram: true, facebook: true },
-    wantImage: false, productImage: null, sceneText: "", useBrandKit: false, imageModelId: null,
-    wantVideo: false, videoModelId: null, videoResolution: null, videoFrameImage: null,
+    wantImage: false, productImage: null, sceneText: "", useBrandKit: false, imageModelId: null, imagePromptOverride: "",
+    wantVideo: false, videoModelId: null, videoResolution: null, videoFrameImage: null, videoEndFrameImage: null,
     videoShots: [{ prompt: "", duration: 6 }],
-    videoMode: "single_reference", videoEndFrameImage: null, refineVideoPrompt: false,
-    refineVideoFrame: false,
+    videoMode: "single_reference",
+    videoAudio: false, videoCameraStyleIds: [], videoNegativePrompt: "", videoBackgroundMusicId: "none",
+    videoReferencePrompt: "", showVideoReferencePrompt: false, videoStartShotId: null, videoEndShotId: null,
+    refineVideoPrompt: false, refineVideoFrame: false,
   };
 }
 
@@ -330,8 +561,9 @@ function Campaigns() {
   const [teaser, setTeaser] = useState(newPhaseState(2));
   const [availableImageModels, setAvailableImageModels] = useState<AvailableModel[] | null>(null);
   const [availableVideoModels, setAvailableVideoModels] = useState<AvailableModel[] | null>(null);
-  const connectedPlatformIds = useConnectedPlatforms();
-  const availablePlatforms = connectedPlatformIds === null ? PLATFORMS : PLATFORMS.filter((p) => connectedPlatformIds.has(p.id));
+  const [cameraStylePresets, setCameraStylePresets] = useState<{ id: string; label: string }[]>([]);
+  const [musicPresets, setMusicPresets] = useState<{ id: string; label: string }[]>([]);
+  const { platforms: availablePlatforms, connected: connectedPlatformIds, testMode } = useConnectedPlatforms();
   const [launch, setLaunch] = useState(newPhaseState(5));
   const [followup, setFollowup] = useState(newPhaseState(8));
   const [busy, setBusy] = useState(false);
@@ -354,6 +586,14 @@ function Campaigns() {
     }
   }
   useEffect(() => { load(); }, [page, dateFrom, dateTo]);
+
+  const [brandVideoShots, setBrandVideoShots] = useState<{ id: string; kind: string; status: string; label: string; prompt: string; duration: number }[]>([]);
+
+  useEffect(() => {
+    api("/ads/camera-style-presets").then((r: any[]) => setCameraStylePresets(r)).catch(() => {});
+    api("/ads/music-presets").then((r: any[]) => setMusicPresets([{ id: "none", label: "None" }, ...r])).catch(() => {});
+    api("/brand-kit/video-shots").then((shots: any[]) => setBrandVideoShots(shots)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     api("/ads/available-models").then((models) => {
@@ -399,6 +639,19 @@ function Campaigns() {
       video_resolution: s.videoResolution,
       refine_video_prompt: s.wantVideo ? s.refineVideoPrompt : false,
       refine_video_frame: s.wantVideo ? s.refineVideoFrame : false,
+      image_prompt_override: s.wantImage && s.imagePromptOverride.trim() ? s.imagePromptOverride.trim() : null,
+      video_audio: s.wantVideo ? s.videoAudio : false,
+      video_camera_style_ids: s.wantVideo ? s.videoCameraStyleIds : [],
+      video_negative_prompt: s.wantVideo && s.videoNegativePrompt.trim() ? s.videoNegativePrompt.trim() : null,
+      video_background_music_id: s.wantVideo && s.videoBackgroundMusicId !== "none" ? s.videoBackgroundMusicId : null,
+      video_start_shot_id: s.wantVideo ? s.videoStartShotId : null,
+      video_end_shot_id: s.wantVideo ? s.videoEndShotId : null,
+      video_shots: s.wantVideo ? s.videoShots.map((sh) => ({
+        prompt: sh.prompt,
+        duration: sh.duration,
+        voiceover_text: sh.voiceoverText?.trim() || null,
+        text_overlays: sh.textOverlays?.filter((ov) => ov.text.trim()) ?? [],
+      })) : null,
     };
   }
 
@@ -460,9 +713,9 @@ function Campaigns() {
 
 
         <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <PhaseScheduleInput label="Teaser" state={teaser} setState={setTeaser} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} />
-          <PhaseScheduleInput label="Launch" state={launch} setState={setLaunch} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} />
-          <PhaseScheduleInput label="Follow-up" state={followup} setState={setFollowup} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} />
+          <PhaseScheduleInput label="Teaser" state={teaser} setState={setTeaser} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} />
+          <PhaseScheduleInput label="Launch" state={launch} setState={setLaunch} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} />
+          <PhaseScheduleInput label="Follow-up" state={followup} setState={setFollowup} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} />
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">💡 Each phase's image is independent — e.g. skip the image for the Teaser, add your own photo for the Launch.</p>
 

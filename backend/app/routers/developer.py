@@ -5,18 +5,18 @@ deps.py); nothing in this file ever creates or reads a User row, and no
 company's admin can reach any of this regardless of their role or
 capabilities — there is no code path that connects the two systems."""
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
 from app.database import get_db
 from app.deps import require_developer, require_developer_permission
-from app.models import Ad, Campaign, Company, CreditLedger, FlaggedContent, GuardrailRule, ModelConfig, Subscription, User
+from app.models import Ad, AuditLog, Campaign, Company, CreditLedger, FlaggedContent, GenerationJob, GuardrailRule, ModelConfig, Subscription, User
 from app.schemas import (
     AddAssistantHintIn, AddCameraStylePresetIn, AddDeveloperTeamUserIn, AddModelIn, AddPlatformIntegrationIn,
     AddMusicPresetIn, AddTextStylePresetIn, AddThemeTagIn, AddVideoRatioIn, AddVisionModelIn,
@@ -160,6 +160,433 @@ async def platform_overview(_: str = Depends(require_developer), db: AsyncSessio
         total_campaigns=total_campaigns or 0,
         flagged_unresolved_total=flagged_unresolved or 0,
     )
+
+
+@router.get("/monitoring")
+async def platform_monitoring(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Comprehensive monitoring data for the developer dashboard."""
+    now = datetime.utcnow()
+    hour_ago   = now - timedelta(hours=1)
+    day_ago    = now - timedelta(hours=24)
+    week_ago   = now - timedelta(days=7)
+    month_ago  = now - timedelta(days=30)
+    year_ago   = now - timedelta(days=365)
+
+    # ── Worker Queue ──────────────────────────────────────────────────
+    live_jobs = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .where(GenerationJob.status == "generating")
+    )
+    queued_jobs = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .where(GenerationJob.status == "queued")
+    )
+    wait_rows = (await db.execute(
+        select(
+            func.avg(
+                func.extract("epoch", GenerationJob.finished_at) -
+                func.extract("epoch", GenerationJob.created_at)
+            )
+        ).where(
+            GenerationJob.finished_at.isnot(None),
+            GenerationJob.created_at >= day_ago,
+            GenerationJob.status.in_(["ready", "failed"])
+        )
+    )).scalar()
+    avg_job_duration_s = round(float(wait_rows or 0), 1)
+
+    # Jobs by status last 24h
+    status_rows = (await db.execute(
+        select(GenerationJob.status, func.count())
+        .where(GenerationJob.created_at >= day_ago)
+        .group_by(GenerationJob.status)
+    )).all()
+    jobs_by_status_24h = {s: c for s, c in status_rows}
+
+    # ── Queue depth per hour — last 24 h ─────────────────────────────
+    # Approximation: count jobs created per hour as a queue-depth proxy
+    _trunc_hour_job = func.date_trunc("hour", GenerationJob.created_at)
+    queue_hour_rows = (await db.execute(
+        select(
+            _trunc_hour_job.label("hour"),
+            func.count().label("total"),
+            func.sum(case((GenerationJob.status == "generating", 1), else_=0)).label("generating"),
+            func.sum(case((GenerationJob.status == "queued",     1), else_=0)).label("queued"),
+            func.sum(case((GenerationJob.status == "failed",     1), else_=0)).label("failed"),
+        )
+        .where(GenerationJob.created_at >= day_ago)
+        .group_by(_trunc_hour_job)
+        .order_by(_trunc_hour_job)
+    )).all()
+    queue_per_hour = [
+        {
+            "hour": r.hour.strftime("%H:%M"),
+            "total": r.total,
+            "generating": r.generating,
+            "queued": r.queued,
+            "failed": r.failed,
+        }
+        for r in queue_hour_rows
+    ]
+
+    # ── Job Volume per hour — last 24 h ───────────────────────────────
+    # Reuse the same rows — jobs_per_hour is total count per hour
+    jobs_per_hour = [{"hour": r.hour.strftime("%H:%M"), "count": r.total} for r in queue_hour_rows]
+
+    # ── Job Volume per day — last 30 days ─────────────────────────────
+    _trunc_day_job = func.date_trunc("day", GenerationJob.created_at)
+    volume_day_rows = (await db.execute(
+        select(_trunc_day_job.label("day"), func.count().label("count"))
+        .where(GenerationJob.created_at >= month_ago)
+        .group_by(_trunc_day_job)
+        .order_by(_trunc_day_job)
+    )).all()
+    jobs_per_day = [{"date": str(r.day.date()), "count": r.count} for r in volume_day_rows]
+
+    # ── Job Volume per month — last 12 months ─────────────────────────
+    _trunc_month_job = func.date_trunc("month", GenerationJob.created_at)
+    volume_month_rows = (await db.execute(
+        select(_trunc_month_job.label("month"), func.count().label("count"))
+        .where(GenerationJob.created_at >= year_ago)
+        .group_by(_trunc_month_job)
+        .order_by(_trunc_month_job)
+    )).all()
+    jobs_per_month = [
+        {"month": r.month.strftime("%b %Y"), "count": r.count}
+        for r in volume_month_rows
+    ]
+
+    # Also keep the original 7-day slice for the summary stat
+    total_7d = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .where(GenerationJob.created_at >= week_ago)
+    ) or 0
+    total_30d = sum(r.count for r in volume_day_rows)
+
+    # Jobs by kind last 30 days (image/video/text)
+    video_count = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .join(Ad, Ad.id == GenerationJob.ad_id)
+        .where(GenerationJob.created_at >= month_ago,
+               Ad.outputs.op("->")("video").cast(String) == "true")
+    ) or 0
+    image_count = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .join(Ad, Ad.id == GenerationJob.ad_id)
+        .where(GenerationJob.created_at >= month_ago,
+               Ad.outputs.op("->")("image").cast(String) == "true",
+               Ad.outputs.op("->")("video").cast(String) != "true")
+    ) or 0
+    text_count = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .join(Ad, Ad.id == GenerationJob.ad_id)
+        .where(GenerationJob.created_at >= month_ago,
+               Ad.outputs.op("->")("image").cast(String) != "true",
+               Ad.outputs.op("->")("video").cast(String) != "true")
+    ) or 0
+    jobs_by_kind_7d = {"text": text_count, "image": image_count, "video": video_count}
+
+    # ── Failure Rate ─────────────────────────────────────────────────
+    failed_7d = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .where(GenerationJob.created_at >= week_ago, GenerationJob.status == "failed")
+    ) or 0
+    failure_rate_pct = round((failed_7d / total_7d * 100) if total_7d else 0, 1)
+
+    error_rows = (await db.execute(
+        select(GenerationJob.model_used, GenerationJob.error, func.count().label("count"))
+        .where(
+            GenerationJob.created_at >= week_ago,
+            GenerationJob.status == "failed",
+            GenerationJob.error.isnot(None)
+        )
+        .group_by(GenerationJob.model_used, GenerationJob.error)
+        .order_by(func.count().desc())
+        .limit(10)
+    )).all()
+    top_errors = [{"model": r.model_used, "error": (r.error or "")[:120], "count": r.count} for r in error_rows]
+
+    # ── Active Users ─────────────────────────────────────────────────
+    dau = await db.scalar(
+        select(func.count(func.distinct(AuditLog.user_id)))
+        .where(AuditLog.created_at >= day_ago, AuditLog.user_id.isnot(None))
+    ) or 0
+    wau = await db.scalar(
+        select(func.count(func.distinct(AuditLog.user_id)))
+        .where(AuditLog.created_at >= week_ago, AuditLog.user_id.isnot(None))
+    ) or 0
+
+    _trunc_day_audit = func.date_trunc("day", AuditLog.created_at)
+    dau_rows = (await db.execute(
+        select(_trunc_day_audit.label("day"), func.count(func.distinct(AuditLog.user_id)).label("dau"))
+        .where(AuditLog.created_at >= week_ago, AuditLog.user_id.isnot(None))
+        .group_by(_trunc_day_audit)
+        .order_by(_trunc_day_audit)
+    )).all()
+    dau_per_day = [{"date": str(r.day.date()), "dau": r.dau} for r in dau_rows]
+
+    new_companies_7d = await db.scalar(
+        select(func.count()).select_from(Company)
+        .where(Company.created_at >= week_ago)
+    ) or 0
+
+    # ── Credits & Revenue ────────────────────────────────────────────
+    credits_24h = await db.scalar(
+        select(func.coalesce(func.sum(func.abs(CreditLedger.delta)), 0))
+        .where(CreditLedger.created_at >= day_ago, CreditLedger.delta < 0)
+    ) or 0
+    credits_7d = await db.scalar(
+        select(func.coalesce(func.sum(func.abs(CreditLedger.delta)), 0))
+        .where(CreditLedger.created_at >= week_ago, CreditLedger.delta < 0)
+    ) or 0
+
+    _trunc_day_credit = func.date_trunc("day", CreditLedger.created_at)
+    credits_rows = (await db.execute(
+        select(_trunc_day_credit.label("day"), func.coalesce(func.sum(func.abs(CreditLedger.delta)), 0).label("credits"))
+        .where(CreditLedger.created_at >= week_ago, CreditLedger.delta < 0)
+        .group_by(_trunc_day_credit)
+        .order_by(_trunc_day_credit)
+    )).all()
+    credits_per_day = [{"date": str(r.day.date()), "credits": int(r.credits)} for r in credits_rows]
+
+    tier_credit_rows = (await db.execute(
+        select(Subscription.tier, func.coalesce(func.sum(func.abs(CreditLedger.delta)), 0).label("credits"))
+        .join(CreditLedger, CreditLedger.company_id == Subscription.company_id)
+        .where(CreditLedger.created_at >= week_ago, CreditLedger.delta < 0)
+        .group_by(Subscription.tier)
+    )).all()
+    credits_by_tier_7d = {r.tier: int(r.credits) for r in tier_credit_rows}
+
+    # ── Storage estimate ─────────────────────────────────────────────
+    total_ads_with_image = await db.scalar(
+        select(func.count()).select_from(Ad)
+        .where(Ad.results.isnot(None))
+    ) or 0
+    estimated_storage_gb = round((total_ads_with_image * 0.5) / 1024, 2)
+
+    return {
+        # Worker queue
+        "live_jobs": live_jobs or 0,
+        "queued_jobs": queued_jobs or 0,
+        "avg_job_duration_s": avg_job_duration_s,
+        "jobs_by_status_24h": jobs_by_status_24h,
+        "queue_per_hour": queue_per_hour,        # NEW — 24h hourly breakdown
+        # Volume
+        "jobs_per_hour": jobs_per_hour,          # NEW — 24h hourly job count
+        "jobs_per_day": jobs_per_day,            # now 30 days
+        "jobs_per_month": jobs_per_month,        # NEW — 12 months
+        "jobs_by_kind_7d": jobs_by_kind_7d,
+        "total_jobs_7d": total_7d,
+        "total_jobs_30d": total_30d,             # NEW
+        # Failures
+        "failed_jobs_7d": failed_7d,
+        "failure_rate_pct": failure_rate_pct,
+        "top_errors": top_errors,
+        # Users
+        "dau": dau,
+        "wau": wau,
+        "dau_per_day": dau_per_day,
+        "new_companies_7d": new_companies_7d,
+        # Credits
+        "credits_consumed_24h": int(credits_24h),
+        "credits_consumed_7d": int(credits_7d),
+        "credits_per_day": credits_per_day,
+        "credits_by_tier_7d": credits_by_tier_7d,
+        # Storage
+        "estimated_storage_gb": estimated_storage_gb,
+    }
+
+
+
+
+    # ── Worker Queue ──────────────────────────────────────────────────
+    # Jobs currently generating
+    live_jobs = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .where(GenerationJob.status == "generating")
+    )
+    # Jobs queued but not yet started (queued status)
+    queued_jobs = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .where(GenerationJob.status == "queued")
+    )
+    # Average queue wait time last 24h (created_at → finished_at for quick jobs as proxy)
+    wait_rows = (await db.execute(
+        select(
+            func.avg(
+                func.extract("epoch", GenerationJob.finished_at) -
+                func.extract("epoch", GenerationJob.created_at)
+            )
+        ).where(
+            GenerationJob.finished_at.isnot(None),
+            GenerationJob.created_at >= day_ago,
+            GenerationJob.status.in_(["ready", "failed"])
+        )
+    )).scalar()
+    avg_job_duration_s = round(float(wait_rows or 0), 1)
+
+    # Jobs by status (last 24h)
+    status_rows = (await db.execute(
+        select(GenerationJob.status, func.count())
+        .where(GenerationJob.created_at >= day_ago)
+        .group_by(GenerationJob.status)
+    )).all()
+    jobs_by_status_24h = {s: c for s, c in status_rows}
+
+    # ── Job Volume (last 7 days, per day) ────────────────────────────
+    _trunc_day_job = func.date_trunc("day", GenerationJob.created_at)
+    volume_rows = (await db.execute(
+        select(_trunc_day_job.label("day"), func.count().label("count"))
+        .where(GenerationJob.created_at >= week_ago)
+        .group_by(_trunc_day_job)
+        .order_by(_trunc_day_job)
+    )).all()
+    jobs_per_day = [{"date": str(r.day.date()), "count": r.count} for r in volume_rows]
+
+    # Jobs by kind last 7 days (image/video/text)
+    # Count jobs by ad content type using JSONB operators to avoid GROUP BY issues
+    video_count = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .join(Ad, Ad.id == GenerationJob.ad_id)
+        .where(GenerationJob.created_at >= week_ago,
+               Ad.outputs.op("->")("video").cast(String) == "true")
+    ) or 0
+    image_count = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .join(Ad, Ad.id == GenerationJob.ad_id)
+        .where(GenerationJob.created_at >= week_ago,
+               Ad.outputs.op("->")("image").cast(String) == "true",
+               Ad.outputs.op("->")("video").cast(String) != "true")
+    ) or 0
+    text_count = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .join(Ad, Ad.id == GenerationJob.ad_id)
+        .where(GenerationJob.created_at >= week_ago,
+               Ad.outputs.op("->")("image").cast(String) != "true",
+               Ad.outputs.op("->")("video").cast(String) != "true")
+    ) or 0
+    jobs_by_kind_7d = {"text": text_count, "image": image_count, "video": video_count}
+
+    # ── Failure Rate ─────────────────────────────────────────────────
+    total_7d = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .where(GenerationJob.created_at >= week_ago)
+    ) or 0
+    failed_7d = await db.scalar(
+        select(func.count()).select_from(GenerationJob)
+        .where(GenerationJob.created_at >= week_ago, GenerationJob.status == "failed")
+    ) or 0
+    failure_rate_pct = round((failed_7d / total_7d * 100) if total_7d else 0, 1)
+
+    # Top error messages last 7d
+    error_rows = (await db.execute(
+        select(GenerationJob.model_used, GenerationJob.error, func.count().label("count"))
+        .where(
+            GenerationJob.created_at >= week_ago,
+            GenerationJob.status == "failed",
+            GenerationJob.error.isnot(None)
+        )
+        .group_by(GenerationJob.model_used, GenerationJob.error)
+        .order_by(func.count().desc())
+        .limit(10)
+    )).all()
+    top_errors = [{"model": r.model_used, "error": (r.error or "")[:120], "count": r.count} for r in error_rows]
+
+    # ── Active Users ─────────────────────────────────────────────────
+    dau = await db.scalar(
+        select(func.count(func.distinct(AuditLog.user_id)))
+        .where(AuditLog.created_at >= day_ago, AuditLog.user_id.isnot(None))
+    ) or 0
+    wau = await db.scalar(
+        select(func.count(func.distinct(AuditLog.user_id)))
+        .where(AuditLog.created_at >= week_ago, AuditLog.user_id.isnot(None))
+    ) or 0
+
+    # DAU per day last 7 days
+    _trunc_day_audit = func.date_trunc("day", AuditLog.created_at)
+    dau_rows = (await db.execute(
+        select(_trunc_day_audit.label("day"), func.count(func.distinct(AuditLog.user_id)).label("dau"))
+        .where(AuditLog.created_at >= week_ago, AuditLog.user_id.isnot(None))
+        .group_by(_trunc_day_audit)
+        .order_by(_trunc_day_audit)
+    )).all()
+    dau_per_day = [{"date": str(r.day.date()), "dau": r.dau} for r in dau_rows]
+
+    # New companies last 7 days
+    new_companies_7d = await db.scalar(
+        select(func.count()).select_from(Company)
+        .where(Company.created_at >= week_ago)
+    ) or 0
+
+    # ── Credits & Revenue ────────────────────────────────────────────
+    credits_24h = await db.scalar(
+        select(func.coalesce(func.sum(func.abs(CreditLedger.delta)), 0))
+        .where(CreditLedger.created_at >= day_ago, CreditLedger.delta < 0)
+    ) or 0
+    credits_7d = await db.scalar(
+        select(func.coalesce(func.sum(func.abs(CreditLedger.delta)), 0))
+        .where(CreditLedger.created_at >= week_ago, CreditLedger.delta < 0)
+    ) or 0
+
+    # Credits consumed per day last 7 days
+    _trunc_day_credit = func.date_trunc("day", CreditLedger.created_at)
+    credits_rows = (await db.execute(
+        select(_trunc_day_credit.label("day"), func.coalesce(func.sum(func.abs(CreditLedger.delta)), 0).label("credits"))
+        .where(CreditLedger.created_at >= week_ago, CreditLedger.delta < 0)
+        .group_by(_trunc_day_credit)
+        .order_by(_trunc_day_credit)
+    )).all()
+    credits_per_day = [{"date": str(r.day.date()), "credits": int(r.credits)} for r in credits_rows]
+
+    # Credits by tier
+    tier_credit_rows = (await db.execute(
+        select(Subscription.tier, func.coalesce(func.sum(func.abs(CreditLedger.delta)), 0).label("credits"))
+        .join(CreditLedger, CreditLedger.company_id == Subscription.company_id)
+        .where(CreditLedger.created_at >= week_ago, CreditLedger.delta < 0)
+        .group_by(Subscription.tier)
+    )).all()
+    credits_by_tier_7d = {r.tier: int(r.credits) for r in tier_credit_rows}
+
+    # ── Storage estimate ─────────────────────────────────────────────
+    total_ads_with_image = await db.scalar(
+        select(func.count()).select_from(Ad)
+        .where(Ad.results.isnot(None))
+    ) or 0
+    # Rough estimate: avg image ~500KB, avg video ~15MB
+    image_ads = image_count  # from above (7d)
+    video_ads = video_count
+    estimated_storage_gb = round(
+        (total_ads_with_image * 0.5) / 1024, 2  # all time, ~0.5MB per ad result
+    )
+
+    return {
+        # Worker queue
+        "live_jobs": live_jobs or 0,
+        "queued_jobs": queued_jobs or 0,
+        "avg_job_duration_s": avg_job_duration_s,
+        "jobs_by_status_24h": jobs_by_status_24h,
+        # Volume
+        "jobs_per_day": jobs_per_day,
+        "jobs_by_kind_7d": jobs_by_kind_7d,
+        "total_jobs_7d": total_7d,
+        # Failures
+        "failed_jobs_7d": failed_7d,
+        "failure_rate_pct": failure_rate_pct,
+        "top_errors": top_errors,
+        # Users
+        "dau": dau,
+        "wau": wau,
+        "dau_per_day": dau_per_day,
+        "new_companies_7d": new_companies_7d,
+        # Credits
+        "credits_consumed_24h": int(credits_24h),
+        "credits_consumed_7d": int(credits_7d),
+        "credits_per_day": credits_per_day,
+        "credits_by_tier_7d": credits_by_tier_7d,
+        # Storage
+        "estimated_storage_gb": estimated_storage_gb,
+    }
+
 
 
 @router.get("/openrouter-credits", response_model=OpenRouterCreditsOut)

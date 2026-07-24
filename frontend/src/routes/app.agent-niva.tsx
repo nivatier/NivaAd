@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { NovaHint } from "@/components/nova-hint";
 import { RequirementChecklist } from "@/components/requirement-checklist";
-import { PLATFORMS } from "@/components/create-ad-parts";
+import { PLATFORMS, type Platform } from "@/components/create-ad-parts";
 import { useConnectedPlatforms } from "@/hooks/use-connected-platforms";
 import { api, type ProductOut } from "@/lib/api";
 
@@ -50,15 +50,29 @@ const APPROVAL_LABELS: Record<string, { label: string; short: string; descriptio
   auto_post:       { label: "Fully automatic",      short: "Auto",     description: "Generates and posts automatically. You'll get two advance notifications — one before generation, one before posting — with a chance to make changes." },
 };
 
-function PlatformChips({ selected, onToggle, platforms = PLATFORMS }: { selected: string[]; onToggle: (id: string) => void; platforms?: typeof PLATFORMS }) {
+function PlatformChips({ selected, onToggle, platforms = PLATFORMS, connectedPlatformIds = new Set<string>(), testMode = false }: {
+  selected: string[]; onToggle: (id: string) => void; platforms?: Platform[];
+  connectedPlatformIds?: Set<string>; testMode?: boolean;
+}) {
   return (
-    <div className="flex flex-wrap gap-2">
-      {platforms.map((p) => (
-        <button key={p.id} type="button" onClick={() => onToggle(p.id)}
-          className={`rounded-full border px-3 py-1.5 text-xs transition-all ${selected.includes(p.id) ? "border-primary bg-primary/15 text-primary shadow-[0_0_10px_-3px_oklch(0.78_0.12_85/0.4)]" : "border-border/50 text-muted-foreground hover:border-primary/40 hover:text-foreground"}`}>
-          {p.tag} {p.name}
-        </button>
-      ))}
+    <div className="flex flex-wrap gap-1.5">
+      {platforms.map((p) => {
+        const isConnected = connectedPlatformIds.has(p.id);
+        const isSelectable = testMode || isConnected;
+        const isSelected = selected.includes(p.id);
+        return (
+          <button key={p.id} type="button"
+            disabled={!isSelectable}
+            onClick={() => isSelectable && onToggle(p.id)}
+            className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-all
+              ${isSelected ? "border-primary bg-primary/15 text-primary shadow-[0_0_10px_-3px_oklch(0.78_0.12_85/0.4)]" :
+                isSelectable ? "border-border/50 text-muted-foreground hover:border-primary/40 hover:text-foreground" :
+                "border-border/30 text-muted-foreground/30 opacity-40 cursor-not-allowed"}`}>
+            <span className="h-3.5 w-3.5 rounded-full inline-flex items-center justify-center text-[8px] font-bold text-slate-950 shrink-0" style={{ background: isSelectable ? p.color : "#888" }}>{p.tag}</span>
+            {p.name}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -81,8 +95,7 @@ function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
   const [platforms, setPlatforms] = useState<string[]>(editing?.platforms ?? ["facebook", "instagram"]);
   const [productId, setProductId] = useState(editing?.product_id ?? "");
   const [approvalMode, setApprovalMode] = useState(editing?.approval_mode ?? defaultApproval);
-  const connectedPlatformIds = useConnectedPlatforms();
-  const availablePlatforms = connectedPlatformIds === null ? PLATFORMS : PLATFORMS.filter((p) => connectedPlatformIds.has(p.id));
+  const { platforms: availablePlatforms, connected: connectedPlatformIds, testMode } = useConnectedPlatforms();
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
@@ -132,7 +145,7 @@ function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
           <div>
             <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Event name</label>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Christmas, Black Friday, Summer Sale"
-              className="mt-1.5 w-full rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition" />
+              className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition" />
           </div>
 
           {/* Date + Lead Days */}
@@ -140,19 +153,19 @@ function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
             <div>
               <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Month</label>
               <select value={month} onChange={(e) => setMonth(Number(e.target.value))}
-                className="mt-1.5 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
+                className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
                 {MONTHS_FULL.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
               </select>
             </div>
             <div>
               <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Day</label>
               <input type="number" min={1} max={31} value={day} onChange={(e) => setDay(Number(e.target.value))}
-                className="mt-1.5 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition" />
+                className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition" />
             </div>
             <div>
               <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Lead days</label>
               <input type="number" min={0} max={60} value={leadDays} onChange={(e) => setLeadDays(Number(e.target.value))}
-                className="mt-1.5 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition" />
+                className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition" />
             </div>
           </div>
           <p className="text-[11px] text-muted-foreground -mt-2">Ad generates {leadDays} day{leadDays !== 1 ? "s" : ""} before {MONTHS[month - 1]} {day}.</p>
@@ -161,7 +174,7 @@ function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
           <div>
             <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Ad brief <span className="normal-case font-normal">(optional)</span></label>
             <textarea value={guidance} onChange={(e) => setGuidance(e.target.value)} rows={2} placeholder="e.g. 20% off everything, festive theme, highlight gift bundles"
-              className="mt-1.5 w-full rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none transition resize-none" />
+              className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none transition resize-none" />
           </div>
 
           {/* Approval mode */}
@@ -182,7 +195,7 @@ function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
           <div>
             <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Link a product <span className="normal-case font-normal">(optional)</span></label>
             <select value={productId} onChange={(e) => setProductId(e.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
+              className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
               <option value="">None</option>
               {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
@@ -191,7 +204,7 @@ function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
           {/* Platforms */}
           <div>
             <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Platforms</label>
-            <div className="mt-2"><PlatformChips selected={platforms} onToggle={togglePlatform} platforms={availablePlatforms} /></div>
+            <div className="mt-2"><PlatformChips selected={platforms} onToggle={togglePlatform} platforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} /></div>
           </div>
 
           {err && <div className="text-xs text-destructive">{err}</div>}
@@ -285,7 +298,7 @@ function EventDetailPanel({ ev, products, defaultApproval, onEdit, onToggleEnabl
           <div className="flex flex-wrap gap-1">
             {ev.platforms.map((p) => {
               const meta = PLATFORMS.find((pl) => pl.id === p);
-              return <span key={p} className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] text-muted-foreground">{meta?.tag || p}</span>;
+              return <span key={p} className="rounded-full border border-border bg-input/60 px-2.5 py-1 text-[10px] text-muted-foreground">{meta?.tag || p}</span>;
             })}
           </div>
 
@@ -363,12 +376,16 @@ function MonthGrid({ events, products, defaultApproval, onEventSaved, onEventDel
 
           return (
             <div key={monthName}
-              className={`relative rounded-2xl border p-3 backdrop-blur-sm transition-all ${isCurrentMonth ? "border-primary/30 bg-gradient-to-b from-primary/[0.07] to-primary/[0.02] shadow-[0_0_0_1px_oklch(0.78_0.12_85/0.15),0_8px_32px_-8px_oklch(0.78_0.12_85/0.12)]" : "border-white/[0.07] bg-gradient-to-b from-white/[0.05] to-white/[0.02] shadow-[0_0_0_1px_rgba(255,255,255,0.04),0_4px_16px_-4px_rgba(0,0,0,0.3)]"}`}>
+              className={`relative rounded-2xl border p-3 transition-all ${
+                isCurrentMonth
+                  ? "border-primary/40 bg-primary/[0.06] shadow-[0_0_0_1px_oklch(0.78_0.12_85/0.15),0_8px_32px_-8px_oklch(0.78_0.12_85/0.12)]"
+                  : "border-border bg-card shadow-[var(--shadow-glass)]"
+              }`}>
               {/* Month header */}
               <div className="mb-2 flex items-center justify-between">
                 <span className={`text-[11px] font-semibold uppercase tracking-widest ${isCurrentMonth ? "text-primary" : "text-muted-foreground"}`}>{monthName}</span>
                 {monthEvents.length > 0 && (
-                  <span className="rounded-full bg-white/8 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">{monthEvents.length}</span>
+                  <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">{monthEvents.length}</span>
                 )}
               </div>
 
@@ -386,7 +403,7 @@ function MonthGrid({ events, products, defaultApproval, onEventSaved, onEventDel
               {/* Add button per month */}
               <button
                 onClick={() => { setEditingEvent(null); setShowModalFor("new"); }}
-                className="mt-2 w-full rounded-lg border border-dashed border-white/10 py-1 text-[10px] text-muted-foreground/40 hover:border-primary/30 hover:text-primary/60 transition-all">
+                className="mt-2 w-full rounded-lg border border-dashed border-border py-1 text-[10px] text-muted-foreground/50 hover:border-primary/40 hover:text-primary/70 transition-all">
                 + add
               </button>
             </div>
@@ -508,11 +525,11 @@ function EventsTab() {
   );
 }
 
-// ── Quick Start Tab ────────────────────────────────────────────────────
+// ── Website Spark Tab ──────────────────────────────────────────────────
 
 type SavedSite = { id: string; url: string; label: string; scraped_at: string };
 
-function QuickStartTab() {
+function WebsiteSparkTab() {
   const [url, setUrl] = useState("");
   const [count, setCount] = useState(5);
   const [focus, setFocus] = useState("");
@@ -607,7 +624,7 @@ function QuickStartTab() {
   return (
     <div className="space-y-6">
       {/* Input card — glass */}
-      <div className="rounded-2xl border border-white/[0.07] bg-gradient-to-b from-white/[0.06] to-white/[0.02] p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.04),0_8px_32px_-8px_rgba(0,0,0,0.3)] backdrop-blur-sm">
+      <div className="rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-glass)]">
         <div className="text-sm font-semibold text-foreground mb-1">Study a website, get ad ideas <NovaHint hintKey="page:quick-start" /></div>
         <p className="text-xs text-muted-foreground mb-4">Give Agent Niva your URL — it reads the site and recommends concrete ad ideas you can turn into real ads with one click.</p>
 
@@ -617,7 +634,7 @@ function QuickStartTab() {
             <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Use a saved site</label>
             <div className="flex items-center gap-2">
               <select value={selectedSiteId} onChange={(e) => setSelectedSiteId(e.target.value)}
-                className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
+                className="flex-1 rounded-xl border border-border bg-input/60 px-3 py-2 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
                 <option value="">— Enter a new URL instead —</option>
                 {savedSites.map((s) => (
                   <option key={s.id} value={s.id}>{s.label || s.url} · {new Date(s.scraped_at).toLocaleDateString()}</option>
@@ -638,13 +655,13 @@ function QuickStartTab() {
         {!selectedSiteId && (
           <div className="flex flex-wrap items-center gap-2 mb-3">
             <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="yourcompany.com"
-              className="flex-1 min-w-[200px] rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition" />
+              className="flex-1 min-w-[200px] rounded-xl border border-border bg-input/60 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition" />
           </div>
         )}
 
         <div className="flex flex-wrap items-center gap-2">
           <select value={count} onChange={(e) => setCount(Number(e.target.value))}
-            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
+            className="rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
             {[1, 2, 3, 5, 8, 10].map((n) => <option key={n} value={n}>{n} idea{n > 1 ? "s" : ""}</option>)}
           </select>
           {!selectedSiteId && (
@@ -665,7 +682,7 @@ function QuickStartTab() {
           <label className="text-xs font-medium text-foreground">Focus on a specific subject <span className="font-normal text-muted-foreground">(optional)</span></label>
           <textarea value={focus} onChange={(e) => setFocus(e.target.value)} placeholder="e.g. our summer sale, the new iOS app, our loyalty programme…"
             rows={2} maxLength={500}
-            className="mt-1.5 w-full rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none transition resize-none" />
+            className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none transition resize-none" />
           <div className="mt-1 text-right text-[10px] text-muted-foreground">{focus.length}/500</div>
         </div>
 
@@ -679,7 +696,7 @@ function QuickStartTab() {
                 value={saveLabel}
                 onChange={(e) => setSaveLabel(e.target.value)}
                 placeholder={`Label (e.g. "Main site") — optional`}
-                className="flex-1 min-w-[160px] rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none"
+                className="flex-1 min-w-[160px] rounded-lg border border-border bg-input/60 px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none"
               />
               <button onClick={saveSite} disabled={saving}
                 className="rounded-full bg-gold-gradient px-4 py-1.5 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50">
@@ -700,37 +717,65 @@ function QuickStartTab() {
 
       {/* Recommendations */}
       <div>
-        <div className="text-sm font-semibold text-foreground mb-3">Ideas to review ({pending.length})</div>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-sm font-semibold text-foreground">Ideas to review</div>
+          {pending.length > 0 && (
+            <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-[10px] font-bold text-primary">{pending.length} pending</span>
+          )}
+        </div>
         {recs === null ? (
           <div className="text-xs text-muted-foreground">Loading…</div>
         ) : pending.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-white/[0.07] bg-white/[0.02] px-6 py-10 text-center text-xs text-muted-foreground">
-            No pending ideas — run Quick Start above to get some.
+          <div className="rounded-2xl border border-dashed border-border bg-card/30 px-6 py-12 text-center">
+            <div className="text-2xl mb-2">🌐</div>
+            <div className="text-xs text-muted-foreground">No pending ideas — paste a URL above and run Website Spark to get some.</div>
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2">
             {pending.map((r) => (
-              <div key={r.id} className="rounded-2xl border border-white/[0.07] bg-gradient-to-b from-white/[0.06] to-white/[0.02] p-4 shadow-[0_0_0_1px_rgba(255,255,255,0.04)] backdrop-blur-sm transition hover:border-white/12">
-                <div className="text-sm font-semibold text-foreground">{r.title}</div>
-                <div className="mt-1 text-xs text-muted-foreground leading-relaxed">{r.description}</div>
-                {r.audience && (
-                  <div className="mt-2 text-xs text-muted-foreground"><span className="font-medium text-foreground/70">Audience:</span> {r.audience}</div>
-                )}
-                <div className="mt-2.5 flex flex-wrap gap-1">
-                  {r.platforms.map((p) => {
-                    const meta = PLATFORMS.find((pl) => pl.id === p);
-                    return <span key={p} className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-muted-foreground">{meta?.tag || p}</span>;
-                  })}
-                </div>
-                <div className="mt-1 text-[10px] text-muted-foreground/50 truncate">from {r.source_url}</div>
-                <div className="mt-3 flex items-center gap-2">
-                  <button onClick={() => createFrom(r)} className="rounded-full bg-gold-gradient px-3.5 py-1.5 text-xs font-semibold text-background shadow-[var(--shadow-gold)]">
-                    Create this ad →
-                  </button>
-                  <button onClick={() => dismiss(r.id)} disabled={busyId === r.id}
-                    className="rounded-full border border-white/10 px-3.5 py-1.5 text-xs text-muted-foreground hover:border-destructive/40 hover:text-destructive disabled:opacity-50 transition">
-                    Dismiss
-                  </button>
+              <div key={r.id} className="group flex flex-col rounded-2xl border border-border bg-card shadow-[var(--shadow-glass)] overflow-hidden transition hover:border-primary/40 hover:shadow-[var(--shadow-glass-hover)]">
+                {/* Card accent bar */}
+                <div className="h-1 w-full bg-gradient-to-r from-primary/60 via-primary/30 to-transparent" />
+                <div className="flex flex-col flex-1 p-4">
+                  {/* Title */}
+                  <div className="text-sm font-bold text-foreground leading-snug">{r.title}</div>
+                  {/* Description */}
+                  <div className="mt-2 text-xs text-muted-foreground leading-relaxed flex-1">{r.description}</div>
+                  {/* Audience */}
+                  {r.audience && (
+                    <div className="mt-3 flex items-start gap-1.5">
+                      <span className="mt-px shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Audience</span>
+                      <span className="text-xs text-foreground/80 leading-snug">{r.audience}</span>
+                    </div>
+                  )}
+                  {/* Platform tags + source */}
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                    {r.platforms.length > 0 ? r.platforms.map((p) => {
+                      const meta = PLATFORMS.find((pl) => pl.id === p);
+                      return (
+                        <span key={p} className="flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          <span className="h-3 w-3 rounded-full inline-flex items-center justify-center text-[7px]" style={{ background: meta?.color ?? "#6366f1", color: "#0f172a" }}>{meta?.tag ?? "📄"}</span>
+                          {meta?.name ?? p}
+                        </span>
+                      );
+                    }) : (
+                      <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">All platforms</span>
+                    )}
+                  </div>
+                  {r.source_url && (
+                    <div className="mt-1.5 text-[10px] text-muted-foreground/50 truncate">🔗 {r.source_url}</div>
+                  )}
+                  {/* Actions */}
+                  <div className="mt-4 flex items-center gap-2">
+                    <button onClick={() => createFrom(r)}
+                      className="flex-1 rounded-full bg-gold-gradient px-3.5 py-2 text-xs font-semibold text-background shadow-[var(--shadow-gold)] hover:opacity-90 transition">
+                      Create this ad →
+                    </button>
+                    <button onClick={() => dismiss(r.id)} disabled={busyId === r.id}
+                      className="rounded-full border border-border px-3.5 py-2 text-xs text-muted-foreground hover:border-destructive/40 hover:text-destructive disabled:opacity-50 transition">
+                      Dismiss
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -741,24 +786,210 @@ function QuickStartTab() {
   );
 }
 
+// ── Quick Spark Tab ──────────────────────────────────────────────────────────
+// User describes an idea → AI generates 4-5 ad draft recommendations
+// (same card shape as Website Spark) → "Create this ad" pre-fills the wizard.
+
+type SparkDraft = {
+  id: string;
+  title: string;
+  description: string;
+  audience: string;
+  suggested_tone: string;
+  goal: string;
+};
+
+function QuickSparkTab() {
+  const [idea, setIdea] = useState("");
+  const [count, setCount] = useState(4);
+  const [drafts, setDrafts] = useState<SparkDraft[] | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [err, setErr] = useState("");
+  const navigate = useNavigate();
+
+  async function generate() {
+    if (!idea.trim()) return;
+    setGenerating(true); setErr(""); setDrafts(null);
+    try {
+      const systemPrompt = `You are an expert marketing strategist. Given a user's ad idea, generate ${count} distinct, creative ad draft concepts. Each should have a different angle, tone, or target audience slice to give the user real choice.
+
+Return ONLY a JSON array — no markdown, no prose, no backticks — with exactly this shape:
+[
+  {
+    "id": "1",
+    "title": "Short punchy ad concept title (max 8 words)",
+    "description": "What this ad communicates and why it works (2-3 sentences)",
+    "audience": "Who this speaks to (1 sentence)",
+    "suggested_tone": "Professional | Fun | Luxury | Minimal | Bold | Emotional",
+    "goal": "Drive sales | Product launch | Brand awareness | Get signups"
+  }
+]
+Make each concept meaningfully different. Be specific and actionable.`;
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          system: systemPrompt,
+          messages: [{ role: "user", content: `My ad idea: ${idea.trim()}` }],
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || "AI error");
+      const text = data.content?.find((b: any) => b.type === "text")?.text ?? "[]";
+      const parsed: SparkDraft[] = JSON.parse(text);
+      setDrafts(parsed);
+    } catch (e: any) {
+      setErr(e.message || "Could not generate drafts");
+    }
+    setGenerating(false);
+  }
+
+  function createFrom(draft: SparkDraft) {
+    sessionStorage.setItem("nivaad_prefill_product", JSON.stringify({
+      name: draft.title,
+      description: draft.description,
+      audience: draft.audience,
+      goal: draft.goal,
+      tone: draft.suggested_tone,
+    }));
+    navigate({ to: "/app" });
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Input card */}
+      <div className="rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-glass)]">
+        <div className="text-sm font-semibold text-foreground mb-1">Describe your idea, get instant ad drafts <NovaHint hintKey="page:quick-spark" /></div>
+        <p className="text-xs text-muted-foreground mb-4">
+          Tell Niva your ad concept in plain words — she'll turn it into {count} distinct draft angles you can launch with one click.
+        </p>
+
+        <div className="mb-3">
+          <label className="text-[11px] font-medium text-muted-foreground mb-1.5 block">Your idea</label>
+          <textarea
+            value={idea}
+            onChange={(e) => setIdea(e.target.value)}
+            placeholder="e.g. An ad for our new eco-friendly water bottle targeting gym-goers who care about sustainability…"
+            rows={3}
+            maxLength={600}
+            className="w-full rounded-xl border border-border bg-input/60 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition resize-none"
+          />
+          <div className="mt-1 text-right text-[10px] text-muted-foreground">{idea.length}/600</div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <select value={count} onChange={(e) => setCount(Number(e.target.value))}
+            className="rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
+            {[2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n} drafts</option>)}
+          </select>
+          <div className="flex-1 min-w-[180px]">
+            <RequirementChecklist items={[{ label: "Describe your idea", met: idea.trim().length > 10 }]} />
+          </div>
+          <button
+            onClick={generate}
+            disabled={idea.trim().length <= 10 || generating}
+            className="rounded-full bg-gold-gradient px-5 py-2.5 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50 transition"
+          >
+            {generating ? "Generating drafts…" : "Spark drafts →"}
+          </button>
+        </div>
+
+        {/* Generating state */}
+        {generating && (
+          <div className="mt-4 flex items-center gap-2 text-xs text-primary animate-pulse">
+            <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+            </svg>
+            Niva is crafting your ad angles…
+          </div>
+        )}
+      </div>
+
+      {err && <div className="text-xs text-destructive">{err}</div>}
+
+      {/* Draft results */}
+      {drafts !== null && (
+        <div>
+          <div className="text-sm font-semibold text-foreground mb-3">
+            {drafts.length} draft{drafts.length !== 1 ? "s" : ""} ready — pick one to build your ad
+          </div>
+          {drafts.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border bg-card/30 px-6 py-12 text-center">
+              <div className="text-2xl mb-2">💡</div>
+              <div className="text-xs text-muted-foreground">No drafts generated. Try describing your idea in more detail.</div>
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {drafts.map((draft) => (
+                <div key={draft.id} className="group flex flex-col rounded-2xl border border-border bg-card shadow-[var(--shadow-glass)] overflow-hidden transition hover:border-primary/40 hover:shadow-[var(--shadow-glass-hover)]">
+                  {/* Accent bar — cyan tint to distinguish from Website Spark */}
+                  <div className="h-1 w-full bg-gradient-to-r from-cyan-500/60 via-primary/30 to-transparent" />
+                  <div className="flex flex-col flex-1 p-4">
+                    <div className="text-sm font-bold text-foreground leading-snug">{draft.title}</div>
+                    <div className="mt-2 text-xs text-muted-foreground leading-relaxed flex-1">{draft.description}</div>
+                    {draft.audience && (
+                      <div className="mt-3 flex items-start gap-1.5">
+                        <span className="mt-px shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Audience</span>
+                        <span className="text-xs text-foreground/80 leading-snug">{draft.audience}</span>
+                      </div>
+                    )}
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {draft.goal && (
+                        <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[10px] font-medium text-primary">{draft.goal}</span>
+                      )}
+                      {draft.suggested_tone && (
+                        <span className="rounded-full border border-border bg-muted/40 px-2.5 py-0.5 text-[10px] font-medium text-muted-foreground">{draft.suggested_tone}</span>
+                      )}
+                    </div>
+                    <div className="mt-4">
+                      <button
+                        onClick={() => createFrom(draft)}
+                        className="w-full rounded-full bg-gold-gradient px-3.5 py-2 text-xs font-semibold text-background shadow-[var(--shadow-gold)] hover:opacity-90 transition"
+                      >
+                        Create this ad →
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Empty state — before first generation */}
+      {drafts === null && !generating && (
+        <div className="rounded-2xl border border-dashed border-border bg-card/30 px-6 py-12 text-center">
+          <div className="text-2xl mb-2">💡</div>
+          <div className="text-xs text-muted-foreground">Describe your idea above and Niva will generate ready-to-use ad drafts for you.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Root Component ─────────────────────────────────────────────────────
 
 function AgentNiva() {
-  const [tab, setTab] = useState<"quick-start" | "events">("quick-start");
+  const [tab, setTab] = useState<"website-spark" | "quick-spark" | "events">("website-spark");
   return (
     <AppShell eyebrow="Library" title="Agent Niva">
       <p className="mb-6 text-xs text-muted-foreground max-w-2xl">
         Your AI marketing agent — studies your site for ad ideas, and keeps seasonal ads generating and scheduling themselves throughout the year.
       </p>
       <div className="flex gap-2 mb-6">
-        {([ ["quick-start", "⚡ Quick Start", "page:quick-start"], ["events", "📅 Recurring Events", "page:recurring-events"] ] as const).map(([k, l, hk]) => (
+        {([ ["website-spark", "🌐 Website Spark", "page:quick-start"], ["quick-spark", "💡 Quick Spark", "page:quick-spark"], ["events", "📅 Recurring Events", "page:recurring-events"] ] as const).map(([k, l, hk]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${tab === k ? "border-primary/50 bg-primary/10 text-primary shadow-[0_0_14px_-4px_oklch(0.78_0.12_85/0.3)]" : "border-white/10 text-muted-foreground hover:border-white/20 hover:text-foreground"}`}>
             {l} <NovaHint hintKey={hk} />
           </button>
         ))}
       </div>
-      {tab === "quick-start" ? <QuickStartTab /> : <EventsTab />}
+      {tab === "website-spark" ? <WebsiteSparkTab /> : tab === "quick-spark" ? <QuickSparkTab /> : <EventsTab />}
     </AppShell>
   );
 }

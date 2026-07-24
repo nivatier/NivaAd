@@ -129,13 +129,17 @@ function Products() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {products.map((p) => (
-            <div key={p.id} className="flex gap-3 rounded-2xl border border-border bg-card/60 p-4">
-              {p.image_url ? (
-                <img src={p.image_url} alt={p.name} className="h-16 w-16 shrink-0 rounded-lg object-cover border border-border" />
-              ) : (
-                <div className="h-16 w-16 shrink-0 rounded-lg border border-border bg-background/60 grid place-items-center text-2xl">🛍️</div>
-              )}
-              <div className="min-w-0 flex-1">
+            <div key={p.id} className="flex items-stretch rounded-2xl border border-border bg-card/60 overflow-hidden">
+              {/* Thumbnail — flush left, full card height */}
+              <div className="w-[125px] shrink-0 relative bg-muted/20 flex items-center justify-center">
+                {p.image_url ? (
+                  <img src={p.image_url} alt={p.name} className="absolute inset-0 w-full h-full object-cover" />
+                ) : (
+                  <span className="text-2xl opacity-30">🛍️</span>
+                )}
+              </div>
+              {/* Content */}
+              <div className="min-w-0 flex-1 px-4 py-3">
                 <div className="truncate text-sm font-semibold text-foreground">{p.name}</div>
                 <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{p.description}</div>
                 <div className="mt-2 flex gap-2">

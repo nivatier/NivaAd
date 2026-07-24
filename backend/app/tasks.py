@@ -44,8 +44,11 @@ PLATFORM_STYLE = {
     "instagram": "engaging, visual-first, emoji-friendly",
     "facebook": "conversational, community-toned",
     "linkedin": "professional, longer, outcome-focused",
+    "linkedin_personal": "professional, personal-voice, thought-leadership tone",
+    "linkedin_company": "professional, brand-voice, outcome-focused",
     "x": "short and punchy, under 280 characters",
     "tiktok": "trendy, hook-first, gen-z friendly",
+    "threads": "casual, conversational, community-first",
     "default": "clear, concise, and engaging — suitable for any channel",
 }
 

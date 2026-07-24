@@ -70,7 +70,7 @@ async def _create_phase_ad(
     platforms: list[str], generate_image: bool,
     env: str | None = None, image_scene: str | None = None,
     product_image: str | None = None, use_brand_logo: bool = False,
-    image_model_id: str | None = None,
+    image_model_id: str | None = None, image_prompt_override: str | None = None,
     generate_video: bool = False, video_model_id: str | None = None,
     video_shots: list | None = None, video_frame_image: str | None = None,
     video_frame_image_url: str | None = None, video_resolution: str | None = None,
@@ -79,6 +79,8 @@ async def _create_phase_ad(
     video_end_frame_image_url: str | None = None, refine_video_prompt: bool = False,
     refine_video_frame: bool = False,
     video_start_shot_id: str | None = None, video_end_shot_id: str | None = None,
+    video_audio: bool = False, video_camera_style_ids: list[str] | None = None,
+    video_negative_prompt: str | None = None, video_background_music_id: str | None = None,
 ) -> tuple[Ad, int, uuid.UUID | None]:
     """Creates a real ad for one campaign phase. Copy is free (it's the
     phase's own caption, no extra Claude call) — cost is image and/or
@@ -209,6 +211,11 @@ async def _create_phase_ad(
             "refine_video_frame": refine_video_frame if generate_video else False,
             "video_resolution": video_resolution,
             "video_prompt_override": video_prompt_override,
+            "image_prompt_override": image_prompt_override,
+            "video_audio": video_audio if generate_video else False,
+            "video_camera_style_ids": video_camera_style_ids or [],
+            "video_negative_prompt": video_negative_prompt if generate_video else None,
+            "video_background_music_id": video_background_music_id if generate_video else None,
         },
         platforms=platforms,
         outputs={"text": True, "image": generate_image, "video": generate_video, "format": "single", "variations": 1},
@@ -298,7 +305,7 @@ async def create_campaign(data: CampaignCreateIn, user: User = Depends(require_c
         ad, _cost, job_id = await _create_phase_ad(
             db, user, campaign, phase, captions[phase], pin.platforms, pin.generate_image,
             env=pin.env, image_scene=pin.image_scene, product_image=pin.product_image, use_brand_logo=pin.use_brand_logo,
-            image_model_id=pin.image_model_id,
+            image_model_id=pin.image_model_id, image_prompt_override=pin.image_prompt_override,
             generate_video=pin.generate_video, video_model_id=pin.video_model_id, video_shots=pin.video_shots,
             video_frame_image=pin.video_frame_image, video_frame_image_url=pin.video_frame_image_url,
             video_resolution=pin.video_resolution, video_prompt_override=pin.video_prompt_override,
@@ -306,6 +313,8 @@ async def create_campaign(data: CampaignCreateIn, user: User = Depends(require_c
             video_end_frame_image_url=pin.video_end_frame_image_url, refine_video_prompt=pin.refine_video_prompt,
             refine_video_frame=pin.refine_video_frame,
             video_start_shot_id=pin.video_start_shot_id, video_end_shot_id=pin.video_end_shot_id,
+            video_audio=pin.video_audio, video_camera_style_ids=pin.video_camera_style_ids,
+            video_negative_prompt=pin.video_negative_prompt, video_background_music_id=pin.video_background_music_id,
         )
         if job_id:
             pending_job_ids.append(job_id)

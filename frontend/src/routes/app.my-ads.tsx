@@ -220,25 +220,38 @@ function MyAds() {
             {filtered.map((ad) => {
               const catName = productName(ad.product_id);
               return (
-                <div key={ad.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card/60 px-4 py-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    {/* Thumbnail strip */}
-                    {(() => {
-                      const v = ad.results?.variants?.[0] as any;
-                      const imgUrl: string | null = v?.image_url ?? null;
-                      const vidUrl: string | null = v?.video_url ?? null;
-                      const thumb = imgUrl ?? vidUrl;
-                      if (!thumb) return null;
-                      return (
-                        <div className="w-10 h-10 shrink-0 rounded-lg overflow-hidden bg-muted/20 relative">
-                          {vidUrl && !imgUrl ? (
+                <div key={ad.id} className="flex items-stretch rounded-xl border border-border bg-card/60 overflow-hidden">
+                  {/* Thumbnail — flush left, full card height, same as Ad Generations panel */}
+                  {(() => {
+                    const v = ad.results?.variants?.[0] as any;
+                    const imgUrl: string | null = v?.image_url ?? null;
+                    const vidUrl: string | null = v?.video_url ?? null;
+                    const thumb = imgUrl ?? vidUrl;
+                    const t = contentTypeTag(ad);
+                    return (
+                      <div className="w-[64px] shrink-0 relative bg-muted/20 flex items-center justify-center">
+                        {thumb ? (
+                          vidUrl && !imgUrl ? (
                             <video src={vidUrl} className="absolute inset-0 w-full h-full object-cover" muted playsInline />
                           ) : (
                             <img src={thumb} alt="" className="absolute inset-0 w-full h-full object-cover" />
-                          )}
-                        </div>
-                      );
-                    })()}
+                          )
+                        ) : (
+                          <span className="text-2xl opacity-30">{t.icon}</span>
+                        )}
+                        {/* Status dot */}
+                        <span className={`absolute bottom-1.5 right-1.5 h-2 w-2 rounded-full border border-background/80 ${
+                          ad.status === "posted" || ad.status === "partially_posted" ? "bg-emerald-400" :
+                          ad.status === "failed" ? "bg-destructive" :
+                          ad.status === "generating" ? "bg-primary animate-pulse" :
+                          "bg-muted-foreground/30"
+                        }`} />
+                      </div>
+                    );
+                  })()}
+                  {/* Content */}
+                  <div className="flex flex-1 min-w-0 flex-wrap items-center justify-between gap-3 px-4 py-3">
+                  <div className="flex min-w-0 items-center gap-3">
                     <button onClick={() => toggleFavorite(ad)} className={`text-lg ${ad.favorite ? "text-amber-400" : "text-muted-foreground/40"}`}>★</button>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -290,6 +303,7 @@ function MyAds() {
                     <button onClick={() => setConfirmDeleteAd(ad)} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:border-destructive/40 hover:text-destructive">
                       🗑 Delete
                     </button>
+                  </div>
                   </div>
                 </div>
               );

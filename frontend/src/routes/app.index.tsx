@@ -590,7 +590,7 @@ function CreateAd() {
   const [videoEndShotId, setVideoEndShotId] = useState<string | null>(null);
   const [refineVideoPrompt, setRefineVideoPrompt] = useState(false);
   const [refineVideoFrame, setRefineVideoFrame] = useState(false);
-  const [openSection, setOpenSection] = useState<"text" | "image" | "video">("text");
+  const [openSection, setOpenSection] = useState<"text" | "image" | "video" | null>("text");
   const [videoReferencePrompt, setVideoReferencePrompt] = useState("");
   const [showVideoReferencePrompt, setShowVideoReferencePrompt] = useState(false);
   const [videoNegativePrompt, setVideoNegativePrompt] = useState("");
@@ -639,9 +639,7 @@ function CreateAd() {
   const [imagePrompt, setImagePrompt] = useState("");
   const [videoPrompt, setVideoPrompt] = useState("");
 
-  const connectedPlatformIds = useConnectedPlatforms();
-  // Only show platforms the company has connected; fall back to all while loading
-  const availablePlatforms = connectedPlatformIds === null ? PLATFORMS : PLATFORMS.filter((p) => connectedPlatformIds.has(p.id));
+  const { platforms: availablePlatforms, connected: connectedPlatformIds, testMode } = useConnectedPlatforms();
   const chosenPlatforms = availablePlatforms.filter((p) => selected[p.id]);
   const isDataUrlVideoFrame = !!videoFrameImage && videoFrameImage.startsWith("data:");
   const isDataUrlImageReference = !!imageReferenceImage && imageReferenceImage.startsWith("data:");
@@ -866,6 +864,8 @@ function CreateAd() {
       setProductName(p.name || ""); setDescription(p.description || "");
       setAudience(p.audience || ""); setOffer(p.offer || "");
       if (p.id) setSelectedProductId(p.id);
+      if (p.goal) setGoal(p.goal);
+      if (p.tone) setTone(p.tone);
       // The product library's photo is an already-hosted URL, not base64 —
       // imageReferenceImage can hold either; submission logic below tells them apart.
       if (p.image_url) setImageReferenceImage(p.image_url);
@@ -1235,10 +1235,18 @@ function CreateAd() {
 
           <div className="mt-4 space-y-3">
             {/* ===== AD TEXT ===== */}
-            <div className={`rounded-xl border transition-colors ${outputs.text ? "border-primary bg-primary/5" : "border-border"}`}>
+            {(() => {
+              const textComplete = !!productName.trim() && description.trim().length >= 10 && !!audience.trim();
+              const textCollapsed = openSection !== "text";
+              const showGreen = textCollapsed && textComplete;
+              return (
+            <div className={`relative rounded-xl border transition-all overflow-hidden ${showGreen ? "border-emerald-500/70 bg-emerald-500/[0.04]" : outputs.text ? "border-primary bg-primary/5" : "border-border"}`}>
+              {showGreen && (
+                <div className="absolute inset-0 pointer-events-none bg-emerald-500/[0.04] border-0 rounded-xl" />
+              )}
               <button
                 type="button"
-                onClick={() => setOpenSection(openSection === "text" ? "video" : "text")}
+                onClick={() => setOpenSection(openSection === "text" ? null : "text")}
                 className="flex w-full items-center gap-4 p-4 text-left"
               >
                 <span className="text-lg">✍️</span>
@@ -1247,6 +1255,12 @@ function CreateAd() {
                   <div className="text-xs text-muted-foreground">~{liveTextCredits ?? selectedTextModel?.credits ?? 1} credit · always included</div>
                 </div>
                 <span className="shrink-0 rounded-full border border-primary/50 bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">Always on</span>
+                {textComplete && textCollapsed && (
+                  <span className="shrink-0 flex items-center gap-1 rounded-full border border-emerald-500/60 bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-400">
+                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                    Ready
+                  </span>
+                )}
                 <svg className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${openSection === "text" ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
               </button>
               {openSection === "text" && (
@@ -1309,16 +1323,26 @@ function CreateAd() {
                 </div>
               )}
             </div>
+              );
+            })()}
 
             {/* ===== AI IMAGE ===== */}
-            <div className={`rounded-xl border transition-colors ${outputs.image ? "border-primary bg-primary/5" : outputs.video ? "border-border opacity-50" : "border-border"}`}>
+            {(() => {
+              const imageComplete = outputs.image && !!imageModelId;
+              const imageCollapsed = openSection !== "image";
+              const showGreen = imageCollapsed && imageComplete;
+              return (
+            <div className={`relative rounded-xl border transition-all overflow-hidden ${showGreen ? "border-emerald-500/70 bg-emerald-500/[0.04]" : outputs.image ? "border-primary bg-primary/5" : outputs.video ? "border-border opacity-50" : "border-border"}`}>
+              {showGreen && (
+                <div className="absolute inset-0 pointer-events-none bg-emerald-500/[0.04] border-0 rounded-xl" />
+              )}
               <button
                 type="button"
                 onClick={() => {
                   const enabling = !outputs.image;
                   setOutputs((o) => ({ ...o, image: enabling, video: enabling ? false : o.video }));
                   if (enabling) setOpenSection("image");
-                  else if (openSection === "image") setOpenSection("text");
+                  else if (openSection === "image") setOpenSection(null);
                 }}
                 className="flex w-full items-center gap-4 p-4 text-left"
               >
@@ -1330,12 +1354,16 @@ function CreateAd() {
                 <div className={`shrink-0 h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${outputs.image ? "border-primary bg-primary" : "border-border"}`}>
                   {outputs.image && <svg className="h-3 w-3 text-background" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
                 </div>
-                {outputs.image && (
-                  <button type="button" onClick={(e) => { e.stopPropagation(); setOpenSection(openSection === "image" ? "text" : "image"); }}
-                    className="shrink-0">
-                    <svg className={`h-4 w-4 text-muted-foreground transition-transform ${openSection === "image" ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-                  </button>
+                {showGreen && (
+                  <span className="shrink-0 flex items-center gap-1 rounded-full border border-emerald-500/60 bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-400">
+                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                    Ready
+                  </span>
                 )}
+                <button type="button" onClick={(e) => { e.stopPropagation(); if (outputs.image) setOpenSection(openSection === "image" ? null : "image"); }}
+                  className={`shrink-0 transition-opacity ${outputs.image ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+                  <svg className={`h-4 w-4 text-muted-foreground transition-transform ${openSection === "image" ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                </button>
               </button>
               {outputs.image && openSection === "image" && (
                 <div className="px-4 pb-4 border-t border-border/60 pt-4">
@@ -1495,16 +1523,26 @@ function CreateAd() {
                 </div>
               )}
             </div>
+              );
+            })()}
 
             {/* ===== AI VIDEO ===== */}
-            <div className={`rounded-xl border transition-colors ${outputs.video ? "border-primary bg-primary/5" : outputs.image ? "border-border opacity-50" : "border-border"}`}>
+            {(() => {
+              const videoComplete = outputs.video && videoShotsValid;
+              const videoCollapsedSec = openSection !== "video";
+              const showGreenVid = videoCollapsedSec && videoComplete;
+              return (
+            <div className={`relative rounded-xl border transition-all overflow-hidden ${showGreenVid ? "border-emerald-500/70 bg-emerald-500/[0.04]" : outputs.video ? "border-primary bg-primary/5" : outputs.image ? "border-border opacity-50" : "border-border"}`}>
+              {showGreenVid && (
+                <div className="absolute inset-0 pointer-events-none bg-emerald-500/[0.04] border-0 rounded-xl" />
+              )}
               <button
                 type="button"
                 onClick={() => {
                   const enabling = !outputs.video;
                   setOutputs((o) => ({ ...o, video: enabling, image: enabling ? false : o.image }));
                   if (enabling) setOpenSection("video");
-                  else if (openSection === "video") setOpenSection("text");
+                  else if (openSection === "video") setOpenSection(null);
                 }}
                 className="flex w-full items-center gap-4 p-4 text-left"
               >
@@ -1516,12 +1554,16 @@ function CreateAd() {
                 <div className={`shrink-0 h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${outputs.video ? "border-primary bg-primary" : "border-border"}`}>
                   {outputs.video && <svg className="h-3 w-3 text-background" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
                 </div>
-                {outputs.video && (
-                  <button type="button" onClick={(e) => { e.stopPropagation(); setOpenSection(openSection === "video" ? "text" : "video"); }}
-                    className="shrink-0">
-                    <svg className={`h-4 w-4 text-muted-foreground transition-transform ${openSection === "video" ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-                  </button>
+                {showGreenVid && (
+                  <span className="shrink-0 flex items-center gap-1 rounded-full border border-emerald-500/60 bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-400">
+                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                    Ready
+                  </span>
                 )}
+                <button type="button" onClick={(e) => { e.stopPropagation(); if (outputs.video) setOpenSection(openSection === "video" ? null : "video"); }}
+                  className={`shrink-0 transition-opacity ${outputs.video ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+                  <svg className={`h-4 w-4 text-muted-foreground transition-transform ${openSection === "video" ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                </button>
               </button>
               {outputs.video && openSection === "video" && (
                 <div className="px-4 pb-4 border-t border-border/60 pt-4">
@@ -1938,40 +1980,72 @@ function CreateAd() {
                 </div>
               )}
             </div>
+              );
+            })()}
 
           </div>
 
           {(brandTagline || brandLogoUrl) && (
-            <div className="mt-4 rounded-xl border border-border bg-background/40 p-5">
-              <div className="text-sm font-medium text-foreground">🎨 Brand kit <span className="ml-2 text-xs text-muted-foreground font-normal">Tick brand elements to insert into this ad.</span></div>
-              {brandLogoUrl && (
-                <label className="mt-4 flex items-center gap-3 text-sm text-foreground">
-                  <input type="checkbox" checked={useLogo} onChange={(e) => setUseLogo(e.target.checked)} />
-                  <img src={brandLogoUrl} alt="logo" className="h-6 w-6 rounded border border-border object-cover" />
-                  Include our logo on the generated image
-                </label>
-              )}
-              {brandTagline && (
-                <label className="mt-3 flex items-center gap-3 text-sm text-foreground">
-                  <input type="checkbox" checked={useTagline} onChange={(e) => setUseTagline(e.target.checked)} />
-                  Weave in our tagline: <span className="italic text-primary">"{brandTagline}"</span>
-                </label>
-              )}
-              <p className="mt-3 text-[11px] text-muted-foreground">Manage your logo, placement, color, and tagline in <a href="/app/brand-kit" className="text-primary">Brand Kit</a>.</p>
+            <div className="mt-4 rounded-xl border border-border bg-background/40 px-4 py-3">
+              {/* Header row: title + manage link */}
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-medium text-foreground">🎨 Brand kit <span className="ml-1.5 text-xs text-muted-foreground font-normal">Tick elements to insert into this ad.</span></div>
+                <a href="/app/brand-kit" className="shrink-0 text-[11px] text-primary hover:underline">Manage →</a>
+              </div>
+              {/* Checkboxes — 2-column grid */}
+              <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2">
+                {brandLogoUrl && (
+                  <label className="flex items-center gap-2 text-xs text-foreground cursor-pointer">
+                    <input type="checkbox" checked={useLogo} onChange={(e) => setUseLogo(e.target.checked)} className="shrink-0" />
+                    <img src={brandLogoUrl} alt="logo" className="h-5 w-5 rounded border border-border object-cover shrink-0" />
+                    <span>Include logo</span>
+                  </label>
+                )}
+                {brandTagline && (
+                  <label className="flex items-center gap-2 text-xs text-foreground cursor-pointer">
+                    <input type="checkbox" checked={useTagline} onChange={(e) => setUseTagline(e.target.checked)} className="shrink-0" />
+                    <span>Tagline: <span className="italic text-primary">"{brandTagline}"</span></span>
+                  </label>
+                )}
+              </div>
             </div>
           )}
 
-          <div className="mt-4 rounded-xl border border-border bg-background/40 p-5">
-            <div className="text-sm font-medium text-foreground">📢 Target platforms</div>
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
-              {availablePlatforms.map((p) => (
-                <button key={p.id} onClick={() => setSelected((s) => ({ ...s, [p.id]: !s[p.id] }))}
-                  className={`flex items-center gap-3 rounded-xl p-4 border ${selected[p.id] ? "border-primary bg-primary/5" : "border-border"}`}>
-                  <span className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-slate-950" style={{ background: p.color }}>{p.tag}</span>
-                  <div className="text-left text-sm text-foreground">{selected[p.id] ? "☑" : "☐"} {p.name}</div>
-                </button>
-              ))}
+          <div className="mt-4 rounded-xl border border-border bg-background/40 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm font-medium text-foreground">📢 Target platforms</div>
+              {testMode && (
+                <span className="rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-400">🧪 Test mode — all platforms enabled</span>
+              )}
             </div>
+            <div className="flex flex-wrap gap-2">
+              {availablePlatforms.map((p) => {
+                const isConnected = connectedPlatformIds.has(p.id);
+                const isSelectable = testMode || isConnected;
+                const isSelected = !!selected[p.id];
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    disabled={!isSelectable}
+                    onClick={() => isSelectable && setSelected((s) => ({ ...s, [p.id]: !s[p.id] }))}
+                    title={!isSelectable ? `${p.name} — not connected. Enable Test Mode in Admin to select without a connection.` : p.name}
+                    className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-all
+                      ${isSelected ? "border-primary bg-primary/10 text-primary" :
+                        isSelectable ? "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground" :
+                        "border-border/40 text-muted-foreground/30 cursor-not-allowed opacity-40"}`}
+                  >
+                    <span className="h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold text-slate-950 shrink-0" style={{ background: isSelectable ? p.color : "#888" }}>{p.tag}</span>
+                    {p.name}
+                    {!isSelectable && <span className="text-[9px] ml-0.5">🔒</span>}
+                    {isConnected && !isSelected && <span className="text-[9px] text-emerald-400">●</span>}
+                  </button>
+                );
+              })}
+            </div>
+            {!testMode && connectedPlatformIds.size === 0 && (
+              <p className="mt-2 text-[11px] text-muted-foreground">No platforms connected yet. Enable <span className="font-semibold text-foreground">Test Mode</span> in Admin → Overview to select platforms without a live connection.</p>
+            )}
           </div>
 
           <RequirementChecklist items={[

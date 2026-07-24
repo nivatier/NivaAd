@@ -1,6 +1,6 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { type ReactNode } from "react";
-import { LayoutDashboard, Building2, Cpu, Palette, Link2, ShieldCheck, Settings, MessageCircle, Users, type LucideIcon } from "lucide-react";
+import { LayoutDashboard, Building2, Cpu, Palette, Link2, ShieldCheck, Settings, MessageCircle, Users, Activity, type LucideIcon } from "lucide-react";
 import { clearDevToken } from "@/lib/dev-api";
 import { useDevIdentity } from "@/hooks/use-developer-auth";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -11,6 +11,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 // logged in at all).
 const NAV: { to: string; label: string; icon: LucideIcon; section: string | null }[] = [
   { to: "/developer/overview", label: "Overview", icon: LayoutDashboard, section: null },
+  { to: "/developer/monitoring", label: "Monitoring", icon: Activity, section: null },
   { to: "/developer/companies", label: "Companies", icon: Building2, section: "companies" },
   { to: "/developer/models", label: "Models", icon: Cpu, section: "models" },
   { to: "/developer/themes", label: "Themes", icon: Palette, section: "themes" },

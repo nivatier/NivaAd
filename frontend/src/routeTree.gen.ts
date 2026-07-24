@@ -22,6 +22,7 @@ import { Route as DeveloperTeamRouteImport } from './routes/developer.team'
 import { Route as DeveloperSettingsRouteImport } from './routes/developer.settings'
 import { Route as DeveloperPlatformsRouteImport } from './routes/developer.platforms'
 import { Route as DeveloperOverviewRouteImport } from './routes/developer.overview'
+import { Route as DeveloperMonitoringRouteImport } from './routes/developer.monitoring'
 import { Route as DeveloperModerationRouteImport } from './routes/developer.moderation'
 import { Route as DeveloperModelsRouteImport } from './routes/developer.models'
 import { Route as DeveloperCompaniesRouteImport } from './routes/developer.companies'
@@ -103,6 +104,11 @@ const DeveloperPlatformsRoute = DeveloperPlatformsRouteImport.update({
 const DeveloperOverviewRoute = DeveloperOverviewRouteImport.update({
   id: '/developer/overview',
   path: '/developer/overview',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DeveloperMonitoringRoute = DeveloperMonitoringRouteImport.update({
+  id: '/developer/monitoring',
+  path: '/developer/monitoring',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DeveloperModerationRoute = DeveloperModerationRouteImport.update({
@@ -216,6 +222,7 @@ export interface FileRoutesByFullPath {
   '/developer/companies': typeof DeveloperCompaniesRoute
   '/developer/models': typeof DeveloperModelsRoute
   '/developer/moderation': typeof DeveloperModerationRoute
+  '/developer/monitoring': typeof DeveloperMonitoringRoute
   '/developer/overview': typeof DeveloperOverviewRoute
   '/developer/platforms': typeof DeveloperPlatformsRoute
   '/developer/settings': typeof DeveloperSettingsRoute
@@ -248,6 +255,7 @@ export interface FileRoutesByTo {
   '/developer/companies': typeof DeveloperCompaniesRoute
   '/developer/models': typeof DeveloperModelsRoute
   '/developer/moderation': typeof DeveloperModerationRoute
+  '/developer/monitoring': typeof DeveloperMonitoringRoute
   '/developer/overview': typeof DeveloperOverviewRoute
   '/developer/platforms': typeof DeveloperPlatformsRoute
   '/developer/settings': typeof DeveloperSettingsRoute
@@ -281,6 +289,7 @@ export interface FileRoutesById {
   '/developer/companies': typeof DeveloperCompaniesRoute
   '/developer/models': typeof DeveloperModelsRoute
   '/developer/moderation': typeof DeveloperModerationRoute
+  '/developer/monitoring': typeof DeveloperMonitoringRoute
   '/developer/overview': typeof DeveloperOverviewRoute
   '/developer/platforms': typeof DeveloperPlatformsRoute
   '/developer/settings': typeof DeveloperSettingsRoute
@@ -315,6 +324,7 @@ export interface FileRouteTypes {
     | '/developer/companies'
     | '/developer/models'
     | '/developer/moderation'
+    | '/developer/monitoring'
     | '/developer/overview'
     | '/developer/platforms'
     | '/developer/settings'
@@ -347,6 +357,7 @@ export interface FileRouteTypes {
     | '/developer/companies'
     | '/developer/models'
     | '/developer/moderation'
+    | '/developer/monitoring'
     | '/developer/overview'
     | '/developer/platforms'
     | '/developer/settings'
@@ -379,6 +390,7 @@ export interface FileRouteTypes {
     | '/developer/companies'
     | '/developer/models'
     | '/developer/moderation'
+    | '/developer/monitoring'
     | '/developer/overview'
     | '/developer/platforms'
     | '/developer/settings'
@@ -412,6 +424,7 @@ export interface RootRouteChildren {
   DeveloperCompaniesRoute: typeof DeveloperCompaniesRoute
   DeveloperModelsRoute: typeof DeveloperModelsRoute
   DeveloperModerationRoute: typeof DeveloperModerationRoute
+  DeveloperMonitoringRoute: typeof DeveloperMonitoringRoute
   DeveloperOverviewRoute: typeof DeveloperOverviewRoute
   DeveloperPlatformsRoute: typeof DeveloperPlatformsRoute
   DeveloperSettingsRoute: typeof DeveloperSettingsRoute
@@ -511,6 +524,13 @@ declare module '@tanstack/react-router' {
       path: '/developer/overview'
       fullPath: '/developer/overview'
       preLoaderRoute: typeof DeveloperOverviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/developer/monitoring': {
+      id: '/developer/monitoring'
+      path: '/developer/monitoring'
+      fullPath: '/developer/monitoring'
+      preLoaderRoute: typeof DeveloperMonitoringRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/developer/moderation': {
@@ -660,6 +680,7 @@ const rootRouteChildren: RootRouteChildren = {
   DeveloperCompaniesRoute: DeveloperCompaniesRoute,
   DeveloperModelsRoute: DeveloperModelsRoute,
   DeveloperModerationRoute: DeveloperModerationRoute,
+  DeveloperMonitoringRoute: DeveloperMonitoringRoute,
   DeveloperOverviewRoute: DeveloperOverviewRoute,
   DeveloperPlatformsRoute: DeveloperPlatformsRoute,
   DeveloperSettingsRoute: DeveloperSettingsRoute,

@@ -5,6 +5,7 @@ import { NovaHint } from "@/components/nova-hint";
 import { api, type TeamUserOut } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { useRequireCapability } from "@/hooks/use-require-capability";
+import { useConnectedPlatforms, setTestMode } from "@/hooks/use-connected-platforms";
 
 export const Route = createFileRoute("/app/admin")({
   component: Admin,
@@ -299,16 +300,54 @@ type OverviewData = {
   campaigns_total: number; scheduled_pending: number; flagged_unresolved: number;
 };
 
+function TestModePanel({ testMode }: { testMode: boolean }) {
+  return (
+    <Panel>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-foreground">🧪 Test Mode</span>
+            {testMode && <span className="rounded-full bg-amber-500/15 border border-amber-500/40 px-2 py-0.5 text-[10px] font-bold text-amber-400">ON</span>}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground leading-relaxed max-w-md">
+            When enabled, all social media platforms are visible and selectable everywhere — even without a live connection. Use this to test ad generation and preview aspect ratios per platform.
+            {testMode
+              ? " Turn off to restore the normal behaviour where only connected platforms are selectable."
+              : " Currently, only platforms with an active connection are highlighted; others are greyed out."}
+          </p>
+        </div>
+        <button
+          onClick={() => setTestMode(!testMode)}
+          className={`relative shrink-0 h-7 w-12 rounded-full border-2 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40 ${testMode ? "border-amber-500 bg-amber-500" : "border-border bg-muted/40"}`}
+        >
+          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background shadow transition-transform ${testMode ? "translate-x-5" : "translate-x-0.5"}`} />
+        </button>
+      </div>
+    </Panel>
+  );
+}
+
 function OverviewTab() {
   const [data, setData] = useState<OverviewData | null>(null);
   const [err, setErr] = useState("");
+  const { testMode } = useConnectedPlatforms();
 
   useEffect(() => {
     api("/admin/overview").then(setData).catch((e: any) => setErr(e.message || "Could not load overview"));
   }, []);
 
-  if (err) return <div className="text-sm text-destructive">{err}</div>;
-  if (!data) return <div className="text-sm text-muted-foreground">Loading…</div>;
+  if (err) return (
+    <div className="space-y-6">
+      <TestModePanel testMode={testMode} />
+      <div className="text-sm text-destructive">{err}</div>
+    </div>
+  );
+  if (!data) return (
+    <div className="space-y-6">
+      <TestModePanel testMode={testMode} />
+      <div className="text-sm text-muted-foreground">Loading…</div>
+    </div>
+  );
 
   const cards: [string, string | number][] = [
     ["Plan", data.tier.charAt(0).toUpperCase() + data.tier.slice(1)],
@@ -323,13 +362,16 @@ function OverviewTab() {
   ];
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {cards.map(([l, v]) => (
-        <Panel key={l}>
-          <div className="text-xs text-muted-foreground">{l}</div>
-          <div className="mt-2 font-display text-2xl font-bold">{v}</div>
-        </Panel>
-      ))}
+    <div className="space-y-6">
+      <TestModePanel testMode={testMode} />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {cards.map(([l, v]) => (
+          <Panel key={l}>
+            <div className="text-xs text-muted-foreground">{l}</div>
+            <div className="mt-2 font-display text-2xl font-bold">{v}</div>
+          </Panel>
+        ))}
+      </div>
     </div>
   );
 }

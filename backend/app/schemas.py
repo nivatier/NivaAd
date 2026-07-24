@@ -1092,31 +1092,32 @@ class PhaseScheduleIn(BaseModel):
     date: str  # "YYYY-MM-DD"
     time: str = "10:00"  # "HH:MM"
     platforms: list[str] = Field(default_factory=list)
-    generate_image: bool = False  # per-phase choice — e.g. no image for a teaser, one for the launch
-    env: str | None = None  # placement/surroundings, used when product_image is provided
-    image_scene: str | None = None  # scene description, used when no product_image
-    product_image: str | None = None  # base64 data URL — your own product photo for this phase; also serves as this phase's image reference, same role as Create Ad's image_reference_image
+    generate_image: bool = False
+    env: str | None = None
+    image_scene: str | None = None
+    product_image: str | None = None
     use_brand_logo: bool = False
-    image_model_id: str | None = None  # which entry from GET /ads/available-models to use for this phase's image — same per-ad model choice as Create Ad, not a fixed default
-    # Video — same capability set as Create Ad, mutually exclusive with
-    # the image fields above at the UI level (a phase generates an image
-    # OR a video, not both), enforced client-side; the backend doesn't
-    # need to re-enforce this since generate_image/generate_video are
-    # independent booleans and nothing breaks if both were somehow true.
+    image_model_id: str | None = None
+    image_prompt_override: str | None = None  # custom prompt override, same as Create Ad
+    # Video
     generate_video: bool = False
     video_model_id: str | None = None
     video_shots: list[VideoShotIn] | None = None
     video_frame_image: str | None = None
     video_frame_image_url: str | None = None
-    video_end_frame_image: str | None = None  # same "start + end frame" capability as Create Ad — only meaningful when video_mode is "first_last_frame" and the model supports it
+    video_end_frame_image: str | None = None
     video_end_frame_image_url: str | None = None
-    video_mode: str = "single_reference"  # "single_reference" | "first_last_frame" — same as Create Ad
+    video_mode: str = "single_reference"
     video_resolution: str | None = None
-    video_start_shot_id: str | None = None  # same Brand Kit intro/outro selection as Create Ad
+    video_start_shot_id: str | None = None
     video_end_shot_id: str | None = None
-    video_prompt_override: str | None = None  # applies for any shot count now, same as Create Ad
-    refine_video_prompt: bool = False  # opt-in — the developer-configured review model (if any) only runs when this is explicitly checked; off by default since the raw customer wording isn't always worse
-    refine_video_frame: bool = False  # opt-in — same as Create Ad, only meaningful in single_reference mode
+    video_prompt_override: str | None = None
+    video_audio: bool = False
+    video_camera_style_ids: list[str] = Field(default_factory=list)
+    video_negative_prompt: str | None = None
+    video_background_music_id: str | None = None
+    refine_video_prompt: bool = False
+    refine_video_frame: bool = False
 
 
 class CampaignCreateIn(BaseModel):

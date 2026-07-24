@@ -105,8 +105,9 @@ def get_platform_integrations_sync(db) -> list[dict]:
 # "linkedin_personal" is used as that source rather than needing a
 # third, separate ratio setting just for ad-targeting purposes.
 _AD_TARGETING_TO_INTEGRATION_ID = {
-    "instagram": "instagram", "facebook": "facebook", "linkedin": "linkedin_personal",
-    "x": "x", "tiktok": "tiktok",
+    "instagram": "instagram", "facebook": "facebook",
+    "linkedin": "linkedin_personal", "linkedin_personal": "linkedin_personal", "linkedin_company": "linkedin_company",
+    "x": "x", "tiktok": "tiktok", "threads": "threads",
 }
 
 
