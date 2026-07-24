@@ -884,9 +884,362 @@ function TextStylesTab() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Camera Styles tab — developer-managed list of camera style presets that
+// companies can toggle on/off in Create Ad's video section.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type CameraStylePreset = { id: string; label: string; prompt_fragment: string };
+
+function CameraPresetForm({
+  initial, onSubmit, onCancel, busy,
+}: {
+  initial: Partial<CameraStylePreset>;
+  onSubmit: (v: { label: string; prompt_fragment: string }) => void;
+  onCancel?: () => void;
+  busy: boolean;
+}) {
+  const [label, setLabel] = useState(initial.label ?? "");
+  const [promptFragment, setPromptFragment] = useState(initial.prompt_fragment ?? "");
+
+  return (
+    <div className="grid gap-3">
+      <div>
+        <label className="text-[11px] text-muted-foreground">Label (shown as a chip in Create Ad)</label>
+        <input value={label} onChange={(e) => setLabel(e.target.value)}
+          placeholder="e.g. Shallow depth of field"
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+      </div>
+      <div>
+        <label className="text-[11px] text-muted-foreground">Prompt fragment (appended to the generation prompt when selected)</label>
+        <input value={promptFragment} onChange={(e) => setPromptFragment(e.target.value)}
+          placeholder="e.g. shallow depth of field"
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+        <p className="mt-1 text-[10px] text-muted-foreground">Keep it short — multiple traits are joined with ", " into one "Camera style: …" sentence.</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          disabled={busy || !label.trim() || !promptFragment.trim()}
+          onClick={() => onSubmit({ label: label.trim(), prompt_fragment: promptFragment.trim() })}
+          className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+          {busy ? "Saving…" : "Save"}
+        </button>
+        {onCancel && (
+          <button onClick={onCancel} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CameraStylesTab() {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [presets, setPresets] = useState<CameraStylePreset[] | null>(null);
+  const [err, setErr] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  // Default video reference prompt
+  const [refPrompt, setRefPrompt] = useState<string | null>(null);
+  const [refPromptDraft, setRefPromptDraft] = useState("");
+  const [savingRef, setSavingRef] = useState(false);
+  const [refMsg, setRefMsg] = useState("");
+
+  async function load() {
+    try {
+      const [p, r] = await Promise.all([
+        devApi("/developer/themes/camera-style-presets"),
+        devApi("/developer/themes/video-reference-prompt-default"),
+      ]);
+      setPresets(p);
+      setRefPrompt(r.prompt);
+      setRefPromptDraft(r.prompt);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not load");
+    }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function saveRefPrompt() {
+    setSavingRef(true); setRefMsg("");
+    try {
+      const r = await devApi("/developer/themes/video-reference-prompt-default", { method: "PUT", body: { prompt: refPromptDraft } });
+      setRefPrompt(r.prompt);
+      setRefMsg("✓ Saved");
+      setTimeout(() => setRefMsg(""), 2000);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setRefMsg(e.message || "Could not save");
+    }
+    setSavingRef(false);
+  }
+
+  async function add(v: { label: string; prompt_fragment: string }) {
+    setBusy(true); setErr("");
+    try {
+      setPresets(await devApi("/developer/themes/camera-style-presets", { method: "POST", body: v }));
+      setShowAdd(false);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not add");
+    }
+    setBusy(false);
+  }
+
+  async function update(id: string, v: { label: string; prompt_fragment: string }) {
+    setBusy(true); setErr("");
+    try {
+      setPresets(await devApi(`/developer/themes/camera-style-presets/${id}`, { method: "PUT", body: v }));
+      setEditingId(null);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not save");
+    }
+    setBusy(false);
+  }
+
+  async function remove(id: string) {
+    if (!confirm("Delete this camera style trait?")) return;
+    setErr("");
+    try {
+      setPresets(await devApi(`/developer/themes/camera-style-presets/${id}`, { method: "DELETE" }));
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not delete");
+    }
+  }
+
+  if (!presets) return <div className="text-xs text-muted-foreground">Loading…</div>;
+
+  return (
+    <div className="max-w-3xl space-y-8">
+
+      {/* ── Default video reference prompt ─────────────────────────────── */}
+      <div>
+        <h3 className="text-xs font-semibold text-foreground mb-1">Default reference preservation prompt</h3>
+        <p className="mb-3 text-[11px] text-muted-foreground">
+          This text is pre-filled in the "Reference preservation instruction" field when a company uploads a
+          reference image for their video. They can edit it before generating — this is just the starting point.
+        </p>
+        <textarea
+          rows={4}
+          value={refPromptDraft}
+          onChange={(e) => setRefPromptDraft(e.target.value)}
+          className="w-full rounded-lg border border-border bg-input/40 px-3 py-2 text-xs text-foreground focus:border-ring focus:outline-none resize-y"
+        />
+        <div className="mt-2 flex items-center gap-3">
+          <button
+            disabled={savingRef || !refPromptDraft.trim() || refPromptDraft === refPrompt}
+            onClick={saveRefPrompt}
+            className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+            {savingRef ? "Saving…" : "Save default"}
+          </button>
+          {refMsg && <span className={`text-[11px] ${refMsg.startsWith("✓") ? "text-emerald-400" : "text-destructive"}`}>{refMsg}</span>}
+        </div>
+      </div>
+
+      {/* ── Camera style traits ─────────────────────────────────────────── */}
+      <div>
+        <h3 className="text-xs font-semibold text-foreground mb-1">Camera style traits</h3>
+        <p className="mb-3 text-[11px] text-muted-foreground">
+          Individual style traits companies can toggle on/off as chips in Create Ad's AI Video section. Multiple
+          can be selected — the chosen fragments are joined into a "Camera style: …" instruction appended to
+          the generation prompt.
+        </p>
+        <div className="space-y-2 mb-4">
+          {presets.map((p) => (
+            <div key={p.id} className="rounded-xl border border-border bg-card/60 p-3">
+              {editingId === p.id ? (
+                <CameraPresetForm initial={p} busy={busy} onCancel={() => setEditingId(null)} onSubmit={(v) => update(p.id, v)} />
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs font-semibold text-foreground">{p.label}</span>
+                    <span className="ml-2 text-[11px] text-muted-foreground">→ "{p.prompt_fragment}"</span>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button onClick={() => setEditingId(p.id)} className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground hover:text-foreground">Edit</button>
+                    <button onClick={() => remove(p.id)} className="rounded-full border border-destructive/50 px-3 py-1 text-[11px] text-destructive hover:bg-destructive/10">Delete</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {showAdd ? (
+          <div className="rounded-xl border border-border bg-card/60 p-3">
+            <CameraPresetForm initial={{}} busy={busy} onCancel={() => setShowAdd(false)} onSubmit={add} />
+          </div>
+        ) : (
+          <button onClick={() => setShowAdd(true)} className="rounded-full border border-dashed border-primary/50 px-4 py-1.5 text-xs text-primary hover:bg-primary/5">
+            + Add camera style trait
+          </button>
+        )}
+        {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
+      </div>
+    </div>
+  );
+}
+
+type MusicPreset = { id: string; label: string; description: string };
+
+function MusicPresetForm({
+  initial, onSubmit, onCancel, busy,
+}: {
+  initial: Partial<MusicPreset>;
+  onSubmit: (v: { label: string; description: string }) => void;
+  onCancel?: () => void;
+  busy: boolean;
+}) {
+  const [label, setLabel] = useState(initial.label ?? "");
+  const [description, setDescription] = useState(initial.description ?? "");
+
+  return (
+    <div className="grid gap-3">
+      <div>
+        <label className="text-[11px] text-muted-foreground">Label</label>
+        <input value={label} onChange={(e) => setLabel(e.target.value)}
+          placeholder="e.g. Upbeat"
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+      </div>
+      <div>
+        <label className="text-[11px] text-muted-foreground">Description (shown to companies as a hint)</label>
+        <textarea
+          rows={2}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="e.g. Energetic, fast-paced, motivational — great for product launches and fitness brands"
+          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none resize-y"
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          disabled={busy || !label.trim()}
+          onClick={() => onSubmit({ label: label.trim(), description: description.trim() })}
+          className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+          {busy ? "Saving…" : "Save"}
+        </button>
+        {onCancel && (
+          <button onClick={onCancel} className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MusicPresetsTab() {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [presets, setPresets] = useState<MusicPreset[] | null>(null);
+  const [err, setErr] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    try {
+      setPresets(await devApi("/developer/themes/music-presets"));
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not load");
+    }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function add(v: { label: string; description: string }) {
+    setBusy(true); setErr("");
+    try {
+      setPresets(await devApi("/developer/themes/music-presets", { method: "POST", body: v }));
+      setShowAdd(false);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not add");
+    }
+    setBusy(false);
+  }
+
+  async function update(id: string, v: { label: string; description: string }) {
+    setBusy(true); setErr("");
+    try {
+      setPresets(await devApi(`/developer/themes/music-presets/${id}`, { method: "PUT", body: v }));
+      setEditingId(null);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not save");
+    }
+    setBusy(false);
+  }
+
+  async function remove(id: string) {
+    if (!confirm("Delete this music preset? Companies won't see it on new ads — existing ads that already used it are unaffected.")) return;
+    setErr("");
+    try {
+      setPresets(await devApi(`/developer/themes/music-presets/${id}`, { method: "DELETE" }));
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not delete");
+    }
+  }
+
+  // Music emoji map for visual variety
+  const moodIcon = (label: string) => {
+    const l = label.toLowerCase();
+    if (l.includes("upbeat") || l.includes("energy")) return "🎵";
+    if (l.includes("soft") || l.includes("subtle") || l.includes("ambient")) return "🎶";
+    if (l.includes("dramatic") || l.includes("epic") || l.includes("orchestral")) return "🎼";
+    if (l.includes("playful") || l.includes("fun")) return "🎹";
+    if (l.includes("corporate") || l.includes("professional")) return "🎧";
+    return "🎵";
+  };
+
+  if (!presets) return <div className="text-xs text-muted-foreground">Loading…</div>;
+
+  return (
+    <div className="max-w-3xl">
+      <p className="mb-4 text-[11px] text-muted-foreground">
+        Background music mood options that companies pick from in Create Ad's AI Video section. The label is
+        stored on the generated ad brief so the audio pipeline or a human editor can match the right track.
+        "None" is always available and can't be deleted.
+      </p>
+      <div className="space-y-2 mb-4">
+        {presets.map((p) => (
+          <div key={p.id} className="rounded-xl border border-border bg-card/60 p-3">
+            {editingId === p.id ? (
+              <MusicPresetForm initial={p} busy={busy} onCancel={() => setEditingId(null)} onSubmit={(v) => update(p.id, v)} />
+            ) : (
+              <div className="flex items-start gap-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-secondary/10 text-base">
+                  {moodIcon(p.label)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold text-foreground">{p.label}</div>
+                  {p.description && (
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">{p.description}</div>
+                  )}
+                </div>
+                {p.id !== "none" && (
+                  <div className="flex shrink-0 gap-2">
+                    <button onClick={() => setEditingId(p.id)} className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground hover:text-foreground">Edit</button>
+                    <button onClick={() => remove(p.id)} className="rounded-full border border-destructive/50 px-3 py-1 text-[11px] text-destructive hover:bg-destructive/10">Delete</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {showAdd ? (
+        <div className="rounded-xl border border-border bg-card/60 p-3">
+          <MusicPresetForm initial={{}} busy={busy} onCancel={() => setShowAdd(false)} onSubmit={add} />
+        </div>
+      ) : (
+        <button onClick={() => setShowAdd(true)} className="rounded-full border border-dashed border-secondary/50 px-4 py-1.5 text-xs text-secondary hover:bg-secondary/5">
+          + Add music preset
+        </button>
+      )}
+      {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
+    </div>
+  );
+}
+
+
 function DeveloperThemes() {
   const allowed = useRequireDeveloperPermission("themes");
-  const [tab, setTab] = useState<"text" | "image" | "video" | "styles">("image");
+  const [tab, setTab] = useState<"text" | "image" | "video" | "styles" | "camera" | "music">("image");
   const [categoryTags, setCategoryTags] = useState<string[]>([]);
 
   useEffect(() => {
@@ -899,12 +1252,12 @@ function DeveloperThemes() {
     <DeveloperShell title="Themes">
       <p className="mb-6 max-w-2xl text-xs text-muted-foreground">
         Manages the theme references companies see in Create Ad — Text Theme Reference chips, the Image Theme
-        Reference gallery, the Video Theme Reference gallery, and text-overlay style presets. Changes here appear
-        for every company immediately.
+        Reference gallery, the Video Theme Reference gallery, text-overlay style presets, camera style
+        presets, and background music presets. Changes here appear for every company immediately.
       </p>
 
-      <div className="mb-6 flex gap-2 border-b border-border pb-3">
-        {([["text", "Text Themes"], ["image", "Image Theme"], ["styles", "Text Styles"], ["video", "Video Theme"]] as const).map(([k, l]) => (
+      <div className="mb-6 flex flex-wrap gap-2 border-b border-border pb-3">
+        {([["text", "Text Themes"], ["image", "Image Theme"], ["styles", "Text Styles"], ["video", "Video Theme"], ["camera", "Camera Styles"], ["music", "Music Presets"]] as const).map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`rounded-full px-4 py-2 text-xs font-semibold ${tab === k ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}>
             {l}
@@ -918,6 +1271,8 @@ function DeveloperThemes() {
       {tab === "image" && <ImageThemeTab />}
       {tab === "styles" && <TextStylesTab />}
       {tab === "video" && <VideoThemeTab categoryTags={categoryTags} />}
+      {tab === "camera" && <CameraStylesTab />}
+      {tab === "music" && <MusicPresetsTab />}
     </DeveloperShell>
   );
 }

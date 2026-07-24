@@ -14,18 +14,26 @@ function todayPlus(days: number) {
 export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: () => void; onUpdated: () => void }) {
   const { me } = useAuth();
   const variants: Record<string, any>[] = ad.results?.variants?.length ? ad.results.variants : [{}];
-  const adPlatforms = PLATFORMS.filter((p) => ad.platforms.includes(p.id));
+
+  // When no platform was selected at creation, the backend stores copy under
+  // "default". Fall back to a synthetic DEFAULT_PLATFORM so the preview
+  // and caption UI are always populated.
+  const DEFAULT_PLATFORM = { id: "default", name: "Default", tag: "📄", color: "#6366f1" };
+  const effectivePlatforms = ad.platforms.length > 0 ? ad.platforms : ["default"];
+  const adPlatforms = effectivePlatforms.map(
+    (id) => PLATFORMS.find((p) => p.id === id) ?? DEFAULT_PLATFORM
+  );
 
   const [activeVariantIdx, setActiveVariantIdx] = useState(0);
-  const [activeTab, setActiveTab] = useState(ad.platforms[0]);
+  const [activeTab, setActiveTab] = useState(effectivePlatforms[0]);
   const [editMode, setEditMode] = useState(false);
   // captions[variantIdx][platformId] — kept per-variant so switching
   // tabs never loses an unsaved edit on another variant.
   const [captions, setCaptions] = useState<Record<number, Record<string, string>>>(
-    Object.fromEntries(variants.map((v, i) => [i, Object.fromEntries(ad.platforms.map((p) => [p, v[p]?.caption || ""]))]))
+    Object.fromEntries(variants.map((v, i) => [i, Object.fromEntries(effectivePlatforms.map((p) => [p, v[p]?.caption || ""]))]))
   );
   const [selected, setSelected] = useState<Record<string, boolean>>(
-    Object.fromEntries(ad.platforms.map((p) => [p, !ad.posted_platforms.includes(p)]))
+    Object.fromEntries(effectivePlatforms.map((p) => [p, !ad.posted_platforms.includes(p)]))
   );
   const [downloading, setDownloading] = useState(false);
   const [posting, setPosting] = useState(false);
@@ -35,7 +43,7 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
   const [scheduleTime, setScheduleTime] = useState("10:00");
   const [timeZone, setTimeZone] = useState(detectedTimeZone());
   const [schedulePlatforms, setSchedulePlatforms] = useState<Record<string, boolean>>(
-    Object.fromEntries(ad.platforms.map((p) => [p, !ad.posted_platforms.includes(p)]))
+    Object.fromEntries(effectivePlatforms.map((p) => [p, !ad.posted_platforms.includes(p)]))
   );
   const [scheduledMsg, setScheduledMsg] = useState("");
   const [err, setErr] = useState("");
@@ -100,7 +108,7 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
     const updated = variants.map((v, i) => {
       const c = captions[i] || {};
       const nv = { ...v };
-      for (const p of ad.platforms) if (c[p] !== undefined) nv[p] = { ...nv[p], caption: c[p] };
+      for (const p of effectivePlatforms) if (c[p] !== undefined) nv[p] = { ...nv[p], caption: c[p] };
       return nv;
     });
     const reordered = [updated[activeVariantIdx], ...updated.filter((_, i) => i !== activeVariantIdx)];
@@ -135,7 +143,7 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
   }
 
   async function postSelected() {
-    const platforms = ad.platforms.filter((p) => selected[p]);
+    const platforms = effectivePlatforms.filter((p) => p !== "default" && selected[p]);
     if (platforms.length === 0) return;
     setPosting(true); setErr("");
     try {
@@ -150,7 +158,7 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
   }
 
   async function scheduleSelected() {
-    const platforms = ad.platforms.filter((p) => schedulePlatforms[p]);
+    const platforms = effectivePlatforms.filter((p) => p !== "default" && schedulePlatforms[p]);
     if (platforms.length === 0) return;
     setScheduling(true); setErr("");
     try {
@@ -244,11 +252,15 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
           )}
 
           <div className="mt-3 flex items-center justify-between">
-            <label className="flex items-center gap-2 text-xs text-foreground">
-              <input type="checkbox" checked={!!selected[activeTab]} onChange={(e) => setSelected((s) => ({ ...s, [activeTab]: e.target.checked }))} />
-              Include this platform
-              {activeAlreadyPosted && <span className="text-emerald-400">(already posted once)</span>}
-            </label>
+            {activeTab !== "default" ? (
+              <label className="flex items-center gap-2 text-xs text-foreground">
+                <input type="checkbox" checked={!!selected[activeTab]} onChange={(e) => setSelected((s) => ({ ...s, [activeTab]: e.target.checked }))} />
+                Include this platform
+                {activeAlreadyPosted && <span className="text-emerald-400">(already posted once)</span>}
+              </label>
+            ) : (
+              <span className="text-[11px] text-muted-foreground italic">No platform connected — download to post manually</span>
+            )}
             <button onClick={() => setEditMode((v) => !v)} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary">
               {editMode ? "Cancel edit" : "✏️ Edit caption"}
             </button>

@@ -71,7 +71,7 @@ function visibleNav(role: string | undefined, capabilities: Record<string, boole
 // Must match the backend's monthly credit grant per tier (see backend/app/services/billing.py TIER_CREDITS).
 const TIER_MONTHLY: Record<string, number> = { free: 3, starter: 10, growth: 30, pro: 120 };
 
-export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebrow?: ReactNode; children: ReactNode }) {
+export function AppShell({ title, eyebrow, children, rightPanel }: { title: ReactNode; eyebrow?: ReactNode; children: ReactNode; rightPanel?: ReactNode }) {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const navigate = useNavigate();
   const { loading, isAuthed, me, logout, loggingOutRef, refresh } = useAuth();
@@ -399,7 +399,22 @@ export function AppShell({ title, eyebrow, children }: { title: ReactNode; eyebr
             </div>
           </div>
         </header>
-        <div className="px-5 py-6 lg:px-10 lg:py-8">{children}</div>
+        <div className="flex min-h-0 flex-1 items-start">
+          <div className="flex-1 min-w-0 px-5 py-6 lg:px-10 lg:py-8">{children}</div>
+          {rightPanel && (
+            <div
+              className="hidden xl:flex w-[232px] shrink-0 flex-col overflow-hidden rounded-2xl border border-border/60 mr-6 bg-card"
+              style={{
+                boxShadow: "var(--shadow-glass-full)",
+                position: "sticky",
+                top: "144px",
+                height: "calc(100vh - 144px - 20px)",
+              }}
+            >
+              {rightPanel}
+            </div>
+          )}
+        </div>
       </main>
       {showBuyCredits && <BuyCreditsModal onClose={() => setShowBuyCredits(false)} />}
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}

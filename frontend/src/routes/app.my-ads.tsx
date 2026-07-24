@@ -222,6 +222,23 @@ function MyAds() {
               return (
                 <div key={ad.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card/60 px-4 py-3">
                   <div className="flex min-w-0 items-center gap-3">
+                    {/* Thumbnail strip */}
+                    {(() => {
+                      const v = ad.results?.variants?.[0] as any;
+                      const imgUrl: string | null = v?.image_url ?? null;
+                      const vidUrl: string | null = v?.video_url ?? null;
+                      const thumb = imgUrl ?? vidUrl;
+                      if (!thumb) return null;
+                      return (
+                        <div className="w-10 h-10 shrink-0 rounded-lg overflow-hidden bg-muted/20 relative">
+                          {vidUrl && !imgUrl ? (
+                            <video src={vidUrl} className="absolute inset-0 w-full h-full object-cover" muted playsInline />
+                          ) : (
+                            <img src={thumb} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                          )}
+                        </div>
+                      );
+                    })()}
                     <button onClick={() => toggleFavorite(ad)} className={`text-lg ${ad.favorite ? "text-amber-400" : "text-muted-foreground/40"}`}>★</button>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">

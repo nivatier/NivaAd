@@ -46,7 +46,12 @@ PLATFORM_STYLE = {
     "linkedin": "professional, longer, outcome-focused",
     "x": "short and punchy, under 280 characters",
     "tiktok": "trendy, hook-first, gen-z friendly",
+    "default": "clear, concise, and engaging — suitable for any channel",
 }
+
+def _resolve_platforms(platforms: list[str]) -> list[str]:
+    """Return platforms as-is, or ["default"] when none are specified."""
+    return platforms if platforms else ["default"]
 
 
 def _shape(platforms: list[str]) -> str:
@@ -58,6 +63,7 @@ def _shape(platforms: list[str]) -> str:
 
 
 def _build_prompt(brief: dict, platforms: list[str], outputs: dict, feedback: str | None) -> str:
+    platforms = _resolve_platforms(platforms)
     fmt = outputs.get("format", "single")
     variations = outputs.get("variations", 1)
     styles = "; ".join(f"{p}: {PLATFORM_STYLE.get(p, 'platform-appropriate')}" for p in platforms)
@@ -112,12 +118,28 @@ def _video_prompt(brief: dict, shot_description: str | None = None) -> str:
     template is now a fallback ONLY for the no-shot-description case,
     where there's nothing specific to build from."""
     product = brief.get("product_name", "the product")
+    reference_prompt = (brief.get("video_reference_prompt") or "").strip()
+    camera_prompt = (brief.get("video_camera_style_prompt") or "").strip()
+    neg_prompt = (brief.get("video_negative_prompt") or "").strip()
+    music_label = (brief.get("video_background_music_label") or "").strip()
+
     if shot_description:
-        return (
-            f'Professional advertising video for "{product}". {shot_description} '
-            "High-end commercial advertising style, no text overlay, no watermark."
-        )
+        parts = []
+        if reference_prompt:
+            parts.append(reference_prompt)
+        parts.append(f'Professional advertising video for "{product}". {shot_description}')
+        parts.append("High-end commercial advertising style, no text overlay, no watermark.")
+        if camera_prompt:
+            parts.append(camera_prompt)
+        if music_label:
+            parts.append(f"Background music mood: {music_label}.")
+        if neg_prompt:
+            parts.append(f"Negative: {neg_prompt}.")
+        return " ".join(parts)
+
     p = f"Professional advertising video for a product called \"{product}\". "
+    if reference_prompt:
+        p = reference_prompt + " " + p
     if brief.get("image_scene"):
         p += f"Setting: {brief['image_scene']}. "
     else:
@@ -128,6 +150,12 @@ def _video_prompt(brief: dict, shot_description: str | None = None) -> str:
         "in the background). Keep pacing calm and premium, not frantic. "
         "High-end commercial advertising style, no text overlay, no watermark."
     )
+    if camera_prompt:
+        p += " " + camera_prompt
+    if music_label:
+        p += f" Background music mood: {music_label}."
+    if neg_prompt:
+        p += f" Negative: {neg_prompt}."
     return p
 
 
@@ -140,12 +168,20 @@ def _multi_shot_video_prompt(brief: dict, shots: list[dict]) -> str:
     itself handles continuity and transitions between shots — there is
     no video-processing/stitching step on NivaSpark's side at all."""
     product = brief.get("product_name", "the product")
+
+    # Global reference/preserve instruction (e.g. "use uploaded image as
+    # exact reference, preserve all design details") — prepended before shots.
+    reference_prompt = (brief.get("video_reference_prompt") or "").strip()
+
     intro = (
         f'Professional advertising video for "{product}". '
         "This video has multiple distinct shots in sequence, each described below with its exact timing — "
         "follow the shot breakdown precisely, keeping the same product and a consistent overall visual style "
         "across every shot.\n\n"
     )
+    if reference_prompt:
+        intro = f"{reference_prompt}\n\n" + intro
+
     lines = []
     elapsed = 0
     for i, shot in enumerate(shots):
@@ -154,11 +190,26 @@ def _multi_shot_video_prompt(brief: dict, shots: list[dict]) -> str:
         desc = (shot.get("prompt") or "").strip() or "continue the scene naturally"
         lines.append(f"Shot {i + 1} ({start}-{end}s): {desc}")
         elapsed = end
-    outro = (
-        "\n\nHigh-end commercial advertising style throughout, smooth cinematic transitions between shots, "
+
+    # Camera style prompt appended after shot list.
+    camera_prompt = (brief.get("video_camera_style_prompt") or "").strip()
+    # Global negative prompt — what to avoid across the entire video.
+    global_neg = (brief.get("video_negative_prompt") or "").strip()
+    # Background music label — stored for reference/pipeline use.
+    music_label = (brief.get("video_background_music_label") or "").strip()
+
+    outro_parts = [
+        "High-end commercial advertising style throughout, smooth cinematic transitions between shots, "
         "no text overlay, no watermark."
-    )
-    return intro + "\n".join(lines) + outro
+    ]
+    if camera_prompt:
+        outro_parts.append(camera_prompt)
+    if music_label:
+        outro_parts.append(f"Background music mood: {music_label}.")
+    if global_neg:
+        outro_parts.append(f"Negative: {global_neg}.")
+
+    return intro + "\n".join(lines) + "\n\n" + " ".join(outro_parts)
 
 
 def _image_prompt(brief: dict, slide_description: str | None = None) -> str:
@@ -503,7 +554,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                 prompt = ad.brief["text_prompt_override"]
                 logger.info("[text_prompt] job=%s USING OVERRIDE from confirmation popup", job_id)
             else:
-                prompt = _build_prompt(ad.brief, ad.platforms, ad.outputs, feedback)
+                prompt = _build_prompt(ad.brief, _resolve_platforms(ad.platforms or []), ad.outputs, feedback)
             text_model = ad.brief.get("text_model") or "google/gemini-2.5-flash"  # resolved once at ad-creation time (ads.py), not re-looked-up here — same pattern as image_model/video_model
             parsed = text_gen.generate_text(prompt, text_model)
             models_used = [text_model]  # text/copy generation always happens; image/video append below if used

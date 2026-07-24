@@ -45,6 +45,194 @@ DEFAULT_TEXT_STYLE_PRESETS = [
 
 SIZE_DESCRIPTIONS = {"small": "small, subtle", "medium": "medium-sized, clearly legible", "large": "large, attention-grabbing", "xlarge": "extra-large, dominant"}
 
+# Camera style presets — appended verbatim to the video generation prompt
+# when a company selects one on their video ad. The developer defines what
+# individual style traits companies can toggle on/off for their video.
+# Each has a short label and a prompt_fragment appended to the generation
+# prompt when selected. Multiple can be chosen at once.
+DEFAULT_CAMERA_STYLE_PRESETS = [
+    {"id": "smooth-cinematic",    "label": "Smooth cinematic movements only",       "prompt_fragment": "smooth cinematic movements only"},
+    {"id": "no-handheld-shake",   "label": "No handheld shake",                    "prompt_fragment": "no handheld shake"},
+    {"id": "slow-motion-physics", "label": "Slow-motion cloth physics",             "prompt_fragment": "slow-motion cloth physics"},
+    {"id": "premium-pacing",      "label": "Premium commercial pacing",             "prompt_fragment": "premium commercial pacing"},
+    {"id": "85mm-lens",           "label": "85mm cinematic lens look",              "prompt_fragment": "85mm cinematic lens look"},
+    {"id": "shallow-dof",         "label": "Shallow depth of field",               "prompt_fragment": "shallow depth of field"},
+    {"id": "hdr-lighting",        "label": "HDR lighting",                         "prompt_fragment": "HDR lighting"},
+    {"id": "ultra-photorealistic","label": "Ultra-photorealistic",                  "prompt_fragment": "ultra-photorealistic"},
+    {"id": "luxury-ad-quality",   "label": "Luxury product advertisement quality", "prompt_fragment": "luxury product advertisement quality"},
+]
+
+# Developer-editable default text pre-filled in the reference preservation
+# textarea when a user uploads a reference image for video. Stored in
+# ModelConfig under themes.video_reference_prompt_default.
+DEFAULT_VIDEO_REFERENCE_PROMPT = (
+    "Use the uploaded image as the exact reference. Preserve 100% of the design, "
+    "geometry, frame shape, colors, decals, branding, textures, materials, and "
+    "proportions. Do not redesign, modify, or replace any component. The subject "
+    "must remain identical to the reference image throughout the video."
+)
+
+
+async def get_video_reference_prompt_default(db) -> str:
+    row = await db.get(ModelConfig, 1)
+    stored = (row.config if row and row.config else {}).get("themes") or {}
+    return stored.get("video_reference_prompt_default") or DEFAULT_VIDEO_REFERENCE_PROMPT
+
+
+async def set_video_reference_prompt_default(db, prompt: str) -> str:
+    row = await db.get(ModelConfig, 1)
+    if row is None:
+        row = ModelConfig(id=1, config={})
+        db.add(row)
+        await db.flush()
+    config = dict(row.config or {})
+    themes = dict(config.get("themes") or {})
+    themes["video_reference_prompt_default"] = prompt
+    config["themes"] = themes
+    row.config = config
+    flag_modified(row, "config")
+    await db.commit()
+    return await get_video_reference_prompt_default(db)
+
+
+async def get_camera_style_presets(db) -> list[dict]:
+    row = await db.get(ModelConfig, 1)
+    stored = (row.config if row and row.config else {}).get("themes") or {}
+    return stored.get("camera_style_presets") or list(DEFAULT_CAMERA_STYLE_PRESETS)
+
+
+async def _save_camera_style_presets(db, presets: list[dict]) -> list[dict]:
+    row = await db.get(ModelConfig, 1)
+    if row is None:
+        row = ModelConfig(id=1, config={})
+        db.add(row)
+        await db.flush()
+    config = dict(row.config or {})
+    themes = dict(config.get("themes") or {})
+    themes["camera_style_presets"] = presets
+    config["themes"] = themes
+    row.config = config
+    flag_modified(row, "config")
+    await db.commit()
+    return await get_camera_style_presets(db)
+
+
+async def add_camera_style_preset(db, label: str, prompt_fragment: str) -> list[dict]:
+    presets = await get_camera_style_presets(db)
+    new_id = f"cam-{abs(hash(label + prompt_fragment)) % 100000}"
+    presets.append({"id": new_id, "label": label, "prompt_fragment": prompt_fragment})
+    return await _save_camera_style_presets(db, presets)
+
+
+async def update_camera_style_preset(db, preset_id: str, label: str, prompt_fragment: str) -> list[dict]:
+    presets = await get_camera_style_presets(db)
+    for p in presets:
+        if p["id"] == preset_id:
+            p.update({"label": label, "prompt_fragment": prompt_fragment})
+            break
+    else:
+        raise ValueError(f'No camera style preset with id "{preset_id}".')
+    return await _save_camera_style_presets(db, presets)
+
+
+async def delete_camera_style_preset(db, preset_id: str) -> list[dict]:
+    presets = [p for p in await get_camera_style_presets(db) if p["id"] != preset_id]
+    return await _save_camera_style_presets(db, presets)
+
+
+# ---------------------------------------------------------------------------
+# Background music presets — developer-managed list of mood/style choices
+# companies pick from in Create Ad's video section. Stored in the same
+# ModelConfig themes blob under "music_presets". The label and description
+# are shown to the user; the label is also stored on ad.brief so the
+# downstream audio pipeline (or a human editor) knows what mood was chosen.
+# ---------------------------------------------------------------------------
+
+DEFAULT_MUSIC_PRESETS = [
+    {
+        "id": "none",
+        "label": "None",
+        "description": "No background music suggestion",
+    },
+    {
+        "id": "upbeat",
+        "label": "Upbeat",
+        "description": "Energetic, fast-paced, motivational — great for product launches and fitness brands",
+    },
+    {
+        "id": "subtle-soft",
+        "label": "Subtle & Soft",
+        "description": "Gentle, ambient background — works well for luxury, skincare, and lifestyle ads",
+    },
+    {
+        "id": "corporate",
+        "label": "Corporate",
+        "description": "Clean, professional, slightly optimistic — suits B2B, tech, and service brands",
+    },
+    {
+        "id": "dramatic",
+        "label": "Dramatic",
+        "description": "Cinematic, building tension with a big reveal moment — ideal for car, watch, or premium product unveils",
+    },
+    {
+        "id": "playful",
+        "label": "Playful",
+        "description": "Fun, light-hearted, bouncy — suited for kids, food, or casual consumer brands",
+    },
+    {
+        "id": "epic",
+        "label": "Epic / Orchestral",
+        "description": "Full orchestral swell — large-scale feel for brand films and seasonal campaigns",
+    },
+]
+
+
+async def get_music_presets(db) -> list[dict]:
+    row = await db.get(ModelConfig, 1)
+    stored = (row.config if row and row.config else {}).get("themes") or {}
+    return stored.get("music_presets") or list(DEFAULT_MUSIC_PRESETS)
+
+
+async def _save_music_presets(db, presets: list[dict]) -> list[dict]:
+    row = await db.get(ModelConfig, 1)
+    if row is None:
+        row = ModelConfig(id=1, config={})
+        db.add(row)
+        await db.flush()
+    config = dict(row.config or {})
+    themes = dict(config.get("themes") or {})
+    themes["music_presets"] = presets
+    config["themes"] = themes
+    row.config = config
+    flag_modified(row, "config")
+    await db.commit()
+    return await get_music_presets(db)
+
+
+async def add_music_preset(db, label: str, description: str) -> list[dict]:
+    presets = await get_music_presets(db)
+    new_id = f"music-{abs(hash(label + description)) % 100000}"
+    presets.append({"id": new_id, "label": label, "description": description})
+    return await _save_music_presets(db, presets)
+
+
+async def update_music_preset(db, preset_id: str, label: str, description: str) -> list[dict]:
+    presets = await get_music_presets(db)
+    for p in presets:
+        if p["id"] == preset_id:
+            p.update({"label": label, "description": description})
+            break
+    else:
+        raise ValueError(f'No music preset with id "{preset_id}".')
+    return await _save_music_presets(db, presets)
+
+
+async def delete_music_preset(db, preset_id: str) -> list[dict]:
+    if preset_id == "none":
+        raise ValueError('The "None" preset can\'t be deleted — it\'s the default fallback.')
+    presets = [p for p in await get_music_presets(db) if p["id"] != preset_id]
+    return await _save_music_presets(db, presets)
+
 
 def build_style_phrase(preset: dict) -> str:
     """Turns a structured preset into the descriptive phrase folded into

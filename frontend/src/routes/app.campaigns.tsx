@@ -405,10 +405,6 @@ function Campaigns() {
   async function generate() {
     if (!name.trim() || !brief.trim()) return;
     const teaserP = toPayload(teaser), launchP = toPayload(launch), followupP = toPayload(followup);
-    if (!teaserP.platforms.length || !launchP.platforms.length || !followupP.platforms.length) {
-      setErr("Pick at least one platform for every phase.");
-      return;
-    }
     setBusy(true); setErr("");
     try {
       await api("/campaigns", { method: "POST", body: { name, brief, teaser: teaserP, launch: launchP, followup: followupP } });
@@ -473,7 +469,6 @@ function Campaigns() {
         <RequirementChecklist items={[
           { label: "Campaign / product name", met: !!name.trim() },
           { label: "One-line brief", met: !!brief.trim() },
-          { label: "At least one platform per phase", met: availablePlatforms.some((p) => teaser.platforms[p.id]) && availablePlatforms.some((p) => launch.platforms[p.id]) && availablePlatforms.some((p) => followup.platforms[p.id]) },
         ]} />
         {err && <div className="mt-3 text-xs text-destructive">{err}</div>}
         <button

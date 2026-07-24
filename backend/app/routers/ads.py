@@ -17,9 +17,10 @@ from app.deps import get_current_user, require_capability
 from app.models import Ad, AuditLog, BrandKit, Campaign, CreditLedger, GenerationJob, PlatformConnection, Product, ScheduledPost, User
 from app.schemas import (
     AdCreateIn, AdCreatedOut, AdListOut, AdOut, AdPatchIn, AdScheduledPostOut, AssistantHintOut,
-    AssistantSettingsOut, AvailableModelOut, AvailableModelsOut, PostAdIn, PreviewCostIn, PreviewCostOut,
-    PromptPreviewIn, PromptPreviewOut, RawThemesOut, RefineIn, RetentionInfoOut, TextStylePresetOut,
-    TextThemeSelectionOut, VideoThemeOut, VideoThemeShotOut,
+    AssistantSettingsOut, AvailableModelOut, AvailableModelsOut, CameraStylePresetOut, MusicPresetOut,
+    PostAdIn, PreviewCostIn, PreviewCostOut, PromptPreviewIn, PromptPreviewOut, RawThemesOut, RefineIn,
+    RetentionInfoOut, TextStylePresetOut, TextThemeSelectionOut, VideoReferencePromptDefaultOut,
+    VideoThemeOut, VideoThemeShotOut,
 )
 from app.services import credits as credit_svc
 from app.services import linkedin
@@ -32,10 +33,34 @@ from app.services.guardrails import check_text
 from app.services import storage
 from app.services.storage import upload_data_url
 from app.services.token_crypto import decrypt_token
-from app.tasks import _build_prompt, _image_prompt, _multi_shot_video_prompt, _review_shot_prompt, _video_prompt
+from app.tasks import _build_prompt, _image_prompt, _multi_shot_video_prompt, _resolve_platforms, _review_shot_prompt, _video_prompt
 from app.worker import celery_app
 
 router = APIRouter(prefix="/ads", tags=["ads"])
+
+
+async def _resolve_camera_style_prompt(db, camera_style_ids: list[str] | None) -> str | None:
+    """Resolves a list of selected camera style trait ids to a combined prompt string.
+    Returns None when the list is empty. Each trait's prompt_fragment is joined with ', '."""
+    if not camera_style_ids:
+        return None
+    presets = await themes_svc.get_camera_style_presets(db)
+    preset_map = {p["id"]: p.get("prompt_fragment", "") for p in presets}
+    fragments = [preset_map[cid] for cid in camera_style_ids if cid in preset_map and preset_map[cid]]
+    if not fragments:
+        return None
+    return "Camera style: " + ", ".join(fragments) + "."
+
+
+async def _resolve_music_label(db, music_preset_id: str | None) -> str | None:
+    """Looks up a music preset by id and returns its label for storage on
+    the brief — kept as a human-readable string so the audio pipeline
+    (or a human editor reviewing the brief) can read it directly."""
+    if not music_preset_id or music_preset_id == "none":
+        return None
+    presets = await themes_svc.get_music_presets(db)
+    match = next((p for p in presets if p["id"] == music_preset_id), None)
+    return (match.get("label") or None) if match else None
 
 
 def _compute_display_status(ad: Ad, has_pending_schedule: bool) -> str:
@@ -106,6 +131,27 @@ async def get_text_style_presets_endpoint(user: User = Depends(get_current_user)
     """Text-overlay style presets for the Headline/Discount badge/Body
     fields (Developer > Themes > Text Styles), read-only here."""
     return [TextStylePresetOut(**p) for p in await themes_svc.get_text_style_presets(db)]
+
+
+@router.get("/camera-style-presets", response_model=list[CameraStylePresetOut])
+async def get_camera_style_presets_endpoint(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Camera style presets defined by the developer (Developer > Themes > Camera Styles).
+    Read-only for company users — picked in Create Ad's video section."""
+    return [CameraStylePresetOut(**p) for p in await themes_svc.get_camera_style_presets(db)]
+
+
+@router.get("/music-presets", response_model=list[MusicPresetOut])
+async def get_music_presets_endpoint(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Background music presets defined by the developer (Developer > Themes > Music Presets).
+    Read-only for company users — picked in Create Ad's video section."""
+    return [MusicPresetOut(**p) for p in await themes_svc.get_music_presets(db)]
+
+
+@router.get("/video-reference-prompt-default", response_model=VideoReferencePromptDefaultOut)
+async def get_video_reference_prompt_default_endpoint(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Developer-set default text pre-filled in the reference preservation textarea
+    when a company user uploads a reference image for video generation."""
+    return VideoReferencePromptDefaultOut(prompt=await themes_svc.get_video_reference_prompt_default(db))
 
 
 @router.get("/video-themes", response_model=list[VideoThemeOut])
@@ -241,7 +287,7 @@ async def preview_prompt(data: PromptPreviewIn, user: User = Depends(get_current
         "product_image_url": "preview-only" if data.has_photo else None,
     }
     outputs = {**data.outputs, "format": data.format, "variations": data.variations}
-    text_prompt = _build_prompt(brief, data.platforms, outputs, feedback=None)
+    text_prompt = _build_prompt(brief, _resolve_platforms(data.platforms), outputs, feedback=None)
     image_prompt = _image_prompt(brief) if data.outputs.get("image") else None
     # Video prompt now runs through the SAME shot-review step generation
     # itself uses (if the developer has one configured — see
@@ -453,8 +499,16 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
             "video_audio": data.video_audio if video_model else None,
             "text_model": text_model["model"] if text_model else None,
             "text_model_credits": text_model["credits"] if text_model else None,
+            # New video enhancement fields — stored at brief level so tasks.py
+            # can read them when building the final generation prompt.
+            "video_reference_prompt": data.video_reference_prompt if video_model else None,
+            "video_camera_style_ids": data.video_camera_style_ids if video_model else [],
+            "video_camera_style_prompt": await _resolve_camera_style_prompt(db, data.video_camera_style_ids) if video_model else None,
+            "video_negative_prompt": data.video_negative_prompt if video_model else None,
+            "video_background_music_id": data.video_background_music_id if video_model else None,
+            "video_background_music_label": await _resolve_music_label(db, data.video_background_music_id) if video_model else None,
         },
-        platforms=data.platforms,
+        platforms=_resolve_platforms(data.platforms),
         outputs={**data.outputs, "format": data.format, "variations": data.variations},
         status="generating",
     )

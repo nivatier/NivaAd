@@ -477,6 +477,46 @@ class UpdateTextStylePresetIn(BaseModel):
     size: str = ""
 
 
+class CameraStylePresetOut(BaseModel):
+    id: str
+    label: str
+    prompt_fragment: str  # the text fragment appended to the prompt when this trait is selected
+
+
+class AddCameraStylePresetIn(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    prompt_fragment: str = Field(min_length=1, max_length=300)
+
+
+class UpdateCameraStylePresetIn(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    prompt_fragment: str = Field(min_length=1, max_length=300)
+
+
+class VideoReferencePromptDefaultOut(BaseModel):
+    prompt: str
+
+
+class VideoReferencePromptDefaultIn(BaseModel):
+    prompt: str = Field(min_length=1, max_length=2000)
+
+
+class MusicPresetOut(BaseModel):
+    id: str
+    label: str
+    description: str  # shown to the user as a hint of what the style sounds like
+
+
+class AddMusicPresetIn(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=300)
+
+
+class UpdateMusicPresetIn(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=300)
+
+
 # ---------- Developer (platform operator) — fully separate from the
 # per-company user/admin system above; never references a User or
 # Company row ----------
@@ -703,9 +743,25 @@ class MeOut(BaseModel):
 
 # ---------- Ads / generation ----------
 
+class VideoShotTextOverlayIn(BaseModel):
+    """One text overlay burned onto a single video shot via ffmpeg drawtext
+    after generation — start_time/end_time are seconds relative to that
+    shot's own start (so Shot 2 starting at 3s would use 0-3 here, not 3-6)."""
+    text: str = Field(min_length=1, max_length=300)
+    start_time: float = Field(ge=0, default=0)  # seconds from this shot's start
+    end_time: float | None = None               # seconds from this shot's start; None = hold to end of shot
+    position: str = "bottom-center"            # one of the 9 anchor strings (see reframe.add_text_overlay)
+    font_style: str = "sans"                   # "sans" | "sans_bold" | "serif"
+    font_size: str = "medium"                  # "small" | "medium" | "large"
+    text_color: str = "#FFFFFF"
+    overlay_style: str = "fade"                # "fade" | "solid" | "slide_up"
+
+
 class VideoShotIn(BaseModel):
     prompt: str = Field(min_length=1, max_length=2000)
     duration: int = Field(ge=1, le=60)  # outer sanity bound only — REAL enforcement is against the company's active video tier's min_duration/max_duration, done in the endpoint (services/credits.py: DEFAULT_MODEL_CFG), not here
+    voiceover_text: str | None = None  # per-shot spoken narration / voice-over — burned in as audio via TTS after generation if the model/pipeline supports it; stored on the brief so the task can read it
+    text_overlays: list[VideoShotTextOverlayIn] = Field(default_factory=list)  # zero or more timed text blocks burned in via ffmpeg after generation (same pipeline as brand-shot overlay_text in reframe.add_text_overlay)
 
 
 class CarouselSlideThemeIn(BaseModel):
@@ -733,7 +789,7 @@ class AdCreateIn(BaseModel):
     tagline: str | None = None
     use_brand_logo: bool = False
     product_id: uuid.UUID | None = None
-    platforms: list[str] = Field(min_length=1)
+    platforms: list[str] = Field(default_factory=list)  # empty = no platform filter; validation removed so generation works without a platform selected
     outputs: dict = Field(default_factory=lambda: {"text": True, "image": True, "video": False})
     format: str = "single"
     variations: int = 1
@@ -759,6 +815,10 @@ class AdCreateIn(BaseModel):
     video_audio: bool = False  # whether to generate with native audio, for models that support the choice (see AvailableModelOut.supports_audio) — genuinely affects both the output AND the price for dynamically-priced models; ignored for models without an audio toggle
     video_start_shot_id: str | None = None  # a Brand Kit intro clip (see /brand-kit/video-shots, kind="intro") to prepend via ffmpeg concat — null/omitted means no intro, same as any other optional field here
     video_end_shot_id: str | None = None  # same, for a Brand Kit outro/credits clip (kind="outro") appended at the end
+    video_reference_prompt: str | None = None  # global reference/preserve instruction prepended to every shot prompt — used for "use the uploaded image as exact reference, preserve design/colors/geometry throughout"
+    video_camera_style_ids: list[str] = Field(default_factory=list)  # ids of selected CameraStylePreset traits — each fragment is joined with ", " and appended as the camera style instruction
+    video_negative_prompt: str | None = None  # global negative prompt for the whole video — what to avoid across every shot, appended once at the end of the final generation prompt
+    video_background_music_id: str | None = None  # id of a MusicPreset from /ads/music-presets — its prompt text is stored on the brief for the task/pipeline to use
 
 
 class RefineIn(BaseModel):
@@ -773,7 +833,7 @@ class AdPatchIn(BaseModel):
 
 
 class PostAdIn(BaseModel):
-    platforms: list[str] = Field(min_length=1)
+    platforms: list[str] = Field(default_factory=list)
 
 
 class AdScheduledPostOut(BaseModel):
@@ -841,7 +901,7 @@ class PromptPreviewIn(BaseModel):
     text_overlay: str | None = None  # see AdCreateIn.text_overlay
     has_photo: bool = False
     tagline: str | None = None
-    platforms: list[str] = Field(min_length=1)
+    platforms: list[str] = Field(default_factory=list)
     outputs: dict = Field(default_factory=dict)
     format: str = "single"
     variations: int = 1
@@ -1031,7 +1091,7 @@ class RatioUsageOut(BaseModel):
 class PhaseScheduleIn(BaseModel):
     date: str  # "YYYY-MM-DD"
     time: str = "10:00"  # "HH:MM"
-    platforms: list[str] = Field(min_length=1)
+    platforms: list[str] = Field(default_factory=list)
     generate_image: bool = False  # per-phase choice — e.g. no image for a teaser, one for the launch
     env: str | None = None  # placement/surroundings, used when product_image is provided
     image_scene: str | None = None  # scene description, used when no product_image
@@ -1101,7 +1161,7 @@ class CampaignListOut(BaseModel):
 
 class SchedulePostIn(BaseModel):
     ad_id: uuid.UUID
-    platforms: list[str] = Field(min_length=1)
+    platforms: list[str] = Field(default_factory=list)
     scheduled_at: datetime  # naive UTC datetime from the browser's <input type="datetime-local">
 
 
@@ -1226,7 +1286,7 @@ class AgentEventIn(BaseModel):
     day: int = Field(ge=1, le=31)
     lead_days: int = Field(default=2, ge=0, le=60)
     guidance: str = Field(default="", max_length=1000)
-    platforms: list[str] = Field(min_length=1)
+    platforms: list[str] = Field(default_factory=list)
     product_id: uuid.UUID | None = None
     enabled: bool = True
     approval_mode: str | None = Field(default=None, pattern="^(draft_only|schedule_review|auto_post)$")

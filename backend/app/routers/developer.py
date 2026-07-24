@@ -18,19 +18,22 @@ from app.database import get_db
 from app.deps import require_developer, require_developer_permission
 from app.models import Ad, Campaign, Company, CreditLedger, FlaggedContent, GuardrailRule, ModelConfig, Subscription, User
 from app.schemas import (
-    AddAssistantHintIn, AddDeveloperTeamUserIn, AddModelIn, AddPlatformIntegrationIn, AddTextStylePresetIn,
-    AddThemeTagIn, AddVideoRatioIn, AddVisionModelIn, AnalyzeThemeImageIn, AnalyzeThemeImageOut, AssistantHintOut,
-    AssistantSettingsIn, AssistantSettingsOut, CompanyAdminOut, DeveloperLoginIn, DeveloperModelOut,
-    DeveloperModelsOut, DeveloperTeamUserOut, DeveloperTokenOut, GenerateAllMissingOut, GenerateIntroAudioIn,
-    GenerateTagPromptIn, GenerateTagPromptOut, GenerateVideoThemeDraftIn, GenerateVideoThemeDraftOut,
-    GenerateVideoThemeThumbnailIn, GenerateVideoThemeThumbnailOut, GuardrailRuleCreateIn, GuardrailRuleOut,
-    ImageGalleryEntryIn, ImageThemeEditorIn, ImageThemeEditorOut, MarkupMultiplierIn, MarkupMultiplierOut,
-    MaxExtraUsersIn, MaxExtraUsersOut, OpenRouterCatalogModelOut, OpenRouterCreditsOut, PlatformIntegrationOut,
+    AddAssistantHintIn, AddCameraStylePresetIn, AddDeveloperTeamUserIn, AddModelIn, AddPlatformIntegrationIn,
+    AddMusicPresetIn, AddTextStylePresetIn, AddThemeTagIn, AddVideoRatioIn, AddVisionModelIn,
+    AnalyzeThemeImageIn, AnalyzeThemeImageOut, AssistantHintOut, AssistantSettingsIn, AssistantSettingsOut,
+    CameraStylePresetOut, MusicPresetOut, VideoReferencePromptDefaultOut, VideoReferencePromptDefaultIn,
+    CompanyAdminOut, DeveloperLoginIn, DeveloperModelOut, DeveloperModelsOut, DeveloperTeamUserOut,
+    DeveloperTokenOut, GenerateAllMissingOut, GenerateIntroAudioIn, GenerateTagPromptIn, GenerateTagPromptOut,
+    GenerateVideoThemeDraftIn, GenerateVideoThemeDraftOut, GenerateVideoThemeThumbnailIn,
+    GenerateVideoThemeThumbnailOut, GuardrailRuleCreateIn, GuardrailRuleOut, ImageGalleryEntryIn,
+    ImageThemeEditorIn, ImageThemeEditorOut, MarkupMultiplierIn, MarkupMultiplierOut, MaxExtraUsersIn,
+    MaxExtraUsersOut, OpenRouterCatalogModelOut, OpenRouterCreditsOut, PlatformIntegrationOut,
     PlatformOverviewOut, PostRetentionMonthsIn, PostRetentionMonthsOut, RatioUsageOut, RawModelsIn, RawModelsOut,
     RawThemesIn, RawThemesOut, ReorderModelsIn, RetentionMonthsIn, RetentionMonthsOut, SaveVideoThemeIn,
     TextStylePresetOut, ThemeAiSettingsIn, ThemeAiSettingsOut, ThemeThumbnailUploadIn, ThemeThumbnailUploadOut,
-    UpdateAssistantHintIn, UpdateDeveloperTeamUserIn, UpdateModelIn, UpdatePlatformIntegrationIn,
-    UpdateTextStylePresetIn, VideoPrepSettingsIn, VideoPrepSettingsOut, VideoRatiosOut, VideoThemeOut,
+    UpdateAssistantHintIn, UpdateCameraStylePresetIn, UpdateDeveloperTeamUserIn, UpdateModelIn,
+    UpdateMusicPresetIn, UpdatePlatformIntegrationIn, UpdateTextStylePresetIn, VideoPrepSettingsIn, VideoPrepSettingsOut,
+    VideoRatiosOut, VideoThemeOut,
 )
 from app.security import create_developer_token
 from app.services import credits as credit_svc
@@ -573,6 +576,81 @@ async def delete_text_style_preset(preset_id: str, _: str = Depends(require_deve
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     return [TextStylePresetOut(**p) for p in presets]
+
+
+# --- Camera style presets (Developer > Themes > Camera Styles tab) ---
+
+@router.get("/themes/camera-style-presets", response_model=list[CameraStylePresetOut])
+async def list_camera_style_presets(_: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    return [CameraStylePresetOut(**p) for p in await themes_svc.get_camera_style_presets(db)]
+
+
+@router.post("/themes/camera-style-presets", response_model=list[CameraStylePresetOut])
+async def add_camera_style_preset(data: AddCameraStylePresetIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    presets = await themes_svc.add_camera_style_preset(db, data.label, data.prompt_fragment)
+    return [CameraStylePresetOut(**p) for p in presets]
+
+
+@router.put("/themes/camera-style-presets/{preset_id}", response_model=list[CameraStylePresetOut])
+async def update_camera_style_preset(preset_id: str, data: UpdateCameraStylePresetIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    try:
+        presets = await themes_svc.update_camera_style_preset(db, preset_id, data.label, data.prompt_fragment)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return [CameraStylePresetOut(**p) for p in presets]
+
+
+@router.delete("/themes/camera-style-presets/{preset_id}", response_model=list[CameraStylePresetOut])
+async def delete_camera_style_preset(preset_id: str, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    try:
+        presets = await themes_svc.delete_camera_style_preset(db, preset_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return [CameraStylePresetOut(**p) for p in presets]
+
+
+# --- Video reference prompt default (Developer > Themes > Camera Styles tab) ---
+
+@router.get("/themes/video-reference-prompt-default", response_model=VideoReferencePromptDefaultOut)
+async def get_video_reference_prompt_default(_: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    return VideoReferencePromptDefaultOut(prompt=await themes_svc.get_video_reference_prompt_default(db))
+
+
+@router.put("/themes/video-reference-prompt-default", response_model=VideoReferencePromptDefaultOut)
+async def set_video_reference_prompt_default(data: VideoReferencePromptDefaultIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    prompt = await themes_svc.set_video_reference_prompt_default(db, data.prompt)
+    return VideoReferencePromptDefaultOut(prompt=prompt)
+
+
+# --- Background music presets (Developer > Themes > Music Presets tab) ---
+
+@router.get("/themes/music-presets", response_model=list[MusicPresetOut])
+async def list_music_presets(_: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    return [MusicPresetOut(**p) for p in await themes_svc.get_music_presets(db)]
+
+
+@router.post("/themes/music-presets", response_model=list[MusicPresetOut])
+async def add_music_preset(data: AddMusicPresetIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    presets = await themes_svc.add_music_preset(db, data.label, data.description)
+    return [MusicPresetOut(**p) for p in presets]
+
+
+@router.put("/themes/music-presets/{preset_id}", response_model=list[MusicPresetOut])
+async def update_music_preset(preset_id: str, data: UpdateMusicPresetIn, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    try:
+        presets = await themes_svc.update_music_preset(db, preset_id, data.label, data.description)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return [MusicPresetOut(**p) for p in presets]
+
+
+@router.delete("/themes/music-presets/{preset_id}", response_model=list[MusicPresetOut])
+async def delete_music_preset(preset_id: str, _: str = Depends(require_developer_permission("themes")), db: AsyncSession = Depends(get_db)):
+    try:
+        presets = await themes_svc.delete_music_preset(db, preset_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return [MusicPresetOut(**p) for p in presets]
 
 
 @router.get("/assistant-hints", response_model=list[AssistantHintOut])
