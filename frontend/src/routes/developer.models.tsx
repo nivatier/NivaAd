@@ -529,79 +529,110 @@ function DeveloperModels() {
     }
   }
 
+  const [tab, setTab] = useState<"text" | "image" | "video" | "config">("text");
   if (!allowed) return null;
+
+  const MODEL_TABS = [
+    { key: "text",   label: "✍️ Text models" },
+    { key: "image",  label: "🖼 Image models" },
+    { key: "video",  label: "🎬 Video models" },
+    { key: "config", label: "⚙️ Config" },
+  ] as const;
+
+  function ModelKindTab({ kind }: { kind: "text" | "image" | "video" }) {
+    if (!models) return <div className="text-sm text-muted-foreground">Loading…</div>;
+    return (
+      <div className="space-y-4">
+        {kind === "video" && (
+          <div className="rounded-xl border border-border bg-card/60 p-4">
+            <div className="text-sm font-semibold text-foreground mb-1">🎬 Video prep pipeline</div>
+            <p className="text-xs text-muted-foreground mb-3">These run automatically in the background on your OpenRouter balance — never charged to companies.</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <div className="text-[11px] font-semibold text-foreground mb-1">Text prompt review <span className="font-normal text-muted-foreground">— refines shot wording before generation</span></div>
+                <select value={promptReviewModelId} onChange={(e) => { setPromptReviewModelId(e.target.value); saveVideoPrep(e.target.value, videoPrepImageModelId); }}
+                  className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+                  <option value="">Off — use customer wording as-is</option>
+                  {models?.text.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="text-[11px] font-semibold text-foreground mb-1">Image for video <span className="font-normal text-muted-foreground">— pre-renders first frame to match shot 1's scene</span></div>
+                <select value={videoPrepImageModelId} onChange={(e) => { setVideoPrepImageModelId(e.target.value); saveVideoPrep(promptReviewModelId, e.target.value); }}
+                  className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+                  <option value="">Off — use reference photo as starting frame</option>
+                  {models?.image.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+              </div>
+            </div>
+            {(savingVideoPrep || videoPrepSaved) && (
+              <p className="mt-2 text-[10px] text-muted-foreground">{savingVideoPrep ? "Saving…" : <span className="text-emerald-400">✓ Saved</span>}</p>
+            )}
+          </div>
+        )}
+        <div className="rounded-xl border border-border bg-card/60 p-4">
+          <div className="text-sm font-semibold capitalize text-foreground mb-3">{kind} models</div>
+          <div className="space-y-2">
+            {models[kind].map((entry, i) => (
+              <ModelRow
+                key={entry.id} kind={kind} entry={entry} onSave={handleSave} onDelete={handleDelete} canDelete={models[kind].length > 1}
+                onMoveUp={() => handleReorder(kind, i, i - 1)}
+                onMoveDown={() => handleReorder(kind, i, i + 1)}
+                canMoveUp={i > 0}
+                canMoveDown={i < models[kind].length - 1}
+              />
+            ))}
+            <AddModelForm kind={kind} onAdd={handleAdd} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <DeveloperShell title="Models">
-      <p className="mb-6 text-sm text-muted-foreground">
-        Add as many image and video models as you want — "Fetch from OpenRouter" browses their real live catalog so you click an actual model instead of hand-typing an identifier. For video models, set which resolutions to offer, and optionally a dynamic pricing formula (see each model's Edit view) so the price customers see reflects exactly what they picked — resolution, audio, duration — not a flat guess. Companies never see model identifiers, only your labels.
-      </p>
-
-      <RawJsonEditor onSaved={load} />
-
-      <div className="mb-6 rounded-xl border border-border bg-card/60 p-4 max-w-md">
-        <div className="text-sm font-semibold text-foreground">💰 Global markup multiplier</div>
-        <p className="mt-1 text-[11px] text-muted-foreground">Applied to every dynamically-priced model's real OpenRouter cost before converting to credits. Agreed target: 1.6–1.8x nets a 20% margin after infra and Stripe fees. Doesn't affect models still on flat legacy credits.</p>
-        <div className="mt-3 flex items-center gap-2">
-          <input type="number" step="0.05" min={1} max={10} value={markup} onChange={(e) => setMarkup(e.target.value)}
-            className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
-          <span className="text-xs text-muted-foreground">×</span>
-          <button disabled={savingMarkup} onClick={saveMarkup} className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
-            {savingMarkup ? "Saving…" : "Save"}
+      {/* Tab strip */}
+      <div className="flex flex-wrap gap-1.5 mb-6">
+        {MODEL_TABS.map((t) => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${tab === t.key
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"}`}>
+            {t.label}
+            {t.key !== "config" && models && (
+              <span className="ml-1.5 rounded-full bg-muted/60 px-1.5 py-0.5 text-[9px] font-normal text-muted-foreground">
+                {models[t.key as "text"|"image"|"video"].length}
+              </span>
+            )}
           </button>
-          {markupSaved && <span className="text-xs text-emerald-400">✓ Saved</span>}
-        </div>
+        ))}
       </div>
 
       {err && <div className="mb-4 text-sm text-destructive">{err}</div>}
-      {!models ? (
-        <div className="text-sm text-muted-foreground">Loading…</div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-3">
-          {(["text", "image", "video"] as const).map((kind) => (
-            <div key={kind} className="rounded-xl border border-border bg-card/60 p-4">
-              <div className="text-sm font-semibold capitalize text-foreground">{kind} generation</div>
-              {kind === "video" && (
-                <div className="mt-3 space-y-3 rounded-lg border border-border bg-background/40 p-3">
-                  <div>
-                    <div className="text-[11px] font-semibold text-foreground">Text Prompt <span className="font-normal text-muted-foreground">— reviews and improves each shot's wording before generation</span></div>
-                    <select
-                      value={promptReviewModelId}
-                      onChange={(e) => { setPromptReviewModelId(e.target.value); saveVideoPrep(e.target.value, videoPrepImageModelId); }}
-                      className="mt-1 w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
-                    >
-                      <option value="">Off — use the customer's wording as-is</option>
-                      {models?.text.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <div className="text-[11px] font-semibold text-foreground">Image for Video <span className="font-normal text-muted-foreground">— pre-renders the first frame to match shot 1's scene, fixing the "reference photo's original background shows through" problem</span></div>
-                    <select
-                      value={videoPrepImageModelId}
-                      onChange={(e) => { setVideoPrepImageModelId(e.target.value); saveVideoPrep(promptReviewModelId, e.target.value); }}
-                      className="mt-1 w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
-                    >
-                      <option value="">Off — use the reference photo as-is for the starting frame</option>
-                      {models?.image.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-                    </select>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground">Both run automatically in the background on your own OpenRouter balance — never shown to or charged to companies. {savingVideoPrep && "Saving…"} {videoPrepSaved && <span className="text-emerald-400">✓ Saved</span>}</p>
-                </div>
-              )}
-              <div className="mt-3 space-y-2">
-                {models[kind].map((entry, i) => (
-                  <ModelRow
-                    key={entry.id} kind={kind} entry={entry} onSave={handleSave} onDelete={handleDelete} canDelete={models[kind].length > 1}
-                    onMoveUp={() => handleReorder(kind, i, i - 1)}
-                    onMoveDown={() => handleReorder(kind, i, i + 1)}
-                    canMoveUp={i > 0}
-                    canMoveDown={i < models[kind].length - 1}
-                  />
-                ))}
-                <AddModelForm kind={kind} onAdd={handleAdd} />
-              </div>
+
+      {tab === "text"  && <ModelKindTab kind="text" />}
+      {tab === "image" && <ModelKindTab kind="image" />}
+      {tab === "video" && <ModelKindTab kind="video" />}
+      {tab === "config" && (
+        <div className="space-y-6 max-w-xl">
+          <div className="rounded-xl border border-border bg-card/60 p-5">
+            <div className="text-sm font-semibold text-foreground">💰 Global markup multiplier</div>
+            <p className="mt-1 text-xs text-muted-foreground">Applied to every dynamically-priced model's real OpenRouter cost before converting to credits. Target 1.6–1.8× nets ~20% margin after infra and Stripe fees. Does not affect flat-credit models.</p>
+            <div className="mt-3 flex items-center gap-2">
+              <input type="number" step="0.05" min={1} max={10} value={markup} onChange={(e) => setMarkup(e.target.value)}
+                className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
+              <span className="text-xs text-muted-foreground">×</span>
+              <button disabled={savingMarkup} onClick={saveMarkup} className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+                {savingMarkup ? "Saving…" : "Save"}
+              </button>
+              {markupSaved && <span className="text-xs text-emerald-400">✓ Saved</span>}
             </div>
-          ))}
+          </div>
+          <div className="rounded-xl border border-border bg-card/60 p-5">
+            <div className="text-sm font-semibold text-foreground mb-2">🛠 Raw JSON editor</div>
+            <p className="text-xs text-muted-foreground mb-3">Edit the full model config as JSON. Use with care — invalid JSON will be rejected.</p>
+            <RawJsonEditor onSaved={load} />
+          </div>
         </div>
       )}
     </DeveloperShell>

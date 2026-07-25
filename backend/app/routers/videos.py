@@ -19,7 +19,7 @@ from app.config import settings
 
 logger = logging.getLogger("nivaad.videos")
 
-OPENROUTER_VIDEOS_URL = "https://openrouter.ai/api/v1/videos"
+OPENROUTER_VIDEOS_URL = f"{settings.OPENROUTER_BASE_URL}/videos"
 
 # Bounded so a stuck/slow job can't tie up a Celery worker forever —
 # generous relative to OpenRouter's own "30 seconds to several minutes"

@@ -339,7 +339,7 @@ def _review_shot_prompt(raw_prompt: str, review_model: str) -> str:
     )
     try:
         resp = httpx.post(
-            "https://openrouter.ai/api/v1/chat/completions",
+            f"{settings.OPENROUTER_BASE_URL}/chat/completions",
             headers={"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}", "Content-Type": "application/json"},
             json={"model": review_model, "max_tokens": 300, "messages": [{"role": "user", "content": instruction}]},
             timeout=30,
@@ -1515,6 +1515,25 @@ def _create_agent_ad_sync(db, company_id, product_name: str, description: str, p
 
     generate_ad(str(job.id))  # direct call, not .delay() — already running inside a worker process
     return ad
+
+
+@celery_app.task(name="app.cleanup_expired_logs")
+def cleanup_expired_logs():
+    """Daily cleanup of the system_logs table — deletes rows older than
+    log_retention_days (default 30). Runs at 2 AM UTC, before media
+    and post cleanup, so the log of the cleanup itself is retained."""
+    from app.models import SystemLog
+    from app.services.retention import get_log_retention_days_sync
+    with Session(sync_engine) as db:
+        days = get_log_retention_days_sync(db)
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        result = db.execute(
+            delete(SystemLog).where(SystemLog.created_at < cutoff)
+        )
+        db.commit()
+        deleted = result.rowcount
+        logger.info("[logs] cleanup deleted=%d cutoff=%s", deleted, cutoff.isoformat())
+        return f"deleted {deleted} log rows older than {days} days"
 
 
 @celery_app.task(name="app.check_agent_events", bind=True, max_retries=0)

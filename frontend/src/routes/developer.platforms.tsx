@@ -22,13 +22,14 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
   const [scope, setScope] = useState(entry.scope || "");
   const [redirectUri, setRedirectUri] = useState(entry.redirect_uri || "");
   const [videoRatio, setVideoRatio] = useState(entry.video_ratio || "1:1");
+  const [apiUrl, setApiUrl] = useState(entry.api_url || "");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [togglingEnabled, setTogglingEnabled] = useState(false);
 
   async function save() {
     setSaving(true);
-    const body: Record<string, unknown> = { label: label.trim(), client_id: clientId.trim(), scope: scope.trim() || null, redirect_uri: redirectUri.trim() || null, video_ratio: videoRatio };
+    const body: Record<string, unknown> = { label: label.trim(), client_id: clientId.trim(), scope: scope.trim() || null, redirect_uri: redirectUri.trim() || null, video_ratio: videoRatio, api_url: apiUrl.trim() || null };
     if (clientSecret.trim()) body.client_secret = clientSecret.trim(); // omit entirely if left blank — keeps the existing secret unchanged
     await onSave(entry.id, body);
     setSaving(false);
@@ -59,6 +60,10 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
           <input value={redirectUri} onChange={(e) => setRedirectUri(e.target.value)} placeholder="Redirect URI, e.g. http://localhost:8000/connections/linkedin/callback" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder="OAuth scope, e.g. openid profile w_member_social" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <div>
+            <div className="mb-1 text-[10px] text-muted-foreground">Platform API URL <span className="font-normal opacity-60">(posting endpoint, e.g. https://api.linkedin.com/rest/posts)</span></div>
+            <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="https://api.platform.com/..." className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
+          </div>
+          <div>
             <div className="mb-1 text-[10px] text-muted-foreground">Video posting ratio — what the reframe pipeline treats as this platform's required format</div>
             <select value={videoRatio} onChange={(e) => setVideoRatio(e.target.value)} className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
               {ratios.map((r) => <option key={r} value={r}>{r}</option>)}
@@ -78,6 +83,7 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
               {!entry.enabled && <span className="ml-2 rounded-full bg-foreground px-2 py-0.5 text-[9px] font-normal text-muted-foreground">DISABLED</span>}
             </div>
             <div className="mt-0.5 truncate text-[11px] text-muted-foreground">Client ID: {entry.client_id || "—"} · Secret: {entry.has_secret ? "✓ set" : "not set"} · Ratio: {entry.video_ratio || "1:1"}</div>
+            {entry.api_url && <div className="mt-0.5 truncate text-[11px] text-muted-foreground">API: {entry.api_url}</div>}
             {entry.redirect_uri && <div className="mt-0.5 truncate text-[11px] text-muted-foreground">Redirect: {entry.redirect_uri}</div>}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -103,16 +109,17 @@ function AddPlatformForm({ onAdd, ratios }: { onAdd: (body: Record<string, unkno
   const [redirectUri, setRedirectUri] = useState("");
   const [scope, setScope] = useState("");
   const [videoRatio, setVideoRatio] = useState("1:1");
+  const [apiUrl, setApiUrl] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function add() {
     setSaving(true);
     await onAdd({
       id: id.trim().toLowerCase(), label: label.trim(), client_id: clientId.trim(), client_secret: clientSecret.trim(),
-      redirect_uri: redirectUri.trim() || null, scope: scope.trim() || null, video_ratio: videoRatio,
+      redirect_uri: redirectUri.trim() || null, scope: scope.trim() || null, video_ratio: videoRatio, api_url: apiUrl.trim() || null,
     });
     setSaving(false);
-    setId(""); setLabel(""); setClientId(""); setClientSecret(""); setRedirectUri(""); setScope(""); setVideoRatio("1:1");
+    setId(""); setLabel(""); setClientId(""); setClientSecret(""); setRedirectUri(""); setScope(""); setVideoRatio("1:1"); setApiUrl("");
     setOpen(false);
   }
 
@@ -127,6 +134,10 @@ function AddPlatformForm({ onAdd, ratios }: { onAdd: (body: Record<string, unkno
       <input value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} type="password" placeholder="Client Secret" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
       <input value={redirectUri} onChange={(e) => setRedirectUri(e.target.value)} placeholder="Redirect URI (must match what's registered with the platform)" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
       <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder="OAuth scope" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+      <div>
+        <div className="mb-1 text-[10px] text-muted-foreground">Platform API URL <span className="font-normal opacity-60">(posting endpoint)</span></div>
+        <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="https://api.platform.com/..." className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
+      </div>
       <div>
         <div className="mb-1 text-[10px] text-muted-foreground">Video posting ratio</div>
         <select value={videoRatio} onChange={(e) => setVideoRatio(e.target.value)} className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">

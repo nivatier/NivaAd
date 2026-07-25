@@ -589,6 +589,150 @@ async def platform_monitoring(_: str = Depends(require_developer), db: AsyncSess
 
 
 
+
+# ── System logs ───────────────────────────────────────────────────────────────
+
+@router.get("/logs")
+async def query_logs(
+    service: str | None = None,
+    level: str | None = None,
+    date_from: str | None = None,   # YYYY-MM-DD
+    date_to: str | None = None,     # YYYY-MM-DD
+    search: str | None = None,      # substring search in message
+    page: int = 1,
+    page_size: int = 200,
+    _: str = Depends(require_developer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Query system_logs with filters. Returns paginated rows plus
+    available services and dates for the filter UI."""
+    from app.models import SystemLog
+    import re as _re
+
+    q = select(SystemLog).order_by(SystemLog.created_at.desc())
+
+    if service:
+        q = q.where(SystemLog.service == service)
+    if level:
+        q = q.where(SystemLog.level == level)
+    if date_from:
+        try:
+            dt_from = datetime.strptime(date_from, "%Y-%m-%d")
+            q = q.where(SystemLog.created_at >= dt_from)
+        except ValueError:
+            raise HTTPException(422, "date_from must be YYYY-MM-DD")
+    if date_to:
+        try:
+            dt_to = datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            q = q.where(SystemLog.created_at <= dt_to)
+        except ValueError:
+            raise HTTPException(422, "date_to must be YYYY-MM-DD")
+    if search:
+        q = q.where(SystemLog.message.ilike(f"%{search}%"))
+
+    # Total count for pagination
+    count_q = select(func.count()).select_from(q.subquery())
+    total = await db.scalar(count_q) or 0
+
+    # Page
+    offset = (page - 1) * page_size
+    rows = (await db.execute(q.offset(offset).limit(page_size))).scalars().all()
+
+    # Available services (for filter dropdown)
+    service_rows = (await db.execute(
+        select(SystemLog.service).distinct().order_by(SystemLog.service)
+    )).scalars().all()
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "rows": [
+            {
+                "id": r.id,
+                "service": r.service,
+                "level": r.level,
+                "logger_name": r.logger_name,
+                "message": r.message,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in rows
+        ],
+        "services": list(service_rows),
+    }
+
+
+@router.get("/logs/download")
+async def download_logs(
+    service: str | None = None,
+    level: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    search: str | None = None,
+    _: str = Depends(require_developer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download filtered logs as a plain .log file."""
+    from app.models import SystemLog
+    from fastapi.responses import StreamingResponse
+
+    q = select(SystemLog).order_by(SystemLog.created_at.asc())
+    if service:
+        q = q.where(SystemLog.service == service)
+    if level:
+        q = q.where(SystemLog.level == level)
+    if date_from:
+        try:
+            q = q.where(SystemLog.created_at >= datetime.strptime(date_from, "%Y-%m-%d"))
+        except ValueError:
+            raise HTTPException(422, "date_from must be YYYY-MM-DD")
+    if date_to:
+        try:
+            q = q.where(SystemLog.created_at <= datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59))
+        except ValueError:
+            raise HTTPException(422, "date_to must be YYYY-MM-DD")
+    if search:
+        q = q.where(SystemLog.message.ilike(f"%{search}%"))
+
+    rows = (await db.execute(q.limit(50_000))).scalars().all()
+
+    parts = [f"service={service or 'all'} level={level or 'all'} date={date_from or '?'} to {date_to or '?'}\n"]
+    parts += [
+        f"{r.created_at.strftime('%Y-%m-%d %H:%M:%S')} [{r.service}] [{r.level}] {r.logger_name} — {r.message}\n"
+        for r in rows
+    ]
+    content = "".join(parts)
+
+    svc_part = f"-{service}" if service else ""
+    date_part = f"-{date_from}" if date_from else ""
+    filename = f"nivaspark-logs{svc_part}{date_part}.log"
+
+    def _iter():
+        yield content.encode("utf-8")
+
+    return StreamingResponse(
+        _iter(),
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/logs/retention")
+async def get_log_retention(_: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
+    from app.services.retention import get_log_retention_days
+    return {"log_retention_days": await get_log_retention_days(db)}
+
+
+@router.put("/logs/retention")
+async def set_log_retention(body: dict, _: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
+    from app.services.retention import set_log_retention_days
+    days = int(body.get("log_retention_days", 30))
+    if days < 1 or days > 365:
+        raise HTTPException(422, "log_retention_days must be 1–365")
+    await set_log_retention_days(db, days)
+    return {"log_retention_days": days}
+
+
 @router.get("/openrouter-credits", response_model=OpenRouterCreditsOut)
 async def get_openrouter_credits(_: str = Depends(require_developer_permission("models"))):
     """Live balance on the actual OpenRouter account every company's
@@ -600,7 +744,7 @@ async def get_openrouter_credits(_: str = Depends(require_developer_permission("
         raise HTTPException(503, "OPENROUTER_API_KEY is not configured on this server.")
     try:
         resp = httpx.get(
-            "https://openrouter.ai/api/v1/credits",
+            f"{settings.OPENROUTER_BASE_URL}/credits",
             headers={"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"},
             timeout=15,
         )
@@ -646,7 +790,7 @@ async def browse_openrouter_catalog(kind: str, _: str = Depends(require_develope
     if not settings.OPENROUTER_API_KEY:
         raise HTTPException(503, "OPENROUTER_API_KEY is not configured on this server.")
 
-    url = "https://openrouter.ai/api/v1/videos/models" if kind == "video" else "https://openrouter.ai/api/v1/images/models"
+    url = f"{settings.OPENROUTER_BASE_URL}/videos/models" if kind == "video" else f"{settings.OPENROUTER_BASE_URL}/images/models"
     try:
         resp = httpx.get(url, headers={"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"}, timeout=20)
     except httpx.RequestError as exc:
@@ -1500,6 +1644,228 @@ async def get_markup(_: str = Depends(require_developer_permission("pricing")), 
 async def update_markup(data: MarkupMultiplierIn, _: str = Depends(require_developer_permission("pricing")), db: AsyncSession = Depends(get_db)):
     await pricing_svc.set_markup_multiplier(db, data.markup_multiplier)
     return MarkupMultiplierOut(markup_multiplier=data.markup_multiplier)
+
+
+# ── Launch control ────────────────────────────────────────────────────────────
+
+async def _get_launch_cfg_dev(db: AsyncSession) -> dict:
+    row = await db.get(ModelConfig, 1)
+    cfg = (row.config if row else {}) or {}
+    return cfg.get("launch", {})
+
+async def _save_launch_cfg_dev(db: AsyncSession, patch: dict) -> dict:
+    row = await db.get(ModelConfig, 1)
+    if not row:
+        row = ModelConfig(id=1, config={})
+        db.add(row)
+    cfg = dict(row.config or {})
+    cfg["launch"] = {**cfg.get("launch", {}), **patch}
+    row.config = cfg
+    flag_modified(row, "config")
+    await db.commit()
+    return cfg["launch"]
+
+@router.get("/launch-control")
+async def get_launch_control(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    cfg = await _get_launch_cfg_dev(db)
+    return {"registration_open": cfg.get("registration_open", settings.REGISTRATION_OPEN)}
+
+@router.put("/launch-control")
+async def put_launch_control(body: dict, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    if "registration_open" not in body:
+        raise HTTPException(422, "registration_open required")
+    saved = await _save_launch_cfg_dev(db, {"registration_open": bool(body["registration_open"])})
+    return {"registration_open": saved.get("registration_open", settings.REGISTRATION_OPEN)}
+
+
+# ── Developer-created users ───────────────────────────────────────────────────
+# Bypasses registration — developer creates a company + admin user directly.
+
+@router.post("/create-user", status_code=201)
+async def developer_create_user(body: dict, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Create a company + admin user directly without going through registration.
+    Use this to add test/beta users when registration is disabled."""
+    from app.models import BrandKit, Subscription, CreditLedger, AuditLog
+    from app.security import hash_password
+
+    company_name = str(body.get("company_name", "")).strip()
+    email        = str(body.get("email", "")).strip().lower()
+    password     = str(body.get("password", "")).strip()
+    full_name    = str(body.get("full_name", "")).strip()
+    tier         = str(body.get("tier", "free")).strip()
+
+    if not company_name: raise HTTPException(422, "company_name required")
+    if not email or "@" not in email: raise HTTPException(422, "Valid email required")
+    if len(password) < 8: raise HTTPException(422, "Password must be at least 8 characters")
+
+    existing = await db.scalar(select(User).where(User.email == email))
+    if existing: raise HTTPException(409, f"{email} already has an account")
+
+    TIER_CREDITS = {"free": 3, "starter": 10, "growth": 30, "pro": 120}
+    credits = TIER_CREDITS.get(tier, 3)
+
+    company = Company(name=company_name)
+    db.add(company)
+    await db.flush()
+
+    user = User(
+        company_id=company.id,
+        email=email,
+        password_hash=hash_password(password),
+        full_name=full_name or email.split("@")[0],
+        role="admin",
+        status="active",
+    )
+    db.add(user)
+    db.add(Subscription(company_id=company.id, tier=tier, monthly_credits=credits))
+    db.add(CreditLedger(company_id=company.id, delta=credits, reason="plan_grant"))
+    db.add(BrandKit(company_id=company.id))
+    db.add(AuditLog(company_id=company.id, action="company.registered",
+                    detail={"email": email, "created_by": "developer"}))
+    await db.commit()
+
+    return {
+        "company_id": str(company.id),
+        "user_id":    str(user.id),
+        "email":      email,
+        "company":    company_name,
+        "tier":       tier,
+        "credits":    credits,
+    }
+
+@router.get("/created-users")
+async def list_developer_created_users(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """List companies created via developer panel (audit log action = company.registered with created_by=developer)."""
+    rows = (await db.execute(
+        select(AuditLog).where(
+            AuditLog.action == "company.registered",
+            AuditLog.detail["created_by"].as_string() == "developer"
+        ).order_by(AuditLog.created_at.desc()).limit(50)
+    )).scalars().all()
+    result = []
+    for row in rows:
+        company = await db.get(Company, row.company_id)
+        if company:
+            result.append({
+                "company_id":   str(row.company_id),
+                "company_name": company.name,
+                "email":        row.detail.get("email", ""),
+                "created_at":   row.created_at.isoformat(),
+            })
+    return result
+
+
+
+# Stored in the legacy ModelConfig singleton row (id=1) under a "platform"
+# key — no new table or migration needed.
+
+async def _get_platform_cfg(db: AsyncSession) -> dict:
+    row = await db.get(ModelConfig, 1)
+    cfg = (row.config if row else {}) or {}
+    return cfg.get("platform", {})
+
+async def _save_platform_cfg(db: AsyncSession, patch: dict) -> dict:
+    row = await db.get(ModelConfig, 1)
+    if not row:
+        row = ModelConfig(id=1, config={})
+        db.add(row)
+    cfg = dict(row.config or {})
+    cfg["platform"] = {**cfg.get("platform", {}), **patch}
+    row.config = cfg
+    flag_modified(row, "config")
+    await db.commit()
+    return cfg["platform"]
+
+@router.get("/platform-config")
+async def get_platform_config(_: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
+    """Runtime-editable business values — credit price, carousel cap, Stripe prices, and API base URLs.
+    Falls back to .env defaults when no override has been saved yet."""
+    saved = await _get_platform_cfg(db)
+    return {
+        "credit_value_usd":     saved.get("credit_value_usd",     settings.CREDIT_VALUE_USD),
+        "carousel_max_images":  saved.get("carousel_max_images",  settings.CAROUSEL_MAX_IMAGES),
+        "stripe_price_ids":     saved.get("stripe_price_ids",     settings.STRIPE_PRICE_IDS),
+        "stripe_price_topup":   saved.get("stripe_price_topup",   settings.STRIPE_PRICE_TOPUP),
+        "openrouter_base_url":  saved.get("openrouter_base_url",  settings.OPENROUTER_BASE_URL),
+    }
+
+@router.put("/platform-config")
+async def put_platform_config(
+    body: dict,
+    _: str = Depends(require_developer_permission("settings")),
+    db: AsyncSession = Depends(get_db),
+):
+    import json as _json
+    patch: dict = {}
+
+    if "credit_value_usd" in body:
+        v = float(body["credit_value_usd"])
+        if v <= 0:
+            raise HTTPException(422, "credit_value_usd must be positive")
+        patch["credit_value_usd"] = round(v, 4)
+
+    if "carousel_max_images" in body:
+        v = int(body["carousel_max_images"])
+        if v < 2 or v > 20:
+            raise HTTPException(422, "carousel_max_images must be between 2 and 20")
+        patch["carousel_max_images"] = v
+
+    if "stripe_price_ids" in body:
+        val = body["stripe_price_ids"]
+        # Accept either a JSON string or a dict
+        if isinstance(val, str):
+            try:
+                val = _json.loads(val)
+            except Exception:
+                raise HTTPException(422, "stripe_price_ids must be valid JSON")
+        if not isinstance(val, dict):
+            raise HTTPException(422, "stripe_price_ids must be a JSON object")
+        patch["stripe_price_ids"] = _json.dumps(val)   # store as JSON string, matching .env format
+
+    if "stripe_price_topup" in body:
+        val = str(body["stripe_price_topup"]).strip()
+        if val and not val.startswith("price_"):
+            raise HTTPException(422, "stripe_price_topup must be a Stripe price ID (starts with price_)")
+        patch["stripe_price_topup"] = val
+
+    if "openrouter_base_url" in body:
+        val = str(body["openrouter_base_url"]).rstrip("/").strip()
+        if val and not val.startswith("http"):
+            raise HTTPException(422, "openrouter_base_url must start with http")
+        patch["openrouter_base_url"] = val or settings.OPENROUTER_BASE_URL
+
+    if not patch:
+        raise HTTPException(422, "No valid fields to update")
+
+    saved = await _save_platform_cfg(db, patch)
+
+    # Invalidate billing price map cache immediately
+    from app.services import billing as billing_svc
+    billing_svc.invalidate_price_cache()
+
+    # Apply URL changes to running service module-level constants immediately
+    # so the new URLs take effect without restarting the API process
+    import importlib
+    if "openrouter_base_url" in patch:
+        base = patch["openrouter_base_url"]
+        for mod_path, attr, suffix in [
+            ("app.services.images",   "OPENROUTER_IMAGES_URL", "/images"),
+            ("app.services.videos",   "OPENROUTER_VIDEOS_URL", "/videos"),
+            ("app.routers.videos",    "OPENROUTER_VIDEOS_URL", "/videos"),
+            ("app.services.text_gen", "CHAT_URL",              "/chat/completions"),
+        ]:
+            try:
+                mod = importlib.import_module(mod_path)
+                setattr(mod, attr, f"{base}{suffix}")
+            except Exception:
+                pass
+    return {
+        "credit_value_usd":     saved.get("credit_value_usd",     settings.CREDIT_VALUE_USD),
+        "carousel_max_images":  saved.get("carousel_max_images",  settings.CAROUSEL_MAX_IMAGES),
+        "stripe_price_ids":     saved.get("stripe_price_ids",     settings.STRIPE_PRICE_IDS),
+        "stripe_price_topup":   saved.get("stripe_price_topup",   settings.STRIPE_PRICE_TOPUP),
+        "openrouter_base_url":  saved.get("openrouter_base_url",  settings.OPENROUTER_BASE_URL),
+    }
 
 
 @router.get("/team-limits", response_model=MaxExtraUsersOut)

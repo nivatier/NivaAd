@@ -126,3 +126,46 @@ async def set_post_retention_months(db, months: int) -> None:
     row.config = config
     flag_modified(row, "config")
     await db.commit()
+
+
+# ── System log retention ──────────────────────────────────────────────────────
+# Separate from media/post retention — logs are cheap (plain text rows)
+# and rotate much faster. 30 days default keeps a full month of history
+# without the table growing unboundedly.
+
+DEFAULT_LOG_RETENTION_DAYS = 30
+
+
+async def get_log_retention_days(db) -> int:
+    row = await db.get(ModelConfig, 1)
+    stored = row.config if row and row.config else {}
+    value = (stored.get("retention") or {}).get("log_days")
+    try:
+        return int(value) if value else DEFAULT_LOG_RETENTION_DAYS
+    except (TypeError, ValueError):
+        return DEFAULT_LOG_RETENTION_DAYS
+
+
+def get_log_retention_days_sync(db) -> int:
+    row = db.get(ModelConfig, 1)
+    stored = row.config if row and row.config else {}
+    value = (stored.get("retention") or {}).get("log_days")
+    try:
+        return int(value) if value else DEFAULT_LOG_RETENTION_DAYS
+    except (TypeError, ValueError):
+        return DEFAULT_LOG_RETENTION_DAYS
+
+
+async def set_log_retention_days(db, days: int) -> None:
+    row = await db.get(ModelConfig, 1)
+    if row is None:
+        row = ModelConfig(id=1, config={})
+        db.add(row)
+        await db.flush()
+    config = dict(row.config or {})
+    retention_cfg = dict(config.get("retention") or {})
+    retention_cfg["log_days"] = days
+    config["retention"] = retention_cfg
+    row.config = config
+    flag_modified(row, "config")
+    await db.commit()

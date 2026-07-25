@@ -375,14 +375,20 @@ function ActiveUsersTab({ d }: { d: MonitoringData }) {
 
 // ── Tab 5: Credits & Revenue ──────────────────────────────────────────────────
 function CreditsTab({ d }: { d: MonitoringData }) {
-  const CREDIT_VALUE_USD = 0.45;
+  const [creditValueUsd, setCreditValueUsd] = useState(0.45);
+  useEffect(() => {
+    devApi("/developer/platform-config")
+      .then((r) => { if (r.credit_value_usd) setCreditValueUsd(Number(r.credit_value_usd)); })
+      .catch(() => {});
+  }, []);
+  const cv = creditValueUsd;
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard label="Credits consumed (24 h)" value={d.credits_consumed_24h} sub={`≈ $${(d.credits_consumed_24h * CREDIT_VALUE_USD).toFixed(2)}`} accent />
-        <StatCard label="Credits consumed (7 d)" value={d.credits_consumed_7d} sub={`≈ $${(d.credits_consumed_7d * CREDIT_VALUE_USD).toFixed(2)}`} accent />
+        <StatCard label="Credits consumed (24 h)" value={d.credits_consumed_24h} sub={`≈ $${(d.credits_consumed_24h * cv).toFixed(2)}`} accent />
+        <StatCard label="Credits consumed (7 d)" value={d.credits_consumed_7d} sub={`≈ $${(d.credits_consumed_7d * cv).toFixed(2)}`} accent />
         <StatCard label="Avg per day (7 d)" value={Math.round(d.credits_consumed_7d / 7)} sub="credits/day" />
-        <StatCard label="Projected monthly" value={Math.round((d.credits_consumed_7d / 7) * 30)} sub={`≈ $${((d.credits_consumed_7d / 7) * 30 * CREDIT_VALUE_USD).toFixed(0)}/mo`} />
+        <StatCard label="Projected monthly" value={Math.round((d.credits_consumed_7d / 7) * 30)} sub={`≈ $${((d.credits_consumed_7d / 7) * 30 * cv).toFixed(0)}/mo`} />
       </div>
 
       <div className="rounded-xl border border-border bg-card/60 p-4">

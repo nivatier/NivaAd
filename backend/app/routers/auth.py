@@ -3,10 +3,12 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
+from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import AuditLog, BrandKit, Company, CreditLedger, Subscription, User
+from app.models import AuditLog, BrandKit, Company, CreditLedger, ModelConfig, Subscription, User
 from app.schemas import (
     AcceptInviteIn, ChangePasswordIn, InviteCheckOut, LoginIn, MeOut, RefreshIn, RegisterIn,
     TokenOut, UpdateProfileIn, UserOut,
@@ -21,10 +23,42 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 FREE_PLAN_CREDITS = 3
 
 
+# ── Launch config helpers (stored in ModelConfig singleton, "launch" key) ────
+async def _get_launch_cfg(db: AsyncSession) -> dict:
+    row = await db.get(ModelConfig, 1)
+    cfg = (row.config if row else {}) or {}
+    return cfg.get("launch", {})
+
+async def _save_launch_cfg(db: AsyncSession, patch: dict) -> dict:
+    row = await db.get(ModelConfig, 1)
+    if not row:
+        row = ModelConfig(id=1, config={})
+        db.add(row)
+    cfg = dict(row.config or {})
+    cfg["launch"] = {**cfg.get("launch", {}), **patch}
+    row.config = cfg
+    flag_modified(row, "config")
+    await db.commit()
+    return cfg["launch"]
+
+
+@router.get("/registration-status")
+async def registration_status(db: AsyncSession = Depends(get_db)):
+    """Public endpoint — frontend checks this to show or hide the registration form."""
+    cfg = await _get_launch_cfg(db)
+    return {"open": cfg.get("registration_open", settings.REGISTRATION_OPEN)}
+
+
 @router.post("/register", response_model=TokenOut, status_code=201)
 async def register(data: RegisterIn, db: AsyncSession = Depends(get_db)):
     if not data.accept_aup:
         raise HTTPException(400, "You must accept the Terms of Service and Acceptable Use Policy")
+
+    # ── Registration gate ────────────────────────────────────────────
+    cfg = await _get_launch_cfg(db)
+    reg_open: bool = cfg.get("registration_open", settings.REGISTRATION_OPEN)
+    if not reg_open:
+        raise HTTPException(403, "Registration is currently disabled. Contact the platform team for access.")
 
     existing = await db.scalar(select(User).where(User.email == data.email.lower()))
     if existing:

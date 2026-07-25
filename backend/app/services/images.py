@@ -13,7 +13,7 @@ import httpx
 
 from app.config import settings
 
-OPENROUTER_IMAGES_URL = "https://openrouter.ai/api/v1/images"
+OPENROUTER_IMAGES_URL = f"{settings.OPENROUTER_BASE_URL}/images"
 
 
 def _post_with_retry(url: str, **kwargs) -> httpx.Response:

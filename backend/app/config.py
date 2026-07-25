@@ -16,12 +16,19 @@ class Settings(BaseSettings):
     S3_SECRET_KEY: str = "nivaad_dev_secret"
     SMTP_HOST: str = "localhost"
     SMTP_PORT: int = 1025
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "NivaSpark <noreply@nivatier.com>"
+    BACKEND_URL: str = "http://localhost:8000"
+    ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
     # ANTHROPIC_API_KEY / COPY_MODEL removed 2026-07-15 — every text
     # generation call (ad copy, campaign captions, the moderation
     # classifier) now routes through OpenRouter, same as image/video.
     # No more direct Anthropic access anywhere in this app.
     OPENROUTER_API_KEY: str = ""
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     IMAGE_MODEL: str = "google/gemini-2.5-flash-image"
+    REGISTRATION_OPEN: bool = False   # when False only pre-approved emails can register
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
     STRIPE_PRICE_IDS: str = "{}"   # JSON: {"starter":{"1":"price_..","3":"price_..."}, "growth":{...}, "pro":{...}}

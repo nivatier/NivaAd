@@ -438,3 +438,64 @@ async def quick_start_from_saved_site(
     from app.worker import celery_app as _celery
     _celery.send_task("app.generate_quick_start_recommendations", args=[str(job_id)])
     return AgentScrapeJobOut.model_validate(job)
+
+
+@router.post("/quick-spark")
+async def quick_spark(
+    body: dict,
+    user: User = Depends(get_current_user),
+):
+    """Generate ad draft concepts from a user's idea via OpenRouter.
+    Replaced the original browser→Anthropic direct call so all LLM
+    traffic goes through OpenRouter (same key, same billing)."""
+    import json
+    import httpx
+    from app.config import settings
+    from app.services.text_gen import CHAT_URL
+
+    idea  = str(body.get("idea", "")).strip()
+    count = min(int(body.get("count", 4)), 6)
+    if not idea:
+        raise HTTPException(422, "idea is required")
+
+    system_prompt = f"""You are an expert marketing strategist. Given a user's ad idea, generate {count} distinct, creative ad draft concepts. Each should have a different angle, tone, or target audience slice.
+
+Return ONLY a JSON array — no markdown, no prose, no backticks:
+[
+  {{
+    "id": "1",
+    "title": "Short punchy ad concept title (max 8 words)",
+    "description": "What this ad communicates and why it works (2-3 sentences)",
+    "audience": "Who this speaks to (1 sentence)",
+    "suggested_tone": "Professional | Fun | Luxury | Minimal | Bold | Emotional",
+    "goal": "Drive sales | Product launch | Brand awareness | Get signups"
+  }}
+]
+Make each concept meaningfully different. Be specific and actionable."""
+
+    resp = httpx.post(
+        CHAT_URL,
+        headers={
+            "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": "anthropic/claude-sonnet-4-5",
+            "max_tokens": 1200,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": f"My ad idea: {idea}"},
+            ],
+        },
+        timeout=60,
+    )
+    if resp.status_code >= 400:
+        raise HTTPException(502, f"OpenRouter error: {resp.text[:300]}")
+
+    raw = (resp.json().get("choices") or [{}])[0].get("message", {}).get("content", "[]")
+    try:
+        drafts = json.loads(raw.replace("```json", "").replace("```", "").strip())
+    except Exception:
+        raise HTTPException(500, "Could not parse AI response — try again")
+
+    return {"drafts": drafts}

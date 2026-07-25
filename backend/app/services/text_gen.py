@@ -16,7 +16,7 @@ import httpx
 
 from app.config import settings
 
-CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+CHAT_URL = f"{settings.OPENROUTER_BASE_URL}/chat/completions"
 
 
 def generate_text(prompt: str, model: str) -> dict:

@@ -26,9 +26,28 @@ import httpx
 AUTHORIZE_URL = "https://www.linkedin.com/oauth/v2/authorization"
 TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 USERINFO_URL = "https://api.linkedin.com/v2/userinfo"  # OpenID Connect — gives us the person's own URN
-POSTS_URL = "https://api.linkedin.com/rest/posts"
+POSTS_URL = "https://api.linkedin.com/rest/posts"  # default; overridden at call time from platform config api_url if set
 LINKEDIN_API_VERSION = "202506"  # YYYYMM per LinkedIn's Linkedin-Version header requirement — bump periodically
 DEFAULT_SCOPE = "openid profile w_member_social"
+
+
+def _get_posts_url(db=None) -> str:
+    """Return the configured LinkedIn posts URL. Reads api_url from the
+    platform config entry for linkedin_personal if db is provided,
+    otherwise falls back to the hardcoded default."""
+    if db is None:
+        return POSTS_URL
+    try:
+        from app.services.platform_config import get_platform_integrations_sync
+        platforms = get_platform_integrations_sync(db)
+        for p in platforms:
+            if p.get("id") in ("linkedin_personal", "linkedin_company", "linkedin"):
+                url = p.get("api_url")
+                if url:
+                    return url
+    except Exception:
+        pass
+    return POSTS_URL
 
 
 def get_authorize_url(client_id: str, redirect_uri: str, scope: str, state: str) -> str:
@@ -93,7 +112,7 @@ def post_to_linkedin(access_token: str, author_urn: str, text: str) -> str:
         "lifecycleState": "PUBLISHED",
         "isReshareDisabledByAuthor": False,
     }
-    resp = httpx.post(POSTS_URL, headers=headers, json=body, timeout=30)
+    resp = httpx.post(_get_posts_url(), headers=headers, json=body, timeout=30)
     if resp.status_code >= 400:
         raise RuntimeError(f"LinkedIn post {resp.status_code}: {resp.text[:500]}")
     # LinkedIn returns the new post's URN in the x-restli-id response header, not the body.

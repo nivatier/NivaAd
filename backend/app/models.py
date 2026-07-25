@@ -433,3 +433,18 @@ class ScrapedSite(Base):
     label: Mapped[str] = mapped_column(String(200), default="")  # user-editable friendly name; falls back to url in UI when blank
     content: Mapped[str] = mapped_column(Text)  # raw scraped text, capped at MAX_CHARS (same limit as live scrape)
     scraped_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SystemLog(Base):
+    """One row per log entry from the API, worker, or beat process.
+    Written by DbLogHandler (services/log_handler.py) attached to the
+    root Python logger in main.py and worker.py.
+    Retention controlled by log_retention_days in ModelConfig (default 30).
+    Cleaned up daily by tasks.cleanup_expired_logs."""
+    __tablename__ = "system_logs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    service: Mapped[str] = mapped_column(String(30), index=True)   # "api" | "worker" | "beat"
+    level: Mapped[str] = mapped_column(String(10))                  # "INFO" | "WARNING" | "ERROR" | "CRITICAL"
+    logger_name: Mapped[str] = mapped_column(String(120))           # logger name e.g. "nivaad.tasks"
+    message: Mapped[str] = mapped_column(Text)                      # formatted log message
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

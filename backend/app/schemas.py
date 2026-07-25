@@ -685,6 +685,7 @@ class PlatformIntegrationOut(BaseModel):
     enabled: bool = True
     built: bool = False  # whether real integration code exists for this platform yet (currently only linkedin) — informational, so the developer isn't surprised nothing happens when they enable an unbuilt one
     video_ratio: str = "1:1"  # the aspect ratio the reframe pipeline treats as this platform's required format — set here, alongside everything else about the platform, so adding a platform and setting its ratio happen in one place
+    api_url: str | None = None  # platform's posting/API base URL — e.g. https://api.linkedin.com/rest/posts; stored here and used by the posting service when this platform's integration code is built
 
 
 class AddPlatformIntegrationIn(BaseModel):
@@ -695,6 +696,7 @@ class AddPlatformIntegrationIn(BaseModel):
     scope: str | None = None
     redirect_uri: str | None = None
     video_ratio: str = "1:1"  # validated against the developer's current ratio list at the endpoint, not a fixed pattern here — see services/video_ratios.py
+    api_url: str | None = None
 
 
 class UpdatePlatformIntegrationIn(BaseModel):
@@ -705,6 +707,7 @@ class UpdatePlatformIntegrationIn(BaseModel):
     redirect_uri: str | None = None
     enabled: bool | None = None
     video_ratio: str | None = None  # validated against the developer's current ratio list at the endpoint
+    api_url: str | None = None  # update to set or change this platform's posting API URL
 
 
 class CompanyPlatformOut(BaseModel):

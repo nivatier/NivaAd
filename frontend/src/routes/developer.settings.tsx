@@ -353,22 +353,582 @@ function ThemeAiSettingsCard() {
   );
 }
 
+function LaunchControlCard() {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [open, setOpen] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [users, setUsers] = useState<{ company_id: string; company_name: string; email: string; created_at: string }[]>([]);
+  const [companyName, setCompanyName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [tier, setTier] = useState("free");
+  const [creating, setCreating] = useState(false);
+  const [createErr, setCreateErr] = useState("");
+  const [createOk, setCreateOk] = useState("");
+  const [err, setErr] = useState("");
+
+  function loadUsers() {
+    devApi("/developer/created-users")
+      .then((r: any[]) => setUsers(r))
+      .catch(() => {});
+  }
+
+  useEffect(() => {
+    devApi("/developer/launch-control")
+      .then((r) => setOpen(r.registration_open))
+      .catch((e: any) => { if (!handleAuthError(e)) setErr(e.message || "Could not load"); });
+    loadUsers();
+  }, []);
+
+  async function toggleOpen() {
+    if (open === null) return;
+    setSaving(true); setErr("");
+    try {
+      const r = await devApi("/developer/launch-control", { method: "PUT", body: { registration_open: !open } });
+      setOpen(r.registration_open);
+    } catch (e: any) { if (!handleAuthError(e)) setErr(e.message || "Could not save"); }
+    setSaving(false);
+  }
+
+  async function createUser() {
+    if (!companyName.trim()) { setCreateErr("Company name required"); return; }
+    if (!email.trim() || !email.includes("@")) { setCreateErr("Valid email required"); return; }
+    if (password.length < 8) { setCreateErr("Password must be at least 8 characters"); return; }
+    setCreating(true); setCreateErr(""); setCreateOk("");
+    try {
+      const r = await devApi("/developer/create-user", {
+        method: "POST",
+        body: { company_name: companyName.trim(), email: email.trim(), password, full_name: fullName.trim(), tier },
+      });
+      setCreateOk(`✓ Created ${r.email} (${r.company}) — ${r.credits} credits on ${r.tier} plan`);
+      setCompanyName(""); setEmail(""); setPassword(""); setFullName(""); setTier("free");
+      loadUsers();
+    } catch (e: any) { if (!handleAuthError(e)) setCreateErr(e.message || "Could not create user"); }
+    setCreating(false);
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card/60 p-5 sm:col-span-2">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-foreground">🚀 Registration</div>
+            {open === true  && <span className="rounded-full bg-emerald-500/15 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-bold text-emerald-400">OPEN</span>}
+            {open === false && <span className="rounded-full bg-destructive/15 border border-destructive/40 px-2 py-0.5 text-[10px] font-bold text-destructive">DISABLED</span>}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {open ? "Anyone can register a new account." : "Registration is disabled — no one can sign up via the public form. Use the form below to add users directly."}
+          </p>
+        </div>
+        <button onClick={toggleOpen} disabled={saving || open === null}
+          className={`relative shrink-0 h-7 w-12 rounded-full border-2 transition-colors focus:outline-none disabled:opacity-50 ${open ? "border-emerald-500 bg-emerald-500" : "border-border bg-muted/40"}`}>
+          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background shadow transition-transform ${open ? "translate-x-5" : "translate-x-0.5"}`} />
+        </button>
+      </div>
+      {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
+
+      <div className="mt-5 border-t border-border/50 pt-4">
+        <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-3">Add user directly</div>
+        <p className="text-[11px] text-muted-foreground mb-3">Creates a company and admin user in the database. Works whether registration is open or closed.</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Company name *</label>
+            <input value={companyName} onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="Acme Corp"
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Full name</label>
+            <input value={fullName} onChange={(e) => setFullName(e.target.value)}
+              placeholder="Jane Smith"
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Email *</label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              placeholder="jane@acme.com"
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Password * (min 8 chars)</label>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Plan tier</label>
+            <select value={tier} onChange={(e) => setTier(e.target.value)}
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+              <option value="free">Free (3 credits)</option>
+              <option value="starter">Starter (10 credits)</option>
+              <option value="growth">Growth (30 credits)</option>
+              <option value="pro">Pro (120 credits)</option>
+            </select>
+          </div>
+        </div>
+        <div className="mt-3 flex items-center gap-3">
+          <button onClick={createUser} disabled={creating}
+            className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+            {creating ? "Creating…" : "Create user"}
+          </button>
+          {createOk && <span className="text-xs text-emerald-400">{createOk}</span>}
+        </div>
+        {createErr && <div className="mt-1 text-xs text-destructive">{createErr}</div>}
+      </div>
+
+      {users.length > 0 && (
+        <div className="mt-5 border-t border-border/50 pt-4">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-3">Users added via developer panel</div>
+          <div className="space-y-1.5">
+            {users.map((u) => (
+              <div key={u.company_id} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/40 px-3 py-2">
+                <div>
+                  <span className="text-xs font-medium text-foreground">{u.email}</span>
+                  <span className="ml-2 text-[10px] text-muted-foreground">{u.company_name}</span>
+                </div>
+                <span className="text-[10px] text-muted-foreground shrink-0">{new Date(u.created_at).toLocaleDateString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlatformConfigCard() {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [creditValue, setCreditValue] = useState("");
+  const [carouselMax, setCarouselMax] = useState("");
+  const [priceIds, setPriceIds] = useState("");
+  const [priceTopup, setPriceTopup] = useState("");
+  const [openrouterUrl, setOpenrouterUrl] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    devApi("/developer/platform-config")
+      .then((r) => {
+        setCreditValue(String(r.credit_value_usd));
+        setCarouselMax(String(r.carousel_max_images));
+        try {
+          const parsed = typeof r.stripe_price_ids === "string" ? JSON.parse(r.stripe_price_ids) : r.stripe_price_ids;
+          setPriceIds(JSON.stringify(parsed, null, 2));
+        } catch { setPriceIds(r.stripe_price_ids ?? "{}"); }
+        setPriceTopup(r.stripe_price_topup ?? "");
+        setOpenrouterUrl(r.openrouter_base_url ?? "");
+      })
+      .catch((e: any) => { if (!handleAuthError(e)) setErr(e.message || "Could not load config"); });
+  }, []);
+
+  async function save() {
+    const credit = parseFloat(creditValue);
+    const carousel = parseInt(carouselMax);
+    if (isNaN(credit) || credit <= 0) { setErr("Credit value must be a positive number"); return; }
+    if (isNaN(carousel) || carousel < 2 || carousel > 20) { setErr("Carousel max must be 2–20"); return; }
+    try { JSON.parse(priceIds); } catch { setErr("Stripe Price IDs is not valid JSON"); return; }
+    if (priceTopup && !priceTopup.startsWith("price_")) { setErr("Stripe Topup Price ID must start with price_"); return; }
+
+    setSaving(true); setErr(""); setSaved(false);
+    try {
+      const r = await devApi("/developer/platform-config", {
+        method: "PUT",
+        body: {
+          credit_value_usd: credit,
+          carousel_max_images: carousel,
+          stripe_price_ids: priceIds,
+          stripe_price_topup: priceTopup,
+          openrouter_base_url: openrouterUrl,
+         
+         
+        },
+      });
+      setCreditValue(String(r.credit_value_usd));
+      setCarouselMax(String(r.carousel_max_images));
+      try {
+        const parsed = typeof r.stripe_price_ids === "string" ? JSON.parse(r.stripe_price_ids) : r.stripe_price_ids;
+        setPriceIds(JSON.stringify(parsed, null, 2));
+      } catch { setPriceIds(r.stripe_price_ids ?? "{}"); }
+      setPriceTopup(r.stripe_price_topup ?? "");
+      setOpenrouterUrl(r.openrouter_base_url ?? "");
+      setAnthropicUrl(r.anthropic_base_url ?? "");
+      setLinkedinUrl(r.linkedin_api_url ?? "");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not save");
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card/60 p-5 sm:col-span-2">
+      <div className="text-sm font-semibold text-foreground">Platform config</div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Business values and API endpoints editable without a redeploy. Overrides your <code className="rounded bg-muted px-1 py-0.5 text-[10px]">.env</code> defaults at runtime — changes take effect immediately.
+      </p>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        {/* Credit value */}
+        <div>
+          <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Credit value (USD per credit)</label>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">$</span>
+            <input type="number" min="0.01" step="0.01" value={creditValue} onChange={(e) => setCreditValue(e.target.value)}
+              className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
+          </div>
+          <p className="mt-1 text-[10px] text-muted-foreground">Must match your Stripe top-up price per unit</p>
+        </div>
+
+        {/* Carousel max */}
+        <div>
+          <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Carousel max images</label>
+          <div className="flex items-center gap-2">
+            <input type="number" min="2" max="20" step="1" value={carouselMax} onChange={(e) => setCarouselMax(e.target.value)}
+              className="w-20 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
+            <span className="text-xs text-muted-foreground">images (2–20)</span>
+          </div>
+        </div>
+
+        {/* Stripe topup price */}
+        <div>
+          <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Stripe top-up price ID</label>
+          <input value={priceTopup} onChange={(e) => setPriceTopup(e.target.value)} placeholder="price_xxx"
+            className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
+          <p className="mt-1 text-[10px] text-muted-foreground">Per-credit Stripe price for credit top-ups</p>
+        </div>
+      </div>
+
+      {/* Stripe price IDs */}
+      <div className="mt-4">
+        <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+          Stripe subscription price IDs
+          <span className="ml-2 font-normal opacity-70">JSON object mapping tier → term_months → price_id</span>
+        </label>
+        <textarea rows={5} value={priceIds} onChange={(e) => setPriceIds(e.target.value)} spellCheck={false}
+          className="w-full rounded-lg border border-border bg-input/40 px-3 py-2 text-xs font-mono text-foreground focus:border-ring focus:outline-none resize-y"
+          placeholder={'{\n  "starter": { "1": "price_xxx", "3": "price_yyy" },\n  "growth":  { "1": "price_xxx" },\n  "pro":     { "1": "price_xxx" }\n}'} />
+      </div>
+
+      {/* API base URLs */}
+      <div className="mt-4 border-t border-border/50 pt-4">
+        <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-3">API base URLs</div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">OpenRouter base URL</label>
+            <input value={openrouterUrl} onChange={(e) => setOpenrouterUrl(e.target.value)}
+              placeholder="https://openrouter.ai/api/v1"
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
+            <p className="mt-1 text-[10px] text-muted-foreground">Used for all text, image and video generation</p>
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Anthropic base URL</label>
+            <input value={anthropicUrl} onChange={(e) => setAnthropicUrl(e.target.value)}
+              placeholder="https://api.anthropic.com/v1"
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
+            <p className="mt-1 text-[10px] text-muted-foreground">Used for Quick Spark draft generation (frontend)</p>
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">LinkedIn API URL</label>
+            <input value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)}
+              placeholder="https://api.linkedin.com/rest/posts"
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
+            <p className="mt-1 text-[10px] text-muted-foreground">LinkedIn post endpoint — update if API version changes</p>
+          </div>
+        </div>
+        <p className="mt-2 text-[10px] text-amber-400/80">⚠ URL changes take effect immediately in the API process. Workers need a restart to pick up URL changes.</p>
+      </div>
+
+      <div className="mt-4 flex items-center gap-3">
+        <button disabled={saving} onClick={save}
+          className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+          {saving ? "Saving…" : "Save all"}
+        </button>
+        {saved && <span className="text-xs text-emerald-400">✓ Saved — API updated immediately</span>}
+      </div>
+      {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
+    </div>
+  );
+}
+
+// ── Billing settings (split from PlatformConfigCard) ─────────────────────────
+function BillingSettingsTab() {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [creditValue, setCreditValue] = useState("");
+  const [carouselMax, setCarouselMax] = useState("");
+  const [priceIds, setPriceIds] = useState("");
+  const [priceTopup, setPriceTopup] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    devApi("/developer/platform-config")
+      .then((r) => {
+        setCreditValue(String(r.credit_value_usd));
+        setCarouselMax(String(r.carousel_max_images));
+        try {
+          const parsed = typeof r.stripe_price_ids === "string" ? JSON.parse(r.stripe_price_ids) : r.stripe_price_ids;
+          setPriceIds(JSON.stringify(parsed, null, 2));
+        } catch { setPriceIds(r.stripe_price_ids ?? "{}"); }
+        setPriceTopup(r.stripe_price_topup ?? "");
+      })
+      .catch((e: any) => { if (!handleAuthError(e)) setErr(e.message || "Could not load"); });
+  }, []);
+
+  async function save() {
+    const credit = parseFloat(creditValue);
+    const carousel = parseInt(carouselMax);
+    if (isNaN(credit) || credit <= 0) { setErr("Credit value must be a positive number"); return; }
+    if (isNaN(carousel) || carousel < 2 || carousel > 20) { setErr("Carousel max must be 2–20"); return; }
+    try { JSON.parse(priceIds); } catch { setErr("Stripe Price IDs is not valid JSON"); return; }
+    if (priceTopup && !priceTopup.startsWith("price_")) { setErr("Topup price ID must start with price_"); return; }
+    setSaving(true); setErr(""); setSaved(false);
+    try {
+      await devApi("/developer/platform-config", {
+        method: "PUT",
+        body: { credit_value_usd: credit, carousel_max_images: carousel, stripe_price_ids: priceIds, stripe_price_topup: priceTopup },
+      });
+      setSaved(true); setTimeout(() => setSaved(false), 3000);
+    } catch (e: any) { if (!handleAuthError(e)) setErr(e.message || "Could not save"); }
+    setSaving(false);
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-xl border border-border bg-card/60 p-5">
+        <div className="text-sm font-semibold text-foreground mb-4">Credits</div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Credit value (USD per credit)</label>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">$</span>
+              <input type="number" min="0.01" step="0.01" value={creditValue} onChange={(e) => setCreditValue(e.target.value)}
+                className="w-28 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">Must match your Stripe per-credit price</p>
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Carousel max images</label>
+            <div className="flex items-center gap-2">
+              <input type="number" min="2" max="20" step="1" value={carouselMax} onChange={(e) => setCarouselMax(e.target.value)}
+                className="w-20 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
+              <span className="text-xs text-muted-foreground">images (2–20)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card/60 p-5">
+        <div className="text-sm font-semibold text-foreground mb-1">Stripe</div>
+        <p className="text-xs text-muted-foreground mb-4">Changes take effect immediately — no restart needed.</p>
+        <div className="space-y-4">
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Top-up price ID</label>
+            <input value={priceTopup} onChange={(e) => setPriceTopup(e.target.value)} placeholder="price_xxx"
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
+            <p className="mt-1 text-[10px] text-muted-foreground">Per-credit Stripe price used for top-up purchases</p>
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+              Subscription price IDs
+              <span className="ml-2 font-normal opacity-60">JSON: {"{"}"tier": {"{"}"months": "price_id"{"}"}{"}"}</span>
+            </label>
+            <textarea rows={6} value={priceIds} onChange={(e) => setPriceIds(e.target.value)} spellCheck={false}
+              className="w-full rounded-lg border border-border bg-input/40 px-3 py-2 text-xs font-mono text-foreground focus:border-ring focus:outline-none resize-y"
+              placeholder={'{\n  "starter": { "1": "price_xxx", "3": "price_yyy" },\n  "growth":  { "1": "price_xxx" },\n  "pro":     { "1": "price_xxx" }\n}'} />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button onClick={save} disabled={saving}
+          className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+          {saving ? "Saving…" : "Save billing settings"}
+        </button>
+        {saved && <span className="text-xs text-emerald-400">✓ Saved — takes effect immediately</span>}
+      </div>
+      {err && <div className="text-xs text-destructive">{err}</div>}
+    </div>
+  );
+}
+
+// ── API Endpoints tab ─────────────────────────────────────────────────────────
+function ApiEndpointsTab() {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [openrouterUrl, setOpenrouterUrl] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    devApi("/developer/platform-config")
+      .then((r) => {
+        setOpenrouterUrl(r.openrouter_base_url ?? "");
+      })
+      .catch((e: any) => { if (!handleAuthError(e)) setErr(e.message || "Could not load"); });
+  }, []);
+
+  async function save() {
+    for (const [label, val] of [["OpenRouter", openrouterUrl]]) {
+      if (val && !(val as string).startsWith("http")) { setErr(`${label} URL must start with http`); return; }
+    }
+    setSaving(true); setErr(""); setSaved(false);
+    try {
+      await devApi("/developer/platform-config", {
+        method: "PUT",
+        body: { openrouter_base_url: openrouterUrl, linkedin_api_url: linkedinUrl },
+      });
+      setSaved(true); setTimeout(() => setSaved(false), 3000);
+    } catch (e: any) { if (!handleAuthError(e)) setErr(e.message || "Could not save"); }
+    setSaving(false);
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* AI generation */}
+      <div className="rounded-xl border border-border bg-card/60 p-5">
+        <div className="text-sm font-semibold text-foreground mb-1">AI generation</div>
+        <p className="text-xs text-muted-foreground mb-4">
+          OpenRouter handles all AI generation — text ads, image generation, video generation, model catalog, and credit balance checks. Change this base URL to point at a proxy or alternate endpoint without touching any other config.
+        </p>
+        <div>
+          <label className="text-[11px] font-semibold text-muted-foreground block mb-1">OpenRouter base URL</label>
+          <input value={openrouterUrl} onChange={(e) => setOpenrouterUrl(e.target.value)}
+            placeholder="https://openrouter.ai/api/v1"
+            className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {["→ /chat/completions (text ads, Agent Niva hints)", "→ /images (image generation)", "→ /videos (video generation)", "→ /credits (balance check)", "→ /images/models, /videos/models (model catalog)"].map((u) => (
+              <span key={u} className="rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] text-muted-foreground">{u}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Social platform APIs — managed in Platforms tab */}
+      <div className="rounded-xl border border-border/50 bg-muted/20 p-4">
+        <div className="text-[11px] font-semibold text-muted-foreground mb-1">📡 Social platform API URLs</div>
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          Each platform's posting API URL is configured directly on that platform's entry in the <strong className="text-foreground">Platforms</strong> tab — alongside its OAuth credentials and video ratio. This keeps everything platform-specific in one place.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button onClick={save} disabled={saving}
+          className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+          {saving ? "Saving…" : "Save API endpoints"}
+        </button>
+        {saved && <span className="text-xs text-emerald-400">✓ Saved — API updated immediately</span>}
+      </div>
+      {err && <div className="text-xs text-destructive">{err}</div>}
+    </div>
+  );
+}
+
+// ── Users tab ─────────────────────────────────────────────────────────────────
+function UsersTab() {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <TeamLimitCard />
+    </div>
+  );
+}
+
+// ── Retention tab ─────────────────────────────────────────────────────────────
+function LogRetentionCard() {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [days, setDays] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    devApi("/developer/logs/retention")
+      .then((r) => setDays(String(r.log_retention_days)))
+      .catch((e: any) => { if (!handleAuthError(e)) setErr(e.message || "Could not load"); });
+  }, []);
+
+  async function save() {
+    const n = Number(days);
+    if (!Number.isInteger(n) || n < 1 || n > 365) { setErr("Must be 1–365 days"); return; }
+    setSaving(true); setErr(""); setSaved(false);
+    try {
+      await devApi("/developer/logs/retention", { method: "PUT", body: { log_retention_days: n } });
+      setSaved(true); setTimeout(() => setSaved(false), 2000);
+    } catch (e: any) { if (!handleAuthError(e)) setErr(e.message || "Could not save"); }
+    setSaving(false);
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card/60 p-5">
+      <div className="text-sm font-semibold text-foreground">System log retention</div>
+      <p className="mt-1 text-xs text-muted-foreground">How many days API, worker, and beat logs are kept in the database before automatic daily cleanup. Logs older than this are deleted at 2 AM UTC.</p>
+      <div className="mt-3 flex items-center gap-2">
+        <input type="number" min={1} max={365} step={1} value={days} onChange={(e) => setDays(e.target.value)}
+          className="w-20 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
+        <span className="text-xs text-muted-foreground">days (1–365)</span>
+        <button disabled={saving} onClick={save} className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {saved && <span className="text-xs text-emerald-400">✓ Saved</span>}
+      </div>
+      {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
+    </div>
+  );
+}
+
+function RetentionTab() {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <DataRetentionCard />
+      <PostRetentionCard />
+      <LogRetentionCard />
+    </div>
+  );
+}
+
+// ── Root component ────────────────────────────────────────────────────────────
+const SETTINGS_TABS = [
+  { key: "launch",    label: "🚀 Launch" },
+  { key: "billing",   label: "💳 Billing" },
+  { key: "api",       label: "🔌 API Endpoints" },
+  { key: "users",     label: "👥 Users" },
+  { key: "retention", label: "🗄 Retention" },
+  { key: "theme",     label: "🎨 Theme AI" },
+  { key: "ratios",    label: "📐 Video Ratios" },
+] as const;
+type SettingsTab = typeof SETTINGS_TABS[number]["key"];
+
 function DeveloperSettings() {
   const allowed = useRequireDeveloperPermission("settings");
+  const [tab, setTab] = useState<SettingsTab>("launch");
   if (!allowed) return null;
 
   return (
     <DeveloperShell title="Settings">
-      <p className="mb-6 text-sm text-muted-foreground">
-        Platform-wide settings that apply to every company — team size limits, media retention, and post retention. Per-platform video ratios moved to the Platforms tab, alongside everything else about each platform.
-      </p>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <TeamLimitCard />
-        <DataRetentionCard />
-        <PostRetentionCard />
-        <VideoRatiosCard />
+      {/* Tab strip */}
+      <div className="flex flex-wrap gap-1.5 mb-6">
+        {SETTINGS_TABS.map((t) => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${tab === t.key
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"}`}>
+            {t.label}
+          </button>
+        ))}
       </div>
-      <ThemeAiSettingsCard />
+
+      {/* Tab content */}
+      {tab === "launch"    && <LaunchControlCard />}
+      {tab === "billing"   && <BillingSettingsTab />}
+      {tab === "api"       && <ApiEndpointsTab />}
+      {tab === "users"     && <UsersTab />}
+      {tab === "retention" && <RetentionTab />}
+      {tab === "theme"     && <ThemeAiSettingsCard />}
+      {tab === "ratios"    && <VideoRatiosCard />}
     </DeveloperShell>
   );
 }
+

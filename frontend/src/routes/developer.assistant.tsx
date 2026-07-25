@@ -685,107 +685,191 @@ function DeveloperAssistant() {
     setExpandedGroups((m) => ({ ...m, [prefix]: !isExpanded(prefix) }));
   }
 
+  const [tab, setTab] = useState<"settings" | "nav" | "hints">("settings");
+  const [hintSubTab, setHintSubTab] = useState<string>("field");
+
+  const ASSISTANT_TABS = [
+    { key: "settings", label: "⚙️ Settings" },
+    { key: "nav",      label: "🧭 Navigation hints" },
+    { key: "hints",    label: "📄 Page & field hints" },
+  ] as const;
+
   if (!allowed) return null;
   if (!hints || !settings) return <DeveloperShell title="Assistant"><div className="text-xs text-muted-foreground">Loading…</div></DeveloperShell>;
 
   return (
     <DeveloperShell title="Assistant">
-      <p className="mb-6 max-w-2xl text-xs text-muted-foreground">
-        Configure {settings.assistant_name || "your assistant"}'s name, typing speed, TTS voice, and the explanation messages it says at each hinted UI element.
-        Generate audio per-hint — before audio is generated it speaks via the browser's built-in Speech Synthesis.
-      </p>
+      {/* Tab strip */}
+      <div className="flex flex-wrap gap-1.5 mb-6">
+        {ASSISTANT_TABS.map((t) => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${tab === t.key
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-      <SettingsCard
-        settings={settings}
-        onSave={setSettings}
-        sleepHint={sleepHint}
-        wakeHint={wakeHint}
-        hintBusy={busy}
-        generatingAudioId={generatingAudioId}
-        onSaveHint={save}
-        onAddHint={add}
-        onGenerateAudio={generateAudio}
-      />
+      {err && <div className="mb-4 text-xs text-destructive">{err}</div>}
 
-      <div className="text-sm font-semibold text-foreground mb-3">Hint messages</div>
-      <div className="grid gap-4 lg:grid-cols-2 mb-4">
-        <NavHintChecklist
-          navHints={hints.filter((h) => h.key.startsWith("nav:"))}
-          expanded={isExpanded("nav")}
-          onToggle={() => toggleGroup("nav")}
-          editingId={editingId}
-          busy={busy}
-          generatingAudioId={generatingAudioId}
-          addingKey={addingNavKey}
-          onStartAdd={setAddingNavKey}
-          onCancelAdd={() => setAddingNavKey(null)}
-          onAddHint={async (v) => { await add(v); setAddingNavKey(null); }}
-          onEdit={setEditingId}
-          onCancelEdit={() => setEditingId(null)}
-          onSaveHint={save}
-          onGenerateAudio={generateAudio}
-          onRemove={remove}
-        />
-        {groups.filter((g) => g.prefix !== "page").map((g) => (
-          <GroupBox
-            key={g.prefix}
-            prefix={g.prefix}
-            label={g.label}
-            hints={g.hints}
-            expanded={isExpanded(g.prefix)}
-            onToggle={() => toggleGroup(g.prefix)}
+      {/* ── Settings tab ── */}
+      {tab === "settings" && (
+        <div className="max-w-2xl space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Configure {settings.assistant_name || "your assistant"}'s name, typing speed, TTS voice, and sleep/wake messages.
+            Changes take effect immediately — no reload needed.
+          </p>
+          <SettingsCard
+            settings={settings}
+            onSave={setSettings}
+            sleepHint={sleepHint}
+            wakeHint={wakeHint}
+            hintBusy={busy}
+            generatingAudioId={generatingAudioId}
+            onSaveHint={save}
+            onAddHint={add}
+            onGenerateAudio={generateAudio}
+          />
+        </div>
+      )}
+
+      {/* ── Navigation hints tab ── */}
+      {tab === "nav" && (
+        <div className="max-w-2xl space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Messages shown when the assistant highlights sidebar navigation items. Each nav item can have one hint message.
+          </p>
+          <NavHintChecklist
+            navHints={hints.filter((h) => h.key.startsWith("nav:"))}
+            expanded={isExpanded("nav")}
+            onToggle={() => toggleGroup("nav")}
             editingId={editingId}
             busy={busy}
             generatingAudioId={generatingAudioId}
-            addingGroup={addingGroup}
-            onStartAdd={() => setAddingGroup(g.prefix)}
-            onCancelAdd={() => setAddingGroup(null)}
-            onAddHint={add}
+            addingKey={addingNavKey}
+            onStartAdd={setAddingNavKey}
+            onCancelAdd={() => setAddingNavKey(null)}
+            onAddHint={async (v) => { await add(v); setAddingNavKey(null); }}
             onEdit={setEditingId}
             onCancelEdit={() => setEditingId(null)}
             onSaveHint={save}
             onGenerateAudio={generateAudio}
             onRemove={remove}
           />
-        ))}
-        {PAGE_SUBGROUPS.map((sub) => {
-          const groupId = "page-sub:" + sub.label;
-          const pageHints = hints.filter((h) => h.key.startsWith("page:"));
-          return (
-            <PageSubGroupBox
-              key={sub.label}
-              subLabel={sub.label}
-              subKeys={sub.keys}
-              allHints={pageHints}
-              expanded={isExpanded(groupId)}
-              onToggle={() => toggleGroup(groupId)}
-              editingId={editingId}
-              busy={busy}
-              generatingAudioId={generatingAudioId}
-              addingGroup={addingGroup}
-              onStartAdd={() => setAddingGroup(groupId)}
-              onCancelAdd={() => setAddingGroup(null)}
-              onAddHint={add}
-              onEdit={setEditingId}
-              onCancelEdit={() => setEditingId(null)}
-              onSaveHint={save}
-              onGenerateAudio={generateAudio}
-              onRemove={remove}
-            />
-          );
-        })}
-      </div>
-
-      {showNewGroup ? (
-        <div className="max-w-2xl rounded-xl border border-border bg-card/60 p-3">
-          <AddForm busy={busy} onCancel={() => setShowNewGroup(false)} onAdd={add} />
         </div>
-      ) : (
-        <button onClick={() => setShowNewGroup(true)} className="rounded-full border border-dashed border-primary/50 px-4 py-1.5 text-xs text-primary hover:bg-primary/5">
-          + Add message in a new group
-        </button>
       )}
-      {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
+
+      {/* ── Page & field hints tab ── */}
+      {tab === "hints" && (() => {
+        const HINT_SUBTABS = [
+          { key: "field",   label: "✍️ Create Ad" },
+          { key: "themes",  label: "🎨 Themes" },
+          { key: "agent",   label: "🤖 Agent Niva" },
+          { key: "brand",   label: "🏷 Brand Kit" },
+          { key: "admin",   label: "👤 Admin" },
+          { key: "other",   label: "📦 Other" },
+        ] as const;
+
+        // Map PAGE_SUBGROUPS to sub-tab keys
+        const SUBTAB_SUBGROUPS: Record<string, typeof PAGE_SUBGROUPS[number][]> = {
+          themes: PAGE_SUBGROUPS.filter((s) => s.label === "Themes Gallery"),
+          agent:  PAGE_SUBGROUPS.filter((s) => s.label === "Agent Niva"),
+          brand:  PAGE_SUBGROUPS.filter((s) => s.label === "Brand Kit"),
+          admin:  PAGE_SUBGROUPS.filter((s) => s.label === "Admin"),
+        };
+        const knownSubKeys = new Set(PAGE_SUBGROUPS.flatMap((s) => s.keys));
+
+        return (
+          <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Messages shown at specific fields and pages. Generate audio per-hint — before audio is generated the assistant speaks via the browser's built-in Speech Synthesis.
+            </p>
+            {/* Sub-tab strip */}
+            <div className="flex flex-wrap gap-1.5">
+              {HINT_SUBTABS.map((t) => (
+                <button key={t.key} onClick={() => setHintSubTab(t.key)}
+                  className={`rounded-full border px-3 py-1 text-[11px] font-medium transition-all ${hintSubTab === t.key
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"}`}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Create Ad field hints */}
+            {hintSubTab === "field" && (
+              <div className="grid gap-4 lg:grid-cols-2">
+                {groups.filter((g) => g.prefix === "field").map((g) => (
+                  <GroupBox key={g.prefix} prefix={g.prefix} label={g.label} hints={g.hints}
+                    expanded={isExpanded(g.prefix)} onToggle={() => toggleGroup(g.prefix)}
+                    editingId={editingId} busy={busy} generatingAudioId={generatingAudioId}
+                    addingGroup={addingGroup} onStartAdd={() => setAddingGroup(g.prefix)}
+                    onCancelAdd={() => setAddingGroup(null)} onAddHint={add}
+                    onEdit={setEditingId} onCancelEdit={() => setEditingId(null)}
+                    onSaveHint={save} onGenerateAudio={generateAudio} onRemove={remove} />
+                ))}
+              </div>
+            )}
+
+            {/* Page sub-tabs (themes, agent, brand, admin) */}
+            {(["themes","agent","brand","admin"] as const).includes(hintSubTab as any) && (
+              <div className="grid gap-4 lg:grid-cols-2">
+                {(SUBTAB_SUBGROUPS[hintSubTab] || []).map((sub) => {
+                  const groupId = "page-sub:" + sub.label;
+                  const pageHints = hints.filter((h) => h.key.startsWith("page:"));
+                  return (
+                    <PageSubGroupBox key={sub.label} subLabel={sub.label} subKeys={sub.keys} allHints={pageHints}
+                      expanded={isExpanded(groupId)} onToggle={() => toggleGroup(groupId)}
+                      editingId={editingId} busy={busy} generatingAudioId={generatingAudioId}
+                      addingGroup={addingGroup} onStartAdd={() => setAddingGroup(groupId)}
+                      onCancelAdd={() => setAddingGroup(null)} onAddHint={add}
+                      onEdit={setEditingId} onCancelEdit={() => setEditingId(null)}
+                      onSaveHint={save} onGenerateAudio={generateAudio} onRemove={remove} />
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Other — any custom groups + unmatched page hints */}
+            {hintSubTab === "other" && (
+              <div className="space-y-4">
+                <div className="grid gap-4 lg:grid-cols-2">
+                  {groups.filter((g) => g.prefix !== "field" && g.prefix !== "page" && g.prefix !== "nav").map((g) => (
+                    <GroupBox key={g.prefix} prefix={g.prefix} label={g.label} hints={g.hints}
+                      expanded={isExpanded(g.prefix)} onToggle={() => toggleGroup(g.prefix)}
+                      editingId={editingId} busy={busy} generatingAudioId={generatingAudioId}
+                      addingGroup={addingGroup} onStartAdd={() => setAddingGroup(g.prefix)}
+                      onCancelAdd={() => setAddingGroup(null)} onAddHint={add}
+                      onEdit={setEditingId} onCancelEdit={() => setEditingId(null)}
+                      onSaveHint={save} onGenerateAudio={generateAudio} onRemove={remove} />
+                  ))}
+                  {/* page: hints not covered by any subgroup */}
+                  {hints.filter((h) => h.key.startsWith("page:") && !knownSubKeys.has(h.key)).length > 0 && (
+                    <GroupBox prefix="page-other" label="Other pages"
+                      hints={hints.filter((h) => h.key.startsWith("page:") && !knownSubKeys.has(h.key))}
+                      expanded={isExpanded("page-other")} onToggle={() => toggleGroup("page-other")}
+                      editingId={editingId} busy={busy} generatingAudioId={generatingAudioId}
+                      addingGroup={addingGroup} onStartAdd={() => setAddingGroup("page-other")}
+                      onCancelAdd={() => setAddingGroup(null)} onAddHint={add}
+                      onEdit={setEditingId} onCancelEdit={() => setEditingId(null)}
+                      onSaveHint={save} onGenerateAudio={generateAudio} onRemove={remove} />
+                  )}
+                </div>
+                {showNewGroup ? (
+                  <div className="max-w-2xl rounded-xl border border-border bg-card/60 p-3">
+                    <AddForm busy={busy} onCancel={() => setShowNewGroup(false)} onAdd={add} />
+                  </div>
+                ) : (
+                  <button onClick={() => setShowNewGroup(true)} className="rounded-full border border-dashed border-primary/50 px-4 py-1.5 text-xs text-primary hover:bg-primary/5">
+                    + Add message in a new group
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </DeveloperShell>
   );
 }

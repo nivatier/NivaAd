@@ -1,9 +1,24 @@
 from celery import Celery
 from celery.schedules import crontab, schedule
+from celery.signals import worker_process_init
 
 from app.config import settings
 
 celery_app = Celery("nivaad", broker=settings.REDIS_URL, backend=settings.REDIS_URL)
+
+
+@worker_process_init.connect
+def _install_log_handler(**kwargs):
+    """Install the DB log handler in each Celery worker process.
+    Uses worker_process_init so it runs in every forked worker process
+    (not just the parent), and also covers beat since beat imports worker.py."""
+    import os
+    from app.services.log_handler import install_db_log_handler
+    # Detect beat vs worker from the process command line
+    import sys
+    service = "beat" if "beat" in " ".join(sys.argv) else "worker"
+    if settings.DATABASE_URL:
+        install_db_log_handler(service=service, db_url=settings.DATABASE_URL)
 celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
@@ -42,6 +57,10 @@ celery_app.conf.update(
         "fire-due-scheduled-posts": {
             "task": "app.fire_due_scheduled_posts",
             "schedule": schedule(run_every=60),  # check every 60 seconds
+        },
+        "cleanup-expired-logs": {
+            "task": "app.cleanup_expired_logs",
+            "schedule": crontab(hour=2, minute=0),  # 2 AM UTC — before media/post cleanup
         },
         "cleanup-expired-media": {
             "task": "app.cleanup_expired_media",

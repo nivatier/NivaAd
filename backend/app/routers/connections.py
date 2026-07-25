@@ -29,8 +29,6 @@ from app.services.token_crypto import decrypt_token, encrypt_token
 
 router = APIRouter(prefix="/connections", tags=["connections"])
 
-BACKEND_URL = "http://localhost:8000"  # matches this project's existing localhost-only dev setup (see FRONTEND_URL in config.py for the same pattern)
-
 
 def _sign_state(company_id: str) -> str:
     """Short-lived signed token carrying the company_id through
@@ -101,7 +99,7 @@ async def linkedin_connect(user: User = Depends(require_role("admin")), db: Asyn
     creds = await platform_config.get_platform_credentials(db, "linkedin_personal")
     if not creds or not creds["client_id"]:
         raise HTTPException(503, "LinkedIn isn't configured yet — ask the platform developer to add it in Developer > Platforms.")
-    redirect_uri = creds["redirect_uri"] or f"{BACKEND_URL}/connections/linkedin_personal/callback"
+    redirect_uri = creds["redirect_uri"] or f"{settings.BACKEND_URL}/connections/linkedin_personal/callback"
     state = _sign_state(str(user.company_id))
     return {"authorize_url": linkedin.get_authorize_url(creds["client_id"], redirect_uri, creds["scope"], state)}
 
@@ -124,7 +122,7 @@ async def linkedin_callback(
         creds = await platform_config.get_platform_credentials(db, "linkedin_personal")
         if not creds:
             raise RuntimeError("LinkedIn is no longer configured on this platform.")
-        redirect_uri = creds["redirect_uri"] or f"{BACKEND_URL}/connections/linkedin_personal/callback"
+        redirect_uri = creds["redirect_uri"] or f"{settings.BACKEND_URL}/connections/linkedin_personal/callback"
         token_data = linkedin.exchange_code_for_token(code, creds["client_id"], creds["client_secret"], redirect_uri)
         access_token = token_data["access_token"]
         linkedin.get_person_urn(access_token)  # validates the token actually works before saving it

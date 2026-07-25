@@ -826,20 +826,17 @@ Return ONLY a JSON array — no markdown, no prose, no backticks — with exactl
 ]
 Make each concept meaningfully different. Be specific and actionable.`;
 
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000"}/agent/quick-spark`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          system: systemPrompt,
-          messages: [{ role: "user", content: `My ad idea: ${idea.trim()}` }],
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${sessionStorage.getItem("nivaad_tokens") ? JSON.parse(sessionStorage.getItem("nivaad_tokens")!).access_token : ""}`,
+        },
+        body: JSON.stringify({ idea: idea.trim(), count }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || "AI error");
-      const text = data.content?.find((b: any) => b.type === "text")?.text ?? "[]";
-      const parsed: SparkDraft[] = JSON.parse(text);
+      if (!res.ok) throw new Error(data.detail || "AI error");
+      const parsed: SparkDraft[] = data.drafts;
       setDrafts(parsed);
     } catch (e: any) {
       setErr(e.message || "Could not generate drafts");

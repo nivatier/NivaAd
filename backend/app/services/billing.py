@@ -6,6 +6,10 @@ webhooks rather than trusting the client-side redirect. Credits are
 granted on invoice.paid (fires for the first payment AND every renewal),
 NOT on checkout.session.completed — Stripe's own billing cycle drives
 recurring credit grants with no extra scheduler needed.
+
+Price IDs are stored in the Developer > Settings > Platform config table
+at runtime (no redeploy needed to change them), falling back to
+STRIPE_PRICE_IDS / STRIPE_PRICE_TOPUP from .env if no DB override exists.
 """
 import json
 
@@ -19,16 +23,54 @@ TIER_CREDITS = {"starter": 10, "growth": 30, "pro": 120}
 
 _PRICE_MAP = None
 _REVERSE_MAP = None
+_TOPUP_PRICE_ID: str | None = None
 
 
-def _load_maps():
-    global _PRICE_MAP, _REVERSE_MAP
-    if _PRICE_MAP is None:
-        _PRICE_MAP = json.loads(settings.STRIPE_PRICE_IDS or "{}")
-        _REVERSE_MAP = {}
-        for tier, terms in _PRICE_MAP.items():
-            for term, price_id in terms.items():
-                _REVERSE_MAP[price_id] = (tier, int(term))
+def invalidate_price_cache() -> None:
+    """Call after updating Stripe price IDs in the DB so the new values
+    take effect immediately without restarting the API process."""
+    global _PRICE_MAP, _REVERSE_MAP, _TOPUP_PRICE_ID
+    _PRICE_MAP = None
+    _REVERSE_MAP = None
+    _TOPUP_PRICE_ID = None
+
+
+def _load_maps(db=None):
+    """Build price maps from DB override first, .env fallback second.
+    db is optional — if not provided the .env values are used directly
+    (this keeps backwards compatibility for callers that don't pass a db
+    session, e.g. the sync webhook handler)."""
+    global _PRICE_MAP, _REVERSE_MAP, _TOPUP_PRICE_ID
+    if _PRICE_MAP is not None:
+        return _PRICE_MAP, _REVERSE_MAP
+
+    price_ids_raw = settings.STRIPE_PRICE_IDS
+    topup_raw     = settings.STRIPE_PRICE_TOPUP
+
+    # Try to pull overrides from DB if a session is available
+    if db is not None:
+        try:
+            from sqlalchemy import select as _select
+            from app.models import ModelConfig as _ModelConfig
+            # Sync fetch — billing is called from sync Stripe webhook context
+            result = db.execute(_select(_ModelConfig).where(_ModelConfig.id == 1))
+            row = result.scalar_one_or_none()
+            if row and row.config:
+                platform = row.config.get("platform", {})
+                if platform.get("stripe_price_ids"):
+                    price_ids_raw = platform["stripe_price_ids"]
+                if platform.get("stripe_price_topup"):
+                    topup_raw = platform["stripe_price_topup"]
+        except Exception:
+            pass  # Any DB error falls back to .env values silently
+
+    _PRICE_MAP = json.loads(price_ids_raw or "{}")
+    _TOPUP_PRICE_ID = topup_raw or settings.STRIPE_PRICE_TOPUP
+    _REVERSE_MAP = {}
+    for tier, terms in _PRICE_MAP.items():
+        for term, price_id in terms.items():
+            _REVERSE_MAP[price_id] = (tier, int(term))
+
     return _PRICE_MAP, _REVERSE_MAP
 
 
@@ -43,6 +85,11 @@ def price_id_for(tier: str, term_months: int) -> str:
 def reverse_lookup(price_id: str) -> tuple[str | None, int | None]:
     _, reverse_map = _load_maps()
     return reverse_map.get(price_id, (None, None))
+
+
+def get_topup_price_id() -> str:
+    _load_maps()
+    return _TOPUP_PRICE_ID or settings.STRIPE_PRICE_TOPUP
 
 
 def _safe_return_path(path: str | None) -> str:
@@ -68,13 +115,14 @@ def create_checkout_session(company_id: str, email: str, tier: str, term_months:
 
 
 def create_topup_session(company_id: str, email: str, credits: int, return_to: str | None = None):
-    """STRIPE_PRICE_TOPUP is a PER-CREDIT price ($0.90/credit) — quantity
-    is the exact number of credits the customer chose, so the charged
-    amount is always credits * $0.90, not a fixed bundle price."""
+    """STRIPE_PRICE_TOPUP is a PER-CREDIT price — quantity is the exact
+    number of credits the customer chose, so the charged amount is always
+    credits × price_per_unit. Price ID read from DB override or .env."""
     path = _safe_return_path(return_to)
+    topup_price = get_topup_price_id()
     return stripe.checkout.Session.create(
         mode="payment",
-        line_items=[{"price": settings.STRIPE_PRICE_TOPUP, "quantity": credits}],
+        line_items=[{"price": topup_price, "quantity": credits}],
         client_reference_id=company_id,
         customer_email=email,
         metadata={"company_id": company_id, "credits": str(credits)},

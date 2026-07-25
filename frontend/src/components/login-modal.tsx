@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { authApi } from "@/lib/api";
+import { authApi, api } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 
 type ModalMode = "login" | "register";
@@ -17,6 +17,15 @@ export function LoginModal({
   const navigate = useNavigate();
   const { refresh } = useAuth();
   const [mode, setMode] = useState<ModalMode>(initialMode);
+  const [registrationOpen, setRegistrationOpen] = useState<boolean | null>(null);
+
+  // Check registration status once when modal opens
+  useEffect(() => {
+    if (!open) return;
+    api("/auth/registration-status", { skipAuth: true } as any)
+      .then((r: any) => setRegistrationOpen(r.open))
+      .catch(() => setRegistrationOpen(false)); // default closed on error
+  }, [open]);
 
   // Login fields
   const [loginEmail, setLoginEmail] = useState("");
@@ -99,7 +108,8 @@ export function LoginModal({
           <button
             type="button"
             onClick={() => switchMode("register")}
-            className={`flex-1 rounded-lg py-2 text-sm font-semibold transition ${mode === "register" ? "bg-card shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            className={`flex-1 rounded-lg py-2 text-sm font-semibold transition ${mode === "register" ? "bg-card shadow text-foreground" : "text-muted-foreground hover:text-foreground"} ${registrationOpen === false ? "opacity-40 cursor-not-allowed" : ""}`}
+            disabled={registrationOpen === false}
           >
             Start free
           </button>
@@ -129,6 +139,18 @@ export function LoginModal({
 
         {/* Register form */}
         {mode === "register" && (
+          registrationOpen === false ? (
+            <div className="mt-6 text-center space-y-3">
+              <div className="text-3xl">🔒</div>
+              <div className="text-sm font-semibold text-foreground">Registration is currently disabled</div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                New sign-ups are not available right now. Contact the platform team if you need access.
+              </p>
+              <button onClick={() => setMode("login")} className="mt-2 text-xs text-primary hover:underline">
+                Already have an account? Log in →
+              </button>
+            </div>
+          ) : (
           <>
             <h2 className="mt-5 font-display text-xl font-bold tracking-tight text-foreground">Create your company account</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">Free plan · 3 credits/month · no card required</p>
@@ -154,6 +176,7 @@ export function LoginModal({
               <button onClick={() => switchMode("login")} className="text-primary hover:underline">Log in</button>
             </p>
           </>
+          )
         )}
       </div>
     </div>

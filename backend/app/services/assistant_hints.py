@@ -166,7 +166,7 @@ async def _generate_audio_via_openrouter(text: str, voice: str, model: str) -> b
 
     def _non_streaming() -> bytes | None:
         resp = httpx.post(
-            "https://openrouter.ai/api/v1/chat/completions",
+            f"{settings.OPENROUTER_BASE_URL}/chat/completions",
             headers=headers,
             json={**payload_base, "stream": False, "audio": {"voice": voice, "format": "mp3"}},
             timeout=120,
@@ -196,7 +196,7 @@ async def _generate_audio_via_openrouter(text: str, voice: str, model: str) -> b
         accumulated_b64 = ""
         with httpx.stream(
             "POST",
-            "https://openrouter.ai/api/v1/chat/completions",
+            f"{settings.OPENROUTER_BASE_URL}/chat/completions",
             headers=headers,
             json={**payload_base, "stream": True, "audio": {"voice": voice, "format": "pcm16"}},
             timeout=120,

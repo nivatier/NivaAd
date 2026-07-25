@@ -2,16 +2,22 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.services.log_handler import install_db_log_handler
 from app.routers import (
     admin_capabilities, admin_overview, admin_users, ads, agent, analytics, auth,
     billing, brand_kit, campaigns, connections, developer, moderation, products, schedule, webhooks,
 )
 
+# Attach DB log handler early — before any router imports so startup
+# errors are captured too. Only runs when a real DB URL is configured.
+if settings.DATABASE_URL:
+    install_db_log_handler(service="api", db_url=settings.DATABASE_URL)
+
 app = FastAPI(title="NivaSpark API", version="0.14.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

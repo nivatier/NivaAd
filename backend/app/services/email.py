@@ -1,7 +1,7 @@
 """Real SMTP email sending — goes to Mailpit in local dev (catch-all,
 viewable at http://localhost:8025, nothing actually leaves your machine),
-and would go to a real SMTP provider in production via the same
-SMTP_HOST/PORT settings pointed at a real server."""
+and goes to a real SMTP provider (e.g. AWS SES) in production via the
+SMTP_HOST/PORT/USER/PASSWORD/FROM settings in .env."""
 import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -15,15 +15,26 @@ logger = logging.getLogger(__name__)
 def send_email(to: str, subject: str, html_body: str, text_body: str | None = None) -> None:
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = "NivaSpark <noreply@nivaad.local>"
+    msg["From"] = settings.SMTP_FROM
     msg["To"] = to
     if text_body:
         msg.attach(MIMEText(text_body, "plain"))
     msg.attach(MIMEText(html_body, "html"))
 
+    # Extract the bare address from "Name <addr>" format for sendmail()
+    from_addr = settings.SMTP_FROM
+    if "<" in from_addr and ">" in from_addr:
+        from_addr = from_addr.split("<")[1].rstrip(">").strip()
+
     try:
         with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
-            server.sendmail("noreply@nivaad.local", [to], msg.as_string())
+            server.ehlo()
+            # Use TLS + auth when credentials are provided (production/SES)
+            # Skip in dev where Mailpit doesn't require auth
+            if settings.SMTP_USER and settings.SMTP_PASSWORD:
+                server.starttls()
+                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            server.sendmail(from_addr, [to], msg.as_string())
         logger.info("[email] sent '%s' to %s", subject, to)
     except Exception as exc:  # noqa: BLE001
         # Don't let a mail-server hiccup break the calling request (e.g.

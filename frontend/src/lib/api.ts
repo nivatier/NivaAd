@@ -1,6 +1,6 @@
 // NivaSpark API client — talks to the FastAPI backend, stores JWT tokens,
 // and transparently refreshes the access token once when it expires.
-const BASE = "http://localhost:8000";
+const BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 export type Tokens = { access_token: string; refresh_token: string; token_type: string };
 
