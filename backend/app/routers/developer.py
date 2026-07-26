@@ -4,6 +4,11 @@ DEVELOPER_EMAIL/DEVELOPER_PASSWORD in .env (see require_developer in
 deps.py); nothing in this file ever creates or reads a User row, and no
 company's admin can reach any of this regardless of their role or
 capabilities — there is no code path that connects the two systems."""
+import asyncio
+import os
+import subprocess
+import redis as redis_lib
+
 import uuid
 from datetime import datetime, timedelta
 
@@ -1958,3 +1963,314 @@ async def delete_video_ratio(ratio: str, _: str = Depends(require_developer_perm
     (services/video_ratios.py's resolve_ratio), rather than breaking."""
     ratios = await video_ratios_svc.remove_video_ratio(db, ratio)
     return VideoRatiosOut(ratios=ratios)
+
+# ── Infrastructure health & DB setup ──────────────────────────────────────────
+
+@router.get("/infrastructure/status")
+async def infrastructure_status(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Live health check for every service: DB, Redis, S3/R2, and OpenRouter.
+    Returns a status card per service so the developer panel can render
+    a colour-coded grid without multiple round-trips. Each service is
+    probed independently so one failure doesn't prevent the others from
+    reporting."""
+
+    results: dict[str, dict] = {}
+
+    # ── Database ─────────────────────────────────────────────────────
+    db_start = datetime.utcnow()
+    try:
+        from sqlalchemy import text
+        await db.execute(text("SELECT 1"))
+        db_ms = round((datetime.utcnow() - db_start).total_seconds() * 1000, 1)
+
+        # Migration status: current head vs applied revision
+        from sqlalchemy import text as _text
+        try:
+            rev_row = await db.execute(_text(
+                "SELECT version_num FROM alembic_version LIMIT 1"
+            ))
+            current_rev = (rev_row.scalar() or "none")
+        except Exception:
+            current_rev = "alembic_version table missing — migrations not run"
+
+        # Read the latest revision id from the migration files on disk
+        # (the files are always present in the container)
+        alembic_dir = os.path.join(os.path.dirname(__file__), "..", "..", "alembic", "versions")
+        alembic_dir = os.path.normpath(alembic_dir)
+        head_rev = "unknown"
+        try:
+            files = [f for f in os.listdir(alembic_dir) if f.endswith(".py") and not f.startswith("__")]
+            rev_map: dict[str, str] = {}   # down_revision → revision
+            rev_to_file: dict[str, str] = {}
+            for fname in files:
+                fpath = os.path.join(alembic_dir, fname)
+                content = open(fpath).read()
+                rev_match = None; down_match = None
+                for line in content.splitlines():
+                    if line.startswith("revision:"):
+                        rev_match = line.split("=")[1].strip().strip("'\"")
+                    if line.startswith("down_revision:"):
+                        val = line.split("=")[1].strip().strip("'\"")
+                        down_match = None if val == "None" else val
+                if rev_match:
+                    rev_map[down_match] = rev_match
+                    rev_to_file[rev_match] = fname
+            # Walk the chain to find the tip (revision no other revision points down to)
+            all_revs = set(rev_map.values())
+            all_downs = set(rev_map.keys()) - {None}
+            tips = all_revs - all_downs
+            head_rev = tips.pop() if tips else "unknown"
+        except Exception as e:
+            head_rev = f"error reading migrations: {e}"
+
+        migrations_current = (current_rev == head_rev)
+        results["database"] = {
+            "status": "ok",
+            "latency_ms": db_ms,
+            "detail": f"Connected to PostgreSQL",
+            "migration_head": head_rev,
+            "migration_current": current_rev,
+            "migrations_current": migrations_current,
+        }
+    except Exception as exc:
+        results["database"] = {
+            "status": "error",
+            "latency_ms": None,
+            "detail": str(exc),
+            "migration_head": None,
+            "migration_current": None,
+            "migrations_current": False,
+        }
+
+    # ── Redis ─────────────────────────────────────────────────────────
+    redis_start = datetime.utcnow()
+    try:
+        r = redis_lib.from_url(settings.REDIS_URL, socket_connect_timeout=3)
+        pong = await asyncio.get_event_loop().run_in_executor(None, r.ping)
+        redis_ms = round((datetime.utcnow() - redis_start).total_seconds() * 1000, 1)
+        # Queue depth from Celery's default queue
+        try:
+            q_len = await asyncio.get_event_loop().run_in_executor(None, lambda: r.llen("celery"))
+        except Exception:
+            q_len = None
+        results["redis"] = {
+            "status": "ok" if pong else "error",
+            "latency_ms": redis_ms,
+            "detail": "Connected",
+            "queue_depth": q_len,
+        }
+    except Exception as exc:
+        results["redis"] = {
+            "status": "error",
+            "latency_ms": None,
+            "detail": str(exc),
+            "queue_depth": None,
+        }
+
+    # ── S3 / R2 ───────────────────────────────────────────────────────
+    s3_start = datetime.utcnow()
+    try:
+        import boto3
+        from botocore.client import Config as BotoConfig
+        s3_client = boto3.client(
+            "s3",
+            endpoint_url=settings.S3_ENDPOINT_URL,
+            aws_access_key_id=settings.S3_ACCESS_KEY,
+            aws_secret_access_key=settings.S3_SECRET_KEY,
+            config=BotoConfig(signature_version="s3v4"),
+            region_name="us-east-1",
+        )
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: s3_client.head_bucket(Bucket=settings.S3_BUCKET)
+        )
+        s3_ms = round((datetime.utcnow() - s3_start).total_seconds() * 1000, 1)
+        results["storage"] = {
+            "status": "ok",
+            "latency_ms": s3_ms,
+            "detail": f"Bucket '{settings.S3_BUCKET}' reachable at {settings.S3_ENDPOINT_URL}",
+        }
+    except Exception as exc:
+        s3_ms = round((datetime.utcnow() - s3_start).total_seconds() * 1000, 1)
+        results["storage"] = {
+            "status": "error",
+            "latency_ms": s3_ms,
+            "detail": str(exc),
+        }
+
+    # ── OpenRouter ────────────────────────────────────────────────────
+    or_start = datetime.utcnow()
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.get(
+                f"{settings.OPENROUTER_BASE_URL.rstrip('/')}/auth/key",
+                headers={"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"},
+            )
+        or_ms = round((datetime.utcnow() - or_start).total_seconds() * 1000, 1)
+        if resp.status_code == 200:
+            data = resp.json().get("data", {})
+            results["openrouter"] = {
+                "status": "ok",
+                "latency_ms": or_ms,
+                "detail": f"Key valid — label: {data.get('label', 'n/a')}",
+                "credits_remaining": data.get("limit_remaining"),
+            }
+        else:
+            results["openrouter"] = {
+                "status": "error",
+                "latency_ms": or_ms,
+                "detail": f"HTTP {resp.status_code}: {resp.text[:200]}",
+                "credits_remaining": None,
+            }
+    except Exception as exc:
+        results["openrouter"] = {
+            "status": "error",
+            "latency_ms": None,
+            "detail": str(exc),
+            "credits_remaining": None,
+        }
+
+    # ── SMTP (quick TCP connect, no AUTH round-trip) ─────────────────
+    smtp_start = datetime.utcnow()
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(settings.SMTP_HOST, settings.SMTP_PORT),
+            timeout=5,
+        )
+        writer.close()
+        await writer.wait_closed()
+        smtp_ms = round((datetime.utcnow() - smtp_start).total_seconds() * 1000, 1)
+        results["smtp"] = {
+            "status": "ok",
+            "latency_ms": smtp_ms,
+            "detail": f"{settings.SMTP_HOST}:{settings.SMTP_PORT} reachable",
+        }
+    except Exception as exc:
+        smtp_ms = round((datetime.utcnow() - smtp_start).total_seconds() * 1000, 1)
+        results["smtp"] = {
+            "status": "error",
+            "latency_ms": smtp_ms,
+            "detail": str(exc),
+        }
+
+    return {
+        "checked_at": datetime.utcnow().isoformat() + "Z",
+        "services": results,
+    }
+
+
+@router.post("/infrastructure/run-migrations")
+async def run_migrations(_: str = Depends(require_developer)):
+    """Run `alembic upgrade head` inside the container.  Returns the full
+    stdout/stderr so the developer can see exactly what was applied.
+    This is deliberately owner-only (no permission key) — it's a
+    destructive-capable operation and team members should never trigger
+    it without explicit authorisation."""
+    try:
+        # Resolve the alembic root (one level above app/)
+        backend_root = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "..")
+        )
+        proc = await asyncio.create_subprocess_exec(
+            "alembic", "upgrade", "head",
+            cwd=backend_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ},   # inherit DATABASE_URL etc from the running process
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        output = stdout.decode() + stderr.decode()
+        if proc.returncode == 0:
+            return {"ok": True, "output": output.strip()}
+        else:
+            raise HTTPException(500, detail=f"alembic exited with code {proc.returncode}:\n{output.strip()}")
+    except asyncio.TimeoutError:
+        raise HTTPException(504, detail="Migration timed out after 120 seconds")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, detail=str(exc))
+
+
+@router.get("/infrastructure/migration-history")
+async def migration_history(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Returns the ordered list of every migration file with its revision id,
+    description, and whether it has been applied to the current database.
+    Applied revisions come from the alembic_version table; since Alembic
+    only tracks the current HEAD (not a full applied log), we reconstruct
+    the chain from the migration files themselves and mark everything up
+    to and including the current HEAD as applied."""
+    from sqlalchemy import text
+
+    try:
+        rev_row = await db.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
+        current_rev = rev_row.scalar() or ""
+    except Exception:
+        current_rev = ""
+
+    alembic_dir = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "alembic", "versions")
+    )
+
+    migrations = []
+    try:
+        files = [f for f in os.listdir(alembic_dir) if f.endswith(".py") and not f.startswith("__")]
+        rev_info: dict[str, dict] = {}
+        for fname in files:
+            fpath = os.path.join(alembic_dir, fname)
+            content = open(fpath).read()
+            revision = down_revision = description = create_date = None
+            for line in content.splitlines():
+                ls = line.strip()
+                if ls.startswith("revision:"):
+                    revision = ls.split("=")[1].strip().strip("'\"")
+                elif ls.startswith("down_revision:"):
+                    val = ls.split("=", 1)[1].strip().strip("'\"")
+                    down_revision = None if val == "None" else val
+                elif ls.startswith('"""') and description is None:
+                    description = ls.strip('"""').strip()
+                elif "Create Date:" in ls:
+                    create_date = ls.replace("Create Date:", "").strip()
+            if revision:
+                rev_info[revision] = {
+                    "revision": revision,
+                    "down_revision": down_revision,
+                    "description": description or fname,
+                    "create_date": create_date,
+                    "filename": fname,
+                }
+
+        # Walk chain from None (initial) to tip
+        ordered: list[dict] = []
+        next_rev: str | None = None
+        # Build forward map: down_revision → revision
+        forward: dict[str | None, str] = {v["down_revision"]: k for k, v in rev_info.items()}
+        cursor: str | None = None
+        for _ in range(len(rev_info) + 1):   # guard against infinite loop on broken chains
+            nxt = forward.get(cursor)
+            if nxt is None:
+                break
+            ordered.append(rev_info[nxt])
+            cursor = nxt
+
+        # Mark applied: every revision in the chain up to and including current_rev
+        applied_set: set[str] = set()
+        if current_rev:
+            for m in ordered:
+                applied_set.add(m["revision"])
+                if m["revision"] == current_rev:
+                    break
+
+        for m in ordered:
+            m["applied"] = m["revision"] in applied_set
+
+        migrations = ordered
+    except Exception as exc:
+        return {"current_revision": current_rev, "migrations": [], "error": str(exc)}
+
+    return {
+        "current_revision": current_rev,
+        "total": len(migrations),
+        "applied": sum(1 for m in migrations if m["applied"]),
+        "pending": sum(1 for m in migrations if not m["applied"]),
+        "migrations": migrations,
+    }

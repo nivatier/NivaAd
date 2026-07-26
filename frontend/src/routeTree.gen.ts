@@ -26,6 +26,7 @@ import { Route as DeveloperMonitoringRouteImport } from './routes/developer.moni
 import { Route as DeveloperModerationRouteImport } from './routes/developer.moderation'
 import { Route as DeveloperModelsRouteImport } from './routes/developer.models'
 import { Route as DeveloperLogsRouteImport } from './routes/developer.logs'
+import { Route as DeveloperInfrastructureRouteImport } from './routes/developer.infrastructure'
 import { Route as DeveloperCompaniesRouteImport } from './routes/developer.companies'
 import { Route as DeveloperAssistantRouteImport } from './routes/developer.assistant'
 import { Route as AppThemesGalleryRouteImport } from './routes/app.themes-gallery'
@@ -127,6 +128,11 @@ const DeveloperLogsRoute = DeveloperLogsRouteImport.update({
   path: '/developer/logs',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DeveloperInfrastructureRoute = DeveloperInfrastructureRouteImport.update({
+  id: '/developer/infrastructure',
+  path: '/developer/infrastructure',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DeveloperCompaniesRoute = DeveloperCompaniesRouteImport.update({
   id: '/developer/companies',
   path: '/developer/companies',
@@ -226,6 +232,7 @@ export interface FileRoutesByFullPath {
   '/app/themes-gallery': typeof AppThemesGalleryRoute
   '/developer/assistant': typeof DeveloperAssistantRoute
   '/developer/companies': typeof DeveloperCompaniesRoute
+  '/developer/infrastructure': typeof DeveloperInfrastructureRoute
   '/developer/logs': typeof DeveloperLogsRoute
   '/developer/models': typeof DeveloperModelsRoute
   '/developer/moderation': typeof DeveloperModerationRoute
@@ -260,6 +267,7 @@ export interface FileRoutesByTo {
   '/app/themes-gallery': typeof AppThemesGalleryRoute
   '/developer/assistant': typeof DeveloperAssistantRoute
   '/developer/companies': typeof DeveloperCompaniesRoute
+  '/developer/infrastructure': typeof DeveloperInfrastructureRoute
   '/developer/logs': typeof DeveloperLogsRoute
   '/developer/models': typeof DeveloperModelsRoute
   '/developer/moderation': typeof DeveloperModerationRoute
@@ -295,6 +303,7 @@ export interface FileRoutesById {
   '/app/themes-gallery': typeof AppThemesGalleryRoute
   '/developer/assistant': typeof DeveloperAssistantRoute
   '/developer/companies': typeof DeveloperCompaniesRoute
+  '/developer/infrastructure': typeof DeveloperInfrastructureRoute
   '/developer/logs': typeof DeveloperLogsRoute
   '/developer/models': typeof DeveloperModelsRoute
   '/developer/moderation': typeof DeveloperModerationRoute
@@ -331,6 +340,7 @@ export interface FileRouteTypes {
     | '/app/themes-gallery'
     | '/developer/assistant'
     | '/developer/companies'
+    | '/developer/infrastructure'
     | '/developer/logs'
     | '/developer/models'
     | '/developer/moderation'
@@ -365,6 +375,7 @@ export interface FileRouteTypes {
     | '/app/themes-gallery'
     | '/developer/assistant'
     | '/developer/companies'
+    | '/developer/infrastructure'
     | '/developer/logs'
     | '/developer/models'
     | '/developer/moderation'
@@ -399,6 +410,7 @@ export interface FileRouteTypes {
     | '/app/themes-gallery'
     | '/developer/assistant'
     | '/developer/companies'
+    | '/developer/infrastructure'
     | '/developer/logs'
     | '/developer/models'
     | '/developer/moderation'
@@ -434,6 +446,7 @@ export interface RootRouteChildren {
   AppThemesGalleryRoute: typeof AppThemesGalleryRoute
   DeveloperAssistantRoute: typeof DeveloperAssistantRoute
   DeveloperCompaniesRoute: typeof DeveloperCompaniesRoute
+  DeveloperInfrastructureRoute: typeof DeveloperInfrastructureRoute
   DeveloperLogsRoute: typeof DeveloperLogsRoute
   DeveloperModelsRoute: typeof DeveloperModelsRoute
   DeveloperModerationRoute: typeof DeveloperModerationRoute
@@ -567,6 +580,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DeveloperLogsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/developer/infrastructure': {
+      id: '/developer/infrastructure'
+      path: '/developer/infrastructure'
+      fullPath: '/developer/infrastructure'
+      preLoaderRoute: typeof DeveloperInfrastructureRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/developer/companies': {
       id: '/developer/companies'
       path: '/developer/companies'
@@ -698,6 +718,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppThemesGalleryRoute: AppThemesGalleryRoute,
   DeveloperAssistantRoute: DeveloperAssistantRoute,
   DeveloperCompaniesRoute: DeveloperCompaniesRoute,
+  DeveloperInfrastructureRoute: DeveloperInfrastructureRoute,
   DeveloperLogsRoute: DeveloperLogsRoute,
   DeveloperModelsRoute: DeveloperModelsRoute,
   DeveloperModerationRoute: DeveloperModerationRoute,
