@@ -7,12 +7,11 @@ capabilities — there is no code path that connects the two systems."""
 import asyncio
 import os
 import subprocess
-import redis as redis_lib
-
 import uuid
 from datetime import datetime, timedelta
 
 import httpx
+import redis as redis_lib
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case, func, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1964,6 +1963,7 @@ async def delete_video_ratio(ratio: str, _: str = Depends(require_developer_perm
     ratios = await video_ratios_svc.remove_video_ratio(db, ratio)
     return VideoRatiosOut(ratios=ratios)
 
+
 # ── Infrastructure health & DB setup ──────────────────────────────────────────
 
 @router.get("/infrastructure/status")
@@ -2007,11 +2007,12 @@ async def infrastructure_status(_: str = Depends(require_developer), db: AsyncSe
                 content = open(fpath).read()
                 rev_match = None; down_match = None
                 for line in content.splitlines():
-                    if line.startswith("revision:"):
-                        rev_match = line.split("=")[1].strip().strip("'\"")
-                    if line.startswith("down_revision:"):
-                        val = line.split("=")[1].strip().strip("'\"")
-                        down_match = None if val == "None" else val
+                    ls = line.strip()
+                    if ls.startswith("revision") and "=" in ls and not ls.startswith("#"):
+                        rev_match = ls.split("=")[-1].strip().strip("'\"")
+                    if ls.startswith("down_revision") and "=" in ls and not ls.startswith("#"):
+                        val = ls.split("=")[-1].strip().strip("'\"")
+                        down_match = None if val in ("None", "") else val
                 if rev_match:
                     rev_map[down_match] = rev_match
                     rev_to_file[rev_match] = fname
@@ -2221,11 +2222,11 @@ async def migration_history(_: str = Depends(require_developer), db: AsyncSessio
             revision = down_revision = description = create_date = None
             for line in content.splitlines():
                 ls = line.strip()
-                if ls.startswith("revision:"):
-                    revision = ls.split("=")[1].strip().strip("'\"")
-                elif ls.startswith("down_revision:"):
-                    val = ls.split("=", 1)[1].strip().strip("'\"")
-                    down_revision = None if val == "None" else val
+                if ls.startswith("revision") and "=" in ls and not ls.startswith("#"):
+                    revision = ls.split("=")[-1].strip().strip("'\"")
+                elif ls.startswith("down_revision") and "=" in ls and not ls.startswith("#"):
+                    val = ls.split("=")[-1].strip().strip("'\"")
+                    down_revision = None if val in ("None", "") else val
                 elif ls.startswith('"""') and description is None:
                     description = ls.strip('"""').strip()
                 elif "Create Date:" in ls:
