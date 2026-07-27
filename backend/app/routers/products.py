@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.deps import get_current_user, require_capability
 from app.models import Product, User
-from app.schemas import ProductCreateIn, ProductOut
+from app.schemas import ProductCreateIn, ProductOut, ProductUpdateIn
 from app.services.storage import upload_data_url
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -35,6 +35,32 @@ async def create_product(data: ProductCreateIn, user: User = Depends(require_cap
         audience=data.audience, offer=data.offer, image_url=image_url,
     )
     db.add(product)
+    await db.commit()
+    await db.refresh(product)
+    return product
+
+
+@router.put("/{product_id}", response_model=ProductOut)
+async def update_product(product_id: uuid.UUID, data: ProductUpdateIn, user: User = Depends(require_capability("manage_products")), db: AsyncSession = Depends(get_db)):
+    product = await db.get(Product, product_id)
+    if product is None or product.company_id != user.company_id:
+        raise HTTPException(404, "Product not found")
+
+    product.name = data.name.strip()
+    product.description = data.description
+    product.audience = data.audience
+    product.offer = data.offer
+
+    if data.image:
+        # New image uploaded — replace existing
+        try:
+            product.image_url = upload_data_url(data.image, prefix="products")
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(400, f"Could not process the product photo: {exc}")
+    elif data.clear_image:
+        # Explicitly cleared — remove image
+        product.image_url = None
+
     await db.commit()
     await db.refresh(product)
     return product

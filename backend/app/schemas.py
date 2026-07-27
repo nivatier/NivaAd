@@ -931,6 +931,15 @@ class ProductCreateIn(BaseModel):
     image: str | None = None
 
 
+class ProductUpdateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+    audience: str = ""
+    offer: str = ""
+    image: str | None = None       # new base64 data URL — omit to keep existing image
+    clear_image: bool = False      # set True to remove the existing image without uploading a new one
+
+
 class ProductOut(BaseModel):
     id: uuid.UUID
     name: str
