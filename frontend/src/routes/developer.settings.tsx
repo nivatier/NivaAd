@@ -1019,6 +1019,149 @@ function RetentionTab() {
 }
 
 // ── Root component ────────────────────────────────────────────────────────────
+// ── Railway tab ───────────────────────────────────────────────────────────────
+type RailwayService = {
+  id: string;
+  name: string;
+  region: string | null;
+  status: string;
+  deployed_at: string | null;
+};
+
+type RailwayUsage = {
+  estimated_monthly_usd: number | null;
+  current_period_usd: number | null;
+  credit_balance_usd: number | null;
+  project_name: string | null;
+  services: RailwayService[];
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  SUCCESS:    "text-emerald-400",
+  DEPLOYING:  "text-amber-400",
+  FAILED:     "text-destructive",
+  CRASHED:    "text-destructive",
+  REMOVED:    "text-muted-foreground",
+  UNKNOWN:    "text-muted-foreground",
+};
+
+function RailwayTab() {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [data, setData] = useState<RailwayUsage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  async function load() {
+    setLoading(true); setErr("");
+    try {
+      const r = await devApi("/developer/railway-usage");
+      setData(r);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not load Railway data");
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, []);
+
+  const fmt = (v: number | null | undefined) =>
+    v == null ? "—" : `$${Number(v).toFixed(2)}`;
+
+  if (loading) return <div className="text-xs text-muted-foreground">Loading Railway data…</div>;
+  if (err) return (
+    <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-xs text-destructive">
+      {err}
+      {err.includes("RAILWAY_API_TOKEN") && (
+        <div className="mt-2 text-muted-foreground">
+          Go to <strong className="text-foreground">Railway → api service → Variables</strong> and add:<br />
+          <code className="mt-1 block rounded bg-muted px-2 py-1 font-mono text-[10px]">RAILWAY_API_TOKEN=your_token_here</code>
+          <code className="mt-1 block rounded bg-muted px-2 py-1 font-mono text-[10px]">RAILWAY_PROJECT_ID=your_project_id_here</code>
+          Get your token at <a href="https://railway.com/account/tokens" target="_blank" rel="noreferrer" className="underline">railway.com/account/tokens</a>.
+        </div>
+      )}
+    </div>
+  );
+  if (!data) return null;
+
+  const hobbyIncluded = 5.00;
+  const currentUsage = data.current_period_usd ?? 0;
+  const pct = Math.min(100, (currentUsage / hobbyIncluded) * 100);
+  const overLimit = currentUsage > hobbyIncluded;
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      {/* Usage overview */}
+      <div className="rounded-xl border border-border bg-card/60 p-5">
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-sm font-semibold text-foreground">
+            {data.project_name ?? "Railway project"} — billing
+          </div>
+          <button onClick={load} className="text-[10px] text-muted-foreground hover:text-foreground">↻ Refresh</button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-4">Hobby plan includes $5/month. Usage beyond that is billed at resource rates.</p>
+
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          <div className="rounded-lg border border-border bg-background/40 px-3 py-2.5 text-center">
+            <div className="text-[10px] text-muted-foreground mb-1">This period</div>
+            <div className={`text-lg font-bold ${overLimit ? "text-destructive" : "text-foreground"}`}>{fmt(data.current_period_usd)}</div>
+          </div>
+          <div className="rounded-lg border border-border bg-background/40 px-3 py-2.5 text-center">
+            <div className="text-[10px] text-muted-foreground mb-1">Est. monthly</div>
+            <div className="text-lg font-bold text-foreground">{fmt(data.estimated_monthly_usd)}</div>
+          </div>
+          <div className="rounded-lg border border-border bg-background/40 px-3 py-2.5 text-center">
+            <div className="text-[10px] text-muted-foreground mb-1">Credit balance</div>
+            <div className={`text-lg font-bold ${(data.credit_balance_usd ?? 0) < 1 ? "text-destructive" : "text-emerald-400"}`}>{fmt(data.credit_balance_usd)}</div>
+          </div>
+        </div>
+
+        {/* Progress bar vs $5 included */}
+        <div className="mb-1 flex justify-between text-[10px] text-muted-foreground">
+          <span>Usage vs $5 included credit</span>
+          <span className={overLimit ? "text-destructive font-semibold" : ""}>{pct.toFixed(0)}%</span>
+        </div>
+        <div className="h-2 w-full rounded-full bg-muted/40 overflow-hidden">
+          <div className={`h-full rounded-full transition-all ${overLimit ? "bg-destructive" : pct > 80 ? "bg-amber-400" : "bg-emerald-500"}`}
+            style={{ width: `${pct}%` }} />
+        </div>
+        {overLimit && (
+          <div className="mt-2 text-[10px] text-destructive font-medium">
+            ⚠ You've exceeded the $5 included credit — extra usage is being billed.
+          </div>
+        )}
+      </div>
+
+      {/* Services */}
+      {data.services.length > 0 && (
+        <div className="rounded-xl border border-border bg-card/60 p-5">
+          <div className="text-sm font-semibold text-foreground mb-3">Services</div>
+          <div className="space-y-2">
+            {data.services.map((s) => (
+              <div key={s.id} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/40 px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] font-bold ${STATUS_COLOR[s.status] ?? "text-muted-foreground"}`}>●</span>
+                  <span className="text-xs font-medium text-foreground">{s.name}</span>
+                  {s.region && <span className="text-[10px] text-muted-foreground">{s.region}</span>}
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`text-[10px] font-medium ${STATUS_COLOR[s.status] ?? "text-muted-foreground"}`}>{s.status}</span>
+                  {s.deployed_at && (
+                    <span className="text-[10px] text-muted-foreground">{new Date(s.deployed_at).toLocaleDateString()}</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p className="text-[10px] text-muted-foreground">
+        Full billing details at <a href="https://railway.com/workspace/billing" target="_blank" rel="noreferrer" className="underline">railway.com/workspace/billing</a>
+      </p>
+    </div>
+  );
+}
+
 const SETTINGS_TABS = [
   { key: "launch",    label: "🚀 Launch" },
   { key: "billing",   label: "💳 Billing" },
@@ -1027,6 +1170,7 @@ const SETTINGS_TABS = [
   { key: "retention", label: "🗄 Retention" },
   { key: "theme",     label: "🎨 Theme AI" },
   { key: "ratios",    label: "📐 Video Ratios" },
+  { key: "railway",   label: "🚂 Railway" },
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number]["key"];
 
@@ -1057,6 +1201,7 @@ function DeveloperSettings() {
       {tab === "retention" && <RetentionTab />}
       {tab === "theme"     && <ThemeAiSettingsCard />}
       {tab === "ratios"    && <VideoRatiosCard />}
+      {tab === "railway"   && <RailwayTab />}
     </DeveloperShell>
   );
 }

@@ -2488,3 +2488,120 @@ async def email_health(
             for r in recent
         ],
     }
+
+
+# ── Railway billing & usage ────────────────────────────────────────────────────
+
+@router.get("/railway-usage")
+async def get_railway_usage(_: str = Depends(require_developer)):
+    """Fetch current billing usage and service metrics from Railway's GraphQL API.
+    Requires RAILWAY_API_TOKEN env var set on the api service."""
+    import os
+    token = os.environ.get("RAILWAY_API_TOKEN", "")
+    if not token:
+        raise HTTPException(503, "RAILWAY_API_TOKEN is not set — add it to the api service environment variables on Railway.")
+
+    project_id = os.environ.get("RAILWAY_PROJECT_ID", "")
+    if not project_id:
+        raise HTTPException(503, "RAILWAY_PROJECT_ID is not set — add it to the api service environment variables on Railway.")
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    # Query 1: workspace usage / estimated bill
+    usage_query = """
+    query {
+      me {
+        usage {
+          estimatedMonthlyUsage
+          currentPeriodUsage
+          creditBalance
+        }
+      }
+    }
+    """
+
+    # Query 2: project services with their latest metrics
+    services_query = f"""
+    query {{
+      project(id: "{project_id}") {{
+        id
+        name
+        services {{
+          edges {{
+            node {{
+              id
+              name
+              serviceInstances {{
+                edges {{
+                  node {{
+                    latestDeployment {{
+                      status
+                      createdAt
+                    }}
+                    region
+                  }}
+                }}
+              }}
+            }}
+          }}
+        }}
+      }}
+    }}
+    """
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        try:
+            usage_resp = await client.post(
+                "https://backboard.railway.com/graphql/v2",
+                headers=headers,
+                json={"query": usage_query},
+            )
+            usage_data = usage_resp.json()
+
+            services_resp = await client.post(
+                "https://backboard.railway.com/graphql/v2",
+                headers=headers,
+                json={"query": services_query},
+            )
+            services_data = services_resp.json()
+        except Exception as e:
+            raise HTTPException(502, f"Could not reach Railway API: {e}")
+
+    # Extract usage
+    usage_errors = usage_data.get("errors")
+    if usage_errors:
+        raise HTTPException(502, f"Railway API error: {usage_errors[0].get('message', 'Unknown error')}")
+
+    me = usage_data.get("data", {}).get("me", {})
+    usage = me.get("usage", {})
+
+    # Extract services
+    services_out = []
+    project = services_data.get("data", {}).get("project", {})
+    for edge in project.get("services", {}).get("edges", []):
+        svc = edge["node"]
+        instances = svc.get("serviceInstances", {}).get("edges", [])
+        latest_deployment = None
+        region = None
+        if instances:
+            inst = instances[0]["node"]
+            latest_deployment = inst.get("latestDeployment")
+            region = inst.get("region")
+        services_out.append({
+            "id": svc["id"],
+            "name": svc["name"],
+            "region": region,
+            "status": latest_deployment.get("status") if latest_deployment else "UNKNOWN",
+            "deployed_at": latest_deployment.get("createdAt") if latest_deployment else None,
+        })
+
+    return {
+        "estimated_monthly_usd": usage.get("estimatedMonthlyUsage"),
+        "current_period_usd": usage.get("currentPeriodUsage"),
+        "credit_balance_usd": usage.get("creditBalance"),
+        "project_name": project.get("name"),
+        "services": services_out,
+    }
