@@ -2496,12 +2496,11 @@ async def email_health(
 async def get_railway_usage(_: str = Depends(require_developer)):
     """Fetch current billing usage and service metrics from Railway's GraphQL API.
     Requires RAILWAY_API_TOKEN env var set on the api service."""
-    import os
-    token = os.environ.get("RAILWAY_API_TOKEN", "")
+    token = settings.RAILWAY_API_TOKEN
     if not token:
         raise HTTPException(503, "RAILWAY_API_TOKEN is not set — add it to the api service environment variables on Railway.")
 
-    project_id = os.environ.get("RAILWAY_PROJECT_ID", "")
+    project_id = settings.RAILWAY_PROJECT_ID
     if not project_id:
         raise HTTPException(503, "RAILWAY_PROJECT_ID is not set — add it to the api service environment variables on Railway.")
 
@@ -2510,20 +2509,8 @@ async def get_railway_usage(_: str = Depends(require_developer)):
         "Content-Type": "application/json",
     }
 
-    # Query 1: workspace usage / estimated bill
-    usage_query = """
-    query {
-      me {
-        usage {
-          estimatedMonthlyUsage
-          currentPeriodUsage
-          creditBalance
-        }
-      }
-    }
-    """
-
-    # Query 2: project services with their latest metrics
+    # Query project services only — Railway's billing fields are not
+    # exposed in the public GraphQL API as of mid-2026.
     services_query = f"""
     query {{
       project(id: "{project_id}") {{
@@ -2554,33 +2541,24 @@ async def get_railway_usage(_: str = Depends(require_developer)):
 
     async with httpx.AsyncClient(timeout=15) as client:
         try:
-            usage_resp = await client.post(
-                "https://backboard.railway.com/graphql/v2",
-                headers=headers,
-                json={"query": usage_query},
-            )
-            usage_data = usage_resp.json()
-
-            services_resp = await client.post(
+            resp = await client.post(
                 "https://backboard.railway.com/graphql/v2",
                 headers=headers,
                 json={"query": services_query},
             )
-            services_data = services_resp.json()
+            resp_data = resp.json()
         except Exception as e:
             raise HTTPException(502, f"Could not reach Railway API: {e}")
 
-    # Extract usage
-    usage_errors = usage_data.get("errors")
-    if usage_errors:
-        raise HTTPException(502, f"Railway API error: {usage_errors[0].get('message', 'Unknown error')}")
+    errors = resp_data.get("errors", [])
+    data = resp_data.get("data") or {}
 
-    me = usage_data.get("data", {}).get("me", {})
-    usage = me.get("usage", {})
+    if not data and errors:
+        raise HTTPException(502, f"Railway API error: {errors[0].get('message', 'Unknown error')}")
 
     # Extract services
     services_out = []
-    project = services_data.get("data", {}).get("project", {})
+    project = data.get("project") or {}
     for edge in project.get("services", {}).get("edges", []):
         svc = edge["node"]
         instances = svc.get("serviceInstances", {}).get("edges", [])
@@ -2599,9 +2577,10 @@ async def get_railway_usage(_: str = Depends(require_developer)):
         })
 
     return {
-        "estimated_monthly_usd": usage.get("estimatedMonthlyUsage"),
-        "current_period_usd": usage.get("currentPeriodUsage"),
-        "credit_balance_usd": usage.get("creditBalance"),
+        "estimated_monthly_usd": None,
+        "current_period_usd": None,
+        "credit_balance_usd": None,
         "project_name": project.get("name"),
         "services": services_out,
+        "api_notes": [e.get("message") for e in errors] if errors else [],
     }

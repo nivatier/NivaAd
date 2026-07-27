@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     CAROUSEL_MAX_IMAGES: int = 5   # server-enforced cap — the frontend has a matching constant in src/lib/constants.ts, keep both in sync if you change this
     DEVELOPER_EMAIL: str = ""      # platform-operator login — set in .env, checked directly, no database row at all
     DEVELOPER_PASSWORD: str = ""   # plaintext in .env, same trust boundary as JWT_SECRET/STRIPE_SECRET_KEY which already live there
+    RAILWAY_API_TOKEN: str = ""    # Railway API token for billing/usage queries in developer panel
+    RAILWAY_PROJECT_ID: str = ""   # Railway project UUID
 
     class Config:
         env_file = ".env"
