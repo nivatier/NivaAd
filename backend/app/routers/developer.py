@@ -1287,6 +1287,25 @@ async def generate_hint_audio(hint_id: str, _: str = Depends(require_developer_p
     return [AssistantHintOut(**h) for h in hints]
 
 
+@router.post("/assistant-hints/regenerate-all-audio", response_model=list[AssistantHintOut])
+async def regenerate_all_hint_audio(_: str = Depends(require_developer_permission("assistant")), db: AsyncSession = Depends(get_db)):
+    """Regenerates TTS audio for every hint that already has an audio_url,
+    using the currently saved tts_voice and tts_model. Used to bulk-fix
+    audio after changing voice or after an S3_PUBLIC_URL change."""
+    hints = await assistant_hints_svc.get_assistant_hints(db)
+    errors = []
+    for hint in hints:
+        if not hint.get("audio_url"):
+            continue  # skip hints that never had audio
+        try:
+            hints = await assistant_hints_svc.generate_hint_audio(db, hint["id"])
+        except Exception as exc:
+            errors.append(f"{hint['id']}: {exc}")
+    if errors:
+        raise HTTPException(502, f"Some hints failed: {'; '.join(errors)}")
+    return [AssistantHintOut(**h) for h in hints]
+
+
 @router.post("/assistant-intro/generate-audio", response_model=AssistantSettingsOut)
 async def generate_intro_audio(data: GenerateIntroAudioIn, _: str = Depends(require_developer_permission("assistant")), db: AsyncSession = Depends(get_db)):
     """Generates and stores TTS for Nova's intro speech."""

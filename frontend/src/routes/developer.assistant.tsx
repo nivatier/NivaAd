@@ -652,6 +652,13 @@ function DeveloperAssistant() {
     catch (e: any) { if (!handleAuthError(e)) setErr(e.message || "Generation failed"); }
     setGeneratingAudioId(null);
   }
+  async function regenerateAllAudio() {
+    if (!confirm("Regenerate audio for all hints that already have audio? This will re-upload all files using the current voice settings.")) return;
+    setGeneratingAudioId("__all__"); setErr("");
+    try { setHints(await devApi("/developer/assistant-hints/regenerate-all-audio", { method: "POST" })); }
+    catch (e: any) { if (!handleAuthError(e)) setErr(e.message || "Bulk regeneration failed"); }
+    setGeneratingAudioId(null);
+  }
 
   // System hints (sleep/wake) are edited inline in the settings card above,
   // not shown as part of the grouped hint-message list below.
@@ -740,6 +747,13 @@ function DeveloperAssistant() {
           <p className="text-xs text-muted-foreground">
             Messages shown when the assistant highlights sidebar navigation items. Each nav item can have one hint message.
           </p>
+          <div className="flex items-center gap-3 mb-2">
+            <button onClick={regenerateAllAudio} disabled={generatingAudioId === "__all__"}
+              className="rounded-full border border-primary/50 px-3 py-1.5 text-[11px] text-primary hover:bg-primary/10 disabled:opacity-50">
+              {generatingAudioId === "__all__" ? "Regenerating all…" : "🔄 Regenerate all audio"}
+            </button>
+            <span className="text-[10px] text-muted-foreground">Re-uploads all existing audio files with current voice settings</span>
+          </div>
           <NavHintChecklist
             navHints={hints.filter((h) => h.key.startsWith("nav:"))}
             expanded={isExpanded("nav")}
@@ -785,6 +799,13 @@ function DeveloperAssistant() {
             <p className="text-xs text-muted-foreground">
               Messages shown at specific fields and pages. Generate audio per-hint — before audio is generated the assistant speaks via the browser's built-in Speech Synthesis.
             </p>
+            <div className="flex items-center gap-3">
+              <button onClick={regenerateAllAudio} disabled={generatingAudioId === "__all__"}
+                className="rounded-full border border-primary/50 px-3 py-1.5 text-[11px] text-primary hover:bg-primary/10 disabled:opacity-50">
+                {generatingAudioId === "__all__" ? "Regenerating all…" : "🔄 Regenerate all audio"}
+              </button>
+              <span className="text-[10px] text-muted-foreground">Re-uploads all existing audio files with current voice settings</span>
+            </div>
             {/* Sub-tab strip */}
             <div className="flex flex-wrap gap-1.5">
               {HINT_SUBTABS.map((t) => (
