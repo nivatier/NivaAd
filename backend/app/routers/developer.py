@@ -1749,14 +1749,136 @@ async def list_developer_created_users(_: str = Depends(require_developer), db: 
     result = []
     for row in rows:
         company = await db.get(Company, row.company_id)
-        if company:
-            result.append({
-                "company_id":   str(row.company_id),
-                "company_name": company.name,
-                "email":        row.detail.get("email", ""),
-                "created_at":   row.created_at.isoformat(),
-            })
+        if not company:
+            continue
+        # Fetch the admin user for this company
+        admin = await db.scalar(
+            select(User).where(User.company_id == company.id, User.role == "admin").limit(1)
+        )
+        # Fetch current subscription tier
+        sub = await db.scalar(
+            select(Subscription).where(Subscription.company_id == company.id).limit(1)
+        )
+        result.append({
+            "company_id":   str(row.company_id),
+            "company_name": company.name,
+            "email":        admin.email if admin else row.detail.get("email", ""),
+            "full_name":    admin.full_name if admin else "",
+            "user_id":      str(admin.id) if admin else None,
+            "tier":         sub.tier if sub else "free",
+            "created_at":   row.created_at.isoformat(),
+        })
     return result
+
+
+@router.put("/created-users/{company_id}")
+async def update_developer_created_user(
+    company_id: str,
+    body: dict,
+    _: str = Depends(require_developer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit company name, admin email/full_name, and/or plan tier for a developer-created user."""
+    try:
+        cid = uuid.UUID(company_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid company_id")
+
+    company = await db.get(Company, cid)
+    if not company:
+        raise HTTPException(404, "Company not found")
+
+    admin = await db.scalar(
+        select(User).where(User.company_id == cid, User.role == "admin").limit(1)
+    )
+    sub = await db.scalar(
+        select(Subscription).where(Subscription.company_id == cid).limit(1)
+    )
+
+    new_company_name = str(body.get("company_name", company.name)).strip()
+    new_email        = str(body.get("email", admin.email if admin else "")).strip().lower()
+    new_full_name    = str(body.get("full_name", admin.full_name if admin else "")).strip()
+    new_tier         = str(body.get("tier", sub.tier if sub else "free")).strip()
+
+    if not new_company_name:
+        raise HTTPException(422, "company_name required")
+    if not new_email or "@" not in new_email:
+        raise HTTPException(422, "Valid email required")
+
+    # Check email uniqueness if changed
+    if admin and new_email != admin.email:
+        conflict = await db.scalar(select(User).where(User.email == new_email))
+        if conflict:
+            raise HTTPException(409, f"{new_email} is already in use")
+
+    TIER_CREDITS = {"free": 3, "starter": 10, "growth": 30, "pro": 120}
+
+    company.name = new_company_name
+
+    if admin:
+        admin.email     = new_email
+        admin.full_name = new_full_name
+
+    if sub and sub.tier != new_tier:
+        new_credits = TIER_CREDITS.get(new_tier, 3)
+        sub.tier            = new_tier
+        sub.monthly_credits = new_credits
+        db.add(CreditLedger(company_id=cid, delta=new_credits, reason="plan_grant"))
+
+    db.add(AuditLog(
+        company_id=cid,
+        action="company.updated",
+        detail={"updated_by": "developer", "email": new_email},
+    ))
+    await db.commit()
+
+    return {
+        "company_id":   str(cid),
+        "company_name": company.name,
+        "email":        admin.email if admin else new_email,
+        "full_name":    admin.full_name if admin else new_full_name,
+        "user_id":      str(admin.id) if admin else None,
+        "tier":         sub.tier if sub else new_tier,
+    }
+
+
+@router.delete("/created-users/{company_id}", status_code=204)
+async def delete_developer_created_user(
+    company_id: str,
+    _: str = Depends(require_developer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete a developer-created company and all its data."""
+    from app.models import (
+        BrandKit, BrandLogo, BrandVideoShot, Product, Ad, GenerationJob,
+        Campaign, ScheduledPost, PlatformConnection, FlaggedContent,
+        CompanyModelConfig, CompanyAgentSettings, Notification,
+        AgentEvent, AgentRecommendation, AgentScrapeJob, ScrapedSite,
+    )
+    try:
+        cid = uuid.UUID(company_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid company_id")
+
+    company = await db.get(Company, cid)
+    if not company:
+        raise HTTPException(404, "Company not found")
+
+    # Delete in dependency order (children first, then company)
+    for model in [
+        Notification, AgentEvent, AgentRecommendation, AgentScrapeJob, ScrapedSite,
+        FlaggedContent, ScheduledPost, GenerationJob, Ad, Campaign,
+        PlatformConnection, Product, BrandVideoShot, BrandLogo, BrandKit,
+        CompanyModelConfig, CompanyAgentSettings,
+        CreditLedger, Subscription, AuditLog, User,
+    ]:
+        rows = (await db.execute(select(model).where(model.company_id == cid))).scalars().all()
+        for r in rows:
+            await db.delete(r)
+
+    await db.delete(company)
+    await db.commit()
+    return
 
 
 
@@ -2274,4 +2396,95 @@ async def migration_history(_: str = Depends(require_developer), db: AsyncSessio
         "applied": sum(1 for m in migrations if m["applied"]),
         "pending": sum(1 for m in migrations if not m["applied"]),
         "migrations": migrations,
+    }
+
+
+# ── Email suppression management ──────────────────────────────────────────────
+
+@router.get("/email-suppressions")
+async def list_email_suppressions(
+    _: str = Depends(require_developer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns all suppressed email addresses with reason and date.
+    Used by the Developer → Email Health panel."""
+    from app.models import EmailSuppression
+    rows = (await db.scalars(
+        select(EmailSuppression).order_by(EmailSuppression.created_at.desc())
+    )).all()
+    return {
+        "total": len(rows),
+        "bounces": sum(1 for r in rows if r.reason == "bounce"),
+        "complaints": sum(1 for r in rows if r.reason == "complaint"),
+        "suppressions": [
+            {
+                "id": r.id,
+                "email": r.email,
+                "reason": r.reason,
+                "detail": r.detail,
+                "created_at": r.created_at.isoformat() + "Z",
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.delete("/email-suppressions/{suppression_id}")
+async def remove_email_suppression(
+    suppression_id: int,
+    _: str = Depends(require_developer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a suppression entry — use when an address was suppressed in error
+    or the recipient has confirmed they want to receive emails again."""
+    from app.models import EmailSuppression
+    row = await db.get(EmailSuppression, suppression_id)
+    if not row:
+        raise HTTPException(404, "Suppression not found")
+    email = row.email
+    await db.delete(row)
+    db.add(AuditLog(action="email.suppression_removed", detail={"email": email}))
+    await db.commit()
+    return {"removed": True, "email": email}
+
+
+@router.get("/email-health")
+async def email_health(
+    _: str = Depends(require_developer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns suppression stats and recent audit log entries for bounce/complaint
+    events. Gives the developer a quick health overview without loading the
+    full suppression list."""
+    from app.models import EmailSuppression
+    from sqlalchemy import func
+
+    total = await db.scalar(select(func.count()).select_from(EmailSuppression)) or 0
+    bounces = await db.scalar(
+        select(func.count()).select_from(EmailSuppression).where(EmailSuppression.reason == "bounce")
+    ) or 0
+    complaints = await db.scalar(
+        select(func.count()).select_from(EmailSuppression).where(EmailSuppression.reason == "complaint")
+    ) or 0
+
+    # Last 10 suppression events from audit log
+    recent = (await db.scalars(
+        select(AuditLog)
+        .where(AuditLog.action.in_(["email.bounce_suppressed", "email.complaint_suppressed", "email.suppression_removed"]))
+        .order_by(AuditLog.created_at.desc())
+        .limit(20)
+    )).all()
+
+    return {
+        "total_suppressed": total,
+        "bounces": bounces,
+        "complaints": complaints,
+        "recent_events": [
+            {
+                "action": r.action,
+                "detail": r.detail,
+                "created_at": r.created_at.isoformat() + "Z",
+            }
+            for r in recent
+        ],
     }

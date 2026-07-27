@@ -448,3 +448,18 @@ class SystemLog(Base):
     logger_name: Mapped[str] = mapped_column(String(120))           # logger name e.g. "nivaad.tasks"
     message: Mapped[str] = mapped_column(Text)                      # formatted log message
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class EmailSuppression(Base):
+    """Stores email addresses that have hard-bounced or generated a spam
+    complaint via AWS SES SNS notifications. The send_email() function
+    checks this table before sending and silently skips suppressed addresses.
+    Retention: permanent — we never re-enable a suppressed address automatically.
+    A developer can manually remove an entry from the Developer panel if
+    the address was suppressed in error."""
+    __tablename__ = "email_suppressions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    reason: Mapped[str] = mapped_column(String(20))   # "bounce" | "complaint"
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)  # raw SNS notification payload snippet
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

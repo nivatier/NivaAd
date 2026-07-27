@@ -1,6 +1,6 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { type ReactNode } from "react";
-import { LayoutDashboard, Building2, Cpu, Palette, Link2, ShieldCheck, Settings, MessageCircle, Users, Activity, ScrollText, Server, type LucideIcon } from "lucide-react";
+import { LayoutDashboard, Building2, Cpu, Palette, Link2, ShieldCheck, Settings, MessageCircle, Users, Activity, ScrollText, Server, Mail, type LucideIcon } from "lucide-react";
 import { clearDevToken } from "@/lib/dev-api";
 import { useDevIdentity } from "@/hooks/use-developer-auth";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -13,6 +13,7 @@ const NAV: { to: string; label: string; icon: LucideIcon; section: string | null
   { to: "/developer/overview", label: "Overview", icon: LayoutDashboard, section: null },
   { to: "/developer/monitoring",      label: "Monitoring",     icon: Activity,  section: null },
   { to: "/developer/infrastructure",  label: "Infrastructure", icon: Server,    section: null },
+  { to: "/developer/email",           label: "Email Health",   icon: Mail,     section: null },
   { to: "/developer/logs",            label: "Logs",           icon: ScrollText, section: null },
   { to: "/developer/companies", label: "Companies", icon: Building2, section: "companies" },
   { to: "/developer/models", label: "Models", icon: Cpu, section: "models" },

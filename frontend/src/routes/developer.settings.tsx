@@ -353,11 +353,36 @@ function ThemeAiSettingsCard() {
   );
 }
 
+type CreatedUser = {
+  company_id: string;
+  company_name: string;
+  email: string;
+  full_name: string;
+  user_id: string | null;
+  tier: string;
+  created_at: string;
+};
+
+type EditState = {
+  company_id: string;
+  company_name: string;
+  email: string;
+  full_name: string;
+  tier: string;
+};
+
+const TIER_LABELS: Record<string, string> = {
+  free: "Free",
+  starter: "Starter",
+  growth: "Growth",
+  pro: "Pro",
+};
+
 function LaunchControlCard() {
   const handleAuthError = useDevAuthErrorHandler();
   const [open, setOpen] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
-  const [users, setUsers] = useState<{ company_id: string; company_name: string; email: string; created_at: string }[]>([]);
+  const [users, setUsers] = useState<CreatedUser[]>([]);
   const [companyName, setCompanyName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -368,9 +393,18 @@ function LaunchControlCard() {
   const [createOk, setCreateOk] = useState("");
   const [err, setErr] = useState("");
 
+  // Edit state
+  const [editing, setEditing] = useState<EditState | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editErr, setEditErr] = useState("");
+  const [editOk, setEditOk] = useState("");
+
+  // Delete state
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   function loadUsers() {
     devApi("/developer/created-users")
-      .then((r: any[]) => setUsers(r))
+      .then((r: CreatedUser[]) => setUsers(r))
       .catch(() => {});
   }
 
@@ -406,6 +440,39 @@ function LaunchControlCard() {
       loadUsers();
     } catch (e: any) { if (!handleAuthError(e)) setCreateErr(e.message || "Could not create user"); }
     setCreating(false);
+  }
+
+  function startEdit(u: CreatedUser) {
+    setEditing({ company_id: u.company_id, company_name: u.company_name, email: u.email, full_name: u.full_name, tier: u.tier });
+    setEditErr(""); setEditOk("");
+  }
+
+  async function saveEdit() {
+    if (!editing) return;
+    if (!editing.company_name.trim()) { setEditErr("Company name required"); return; }
+    if (!editing.email.trim() || !editing.email.includes("@")) { setEditErr("Valid email required"); return; }
+    setEditSaving(true); setEditErr(""); setEditOk("");
+    try {
+      await devApi(`/developer/created-users/${editing.company_id}`, {
+        method: "PUT",
+        body: { company_name: editing.company_name.trim(), email: editing.email.trim(), full_name: editing.full_name.trim(), tier: editing.tier },
+      });
+      setEditOk("✓ Saved");
+      setTimeout(() => { setEditing(null); setEditOk(""); }, 1000);
+      loadUsers();
+    } catch (e: any) { if (!handleAuthError(e)) setEditErr(e.message || "Could not save"); }
+    setEditSaving(false);
+  }
+
+  async function deleteUser(u: CreatedUser) {
+    if (!confirm(`Permanently delete "${u.company_name}" (${u.email}) and all their data? This cannot be undone.`)) return;
+    setDeletingId(u.company_id);
+    try {
+      await devApi(`/developer/created-users/${u.company_id}`, { method: "DELETE" });
+      setUsers((prev) => prev.filter((x) => x.company_id !== u.company_id));
+      if (editing?.company_id === u.company_id) setEditing(null);
+    } catch (e: any) { if (!handleAuthError(e)) alert(e.message || "Could not delete"); }
+    setDeletingId(null);
   }
 
   return (
@@ -480,14 +547,76 @@ function LaunchControlCard() {
       {users.length > 0 && (
         <div className="mt-5 border-t border-border/50 pt-4">
           <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-3">Users added via developer panel</div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {users.map((u) => (
-              <div key={u.company_id} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/40 px-3 py-2">
-                <div>
-                  <span className="text-xs font-medium text-foreground">{u.email}</span>
-                  <span className="ml-2 text-[10px] text-muted-foreground">{u.company_name}</span>
+              <div key={u.company_id} className="rounded-lg border border-border bg-background/40 overflow-hidden">
+                {/* Row */}
+                <div className="flex items-center justify-between gap-2 px-3 py-2">
+                  <div className="min-w-0">
+                    <span className="text-xs font-medium text-foreground">{u.email}</span>
+                    <span className="ml-2 text-[10px] text-muted-foreground">{u.company_name}</span>
+                    <span className="ml-2 rounded-full border border-border/60 bg-muted/30 px-1.5 py-0.5 text-[10px] text-muted-foreground">{TIER_LABELS[u.tier] ?? u.tier}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-[10px] text-muted-foreground">{new Date(u.created_at).toLocaleDateString()}</span>
+                    <button
+                      onClick={() => editing?.company_id === u.company_id ? setEditing(null) : startEdit(u)}
+                      className="rounded-md px-2 py-1 text-[10px] font-medium text-muted-foreground border border-border hover:text-foreground hover:border-primary/40 transition-colors">
+                      {editing?.company_id === u.company_id ? "Cancel" : "Edit"}
+                    </button>
+                    <button
+                      onClick={() => deleteUser(u)}
+                      disabled={deletingId === u.company_id}
+                      className="rounded-md px-2 py-1 text-[10px] font-medium text-destructive/70 border border-destructive/30 hover:text-destructive hover:border-destructive transition-colors disabled:opacity-40">
+                      {deletingId === u.company_id ? "…" : "Delete"}
+                    </button>
+                  </div>
                 </div>
-                <span className="text-[10px] text-muted-foreground shrink-0">{new Date(u.created_at).toLocaleDateString()}</span>
+
+                {/* Inline edit form */}
+                {editing?.company_id === u.company_id && (
+                  <div className="border-t border-border/50 bg-muted/10 px-3 py-3">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Company name *</label>
+                        <input value={editing.company_name} onChange={(e) => setEditing({ ...editing, company_name: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Full name</label>
+                        <input value={editing.full_name} onChange={(e) => setEditing({ ...editing, full_name: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Email *</label>
+                        <input type="email" value={editing.email} onChange={(e) => setEditing({ ...editing, email: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Plan tier</label>
+                        <select value={editing.tier} onChange={(e) => setEditing({ ...editing, tier: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+                          <option value="free">Free (3 credits)</option>
+                          <option value="starter">Starter (10 credits)</option>
+                          <option value="growth">Growth (30 credits)</option>
+                          <option value="pro">Pro (120 credits)</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <button onClick={saveEdit} disabled={editSaving}
+                        className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+                        {editSaving ? "Saving…" : "Save changes"}
+                      </button>
+                      <button onClick={() => setEditing(null)}
+                        className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+                        Cancel
+                      </button>
+                      {editOk && <span className="text-xs text-emerald-400">{editOk}</span>}
+                    </div>
+                    {editErr && <div className="mt-1 text-xs text-destructive">{editErr}</div>}
+                  </div>
+                )}
               </div>
             ))}
           </div>

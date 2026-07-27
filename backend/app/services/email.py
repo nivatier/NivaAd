@@ -12,7 +12,30 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def is_suppressed(to: str) -> bool:
+    """Check synchronously whether an address is in the email_suppressions
+    table before sending. Uses psycopg sync driver to avoid needing an
+    async session in this sync email context."""
+    try:
+        import psycopg
+        dsn = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+        with psycopg.connect(dsn) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM email_suppressions WHERE email = %s LIMIT 1",
+                (to.lower().strip(),)
+            ).fetchone()
+            return row is not None
+    except Exception as exc:
+        # If we cannot check, allow the send — better to send than silently drop
+        logger.warning("[email] suppression check failed for %s: %s", to, exc)
+        return False
+
+
 def send_email(to: str, subject: str, html_body: str, text_body: str | None = None) -> None:
+    # Skip suppressed addresses — hard bounces and spam complaints
+    if is_suppressed(to):
+        logger.warning("[email] skipping suppressed address: %s (subject: %s)", to, subject)
+        return
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = settings.SMTP_FROM

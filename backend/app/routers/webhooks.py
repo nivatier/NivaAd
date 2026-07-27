@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import AuditLog, CreditLedger, Subscription
+from app.models import AuditLog, CreditLedger, EmailSuppression, Subscription
 from app.services import billing as billing_svc
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -111,4 +111,102 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
     db.add(AuditLog(action="stripe.webhook", detail={"event_id": event["id"], "type": etype}))
     await db.commit()
+    return {"received": True}
+
+
+@router.post("/ses")
+async def ses_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    """Receives AWS SES bounce and complaint notifications via SNS.
+    SNS sends either a SubscriptionConfirmation (first time) or a
+    Notification containing the SES event. We handle both.
+
+    Setup in AWS:
+    1. SNS → Create topic (Standard) → name: nivaspark-ses-events
+    2. SES → nivatier.com identity → Notifications → Bounces → topic above
+    3. SES → nivatier.com identity → Notifications → Complaints → topic above
+    4. SNS → topic → Create subscription → HTTPS → https://api.railway.app/webhooks/ses
+    5. SNS sends SubscriptionConfirmation — this endpoint auto-confirms it
+    """
+    from app.models import EmailSuppression
+    import json as _json
+    import httpx as _httpx
+
+    body = await request.body()
+    try:
+        payload = _json.loads(body)
+    except Exception:
+        raise HTTPException(400, "Invalid JSON")
+
+    msg_type = request.headers.get("x-amz-sns-message-type", "")
+
+    # ── SNS subscription confirmation ─────────────────────────────────
+    if msg_type == "SubscriptionConfirmation":
+        confirm_url = payload.get("SubscribeURL")
+        if confirm_url:
+            async with _httpx.AsyncClient(timeout=10) as client:
+                await client.get(confirm_url)
+            logger.info("[ses_webhook] SNS subscription confirmed")
+        return {"confirmed": True}
+
+    # ── SNS notification ──────────────────────────────────────────────
+    if msg_type == "Notification":
+        try:
+            message = _json.loads(payload.get("Message", "{}"))
+        except Exception:
+            return {"received": True}
+
+        notification_type = message.get("notificationType")
+
+        if notification_type == "Bounce":
+            bounce = message.get("bounce", {})
+            bounce_type = bounce.get("bounceType", "")
+            # Only suppress hard bounces — soft bounces (transient) should not be permanently suppressed
+            if bounce_type == "Permanent":
+                recipients = bounce.get("bouncedRecipients", [])
+                for r in recipients:
+                    email = r.get("emailAddress", "").lower().strip()
+                    if not email:
+                        continue
+                    existing = await db.scalar(
+                        select(EmailSuppression).where(EmailSuppression.email == email)
+                    )
+                    if not existing:
+                        db.add(EmailSuppression(
+                            email=email,
+                            reason="bounce",
+                            detail={
+                                "bounce_type": bounce_type,
+                                "bounce_subtype": bounce.get("bounceSubType"),
+                                "action": r.get("action"),
+                                "status": r.get("status"),
+                                "diagnostic": r.get("diagnosticCode"),
+                            }
+                        ))
+                        db.add(AuditLog(action="email.bounce_suppressed", detail={"email": email, "bounce_type": bounce_type}))
+                        logger.warning("[ses_webhook] suppressed hard bounce: %s", email)
+
+        elif notification_type == "Complaint":
+            complaint = message.get("complaint", {})
+            recipients = complaint.get("complainedRecipients", [])
+            for r in recipients:
+                email = r.get("emailAddress", "").lower().strip()
+                if not email:
+                    continue
+                existing = await db.scalar(
+                    select(EmailSuppression).where(EmailSuppression.email == email)
+                )
+                if not existing:
+                    db.add(EmailSuppression(
+                        email=email,
+                        reason="complaint",
+                        detail={
+                            "feedback_type": complaint.get("complaintFeedbackType"),
+                            "user_agent": complaint.get("userAgent"),
+                        }
+                    ))
+                    db.add(AuditLog(action="email.complaint_suppressed", detail={"email": email}))
+                    logger.warning("[ses_webhook] suppressed complaint: %s", email)
+
+        await db.commit()
+
     return {"received": True}
