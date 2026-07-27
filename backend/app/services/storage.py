@@ -28,10 +28,24 @@ def s3():
 
 
 def upload_bytes(data: bytes, content_type: str, ext: str, prefix: str = "generated") -> str:
-    """Uploads and returns a URL the browser (and OpenRouter) can load directly."""
+    """Uploads and returns a URL the browser (and OpenRouter) can load directly.
+
+    S3_PUBLIC_URL controls the public base:
+      - Local MinIO:  http://localhost:9000  (bucket must be appended)
+      - Cloudflare R2 public dev URL: https://pub-xxx.r2.dev  (already
+        bucket-scoped — do NOT append bucket or the path is wrong)
+
+    We detect which case we're in by checking whether the bucket name is
+    already present in S3_PUBLIC_URL."""
     key = f"{prefix}/{uuid.uuid4()}.{ext}"
     s3().put_object(Bucket=settings.S3_BUCKET, Key=key, Body=data, ContentType=content_type)
-    return f"{settings.S3_PUBLIC_URL}/{settings.S3_BUCKET}/{key}"
+    base = settings.S3_PUBLIC_URL.rstrip("/")
+    if settings.S3_BUCKET in base:
+        # MinIO local: base already includes bucket (e.g. http://minio:9000/nivaad-media)
+        return f"{base}/{key}"
+    else:
+        # R2 public URL: base is bucket-scoped, don't add bucket segment
+        return f"{base}/{key}"
 
 
 def upload_data_url(data_url: str, prefix: str = "uploads") -> str:
@@ -43,12 +57,24 @@ def upload_data_url(data_url: str, prefix: str = "uploads") -> str:
 
 
 def _key_from_url(url: str) -> str:
-    """Recovers the S3 object key from a URL we generated ourselves
-    (format: {S3_PUBLIC_URL}/{S3_BUCKET}/{key})."""
+    """Recovers the S3 object key from a URL we generated ourselves.
+
+    Two URL formats are supported:
+      - MinIO local: {S3_PUBLIC_URL}/{S3_BUCKET}/{key}
+        e.g. http://minio:9000/nivaad-media/generated/abc.png
+      - R2 public:   {S3_PUBLIC_URL}/{key}   (bucket not in path)
+        e.g. https://pub-xxx.r2.dev/generated/abc.png
+
+    We detect which by checking if the bucket name appears in the URL."""
     marker = f"/{settings.S3_BUCKET}/"
-    if marker not in url:
-        raise ValueError(f"URL does not look like one of our own storage URLs: {url}")
-    return url.split(marker, 1)[1]
+    if marker in url:
+        # MinIO-style: bucket is in the URL path
+        return url.split(marker, 1)[1]
+    # R2-style: strip the base URL to get the key
+    base = settings.S3_PUBLIC_URL.rstrip("/")
+    if url.startswith(base + "/"):
+        return url[len(base) + 1:]
+    raise ValueError(f"URL does not look like one of our own storage URLs: {url}")
 
 
 def delete_object(url: str) -> None:
