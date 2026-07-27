@@ -653,13 +653,19 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
                   className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none mb-2" />
                 <div className="flex items-center gap-2 flex-wrap">
                   <label className="cursor-pointer rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground">
-                    Upload thumbnail
+                    {draft.thumbnail ? "Replace thumbnail" : "Upload thumbnail"}
                     <input type="file" accept="image/*" onChange={handleThumbnailUpload} disabled={thumbBusy} className="hidden" />
                   </label>
                   <button onClick={generateThumbnailFromShot} disabled={thumbBusy}
                     className="rounded-full border border-primary/50 px-2.5 py-1 text-[11px] text-primary hover:bg-primary/10 disabled:opacity-50">
                     {thumbBusy ? "…" : "✨ Generate from first shot"}
                   </button>
+                  {draft.thumbnail && (
+                    <button onClick={() => setDraft({ ...draft, thumbnail: "" })}
+                      className="rounded-full border border-destructive/40 px-2.5 py-1 text-[11px] text-destructive/70 hover:text-destructive hover:border-destructive transition-colors">
+                      Remove thumbnail
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -708,6 +714,10 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
             <div className="flex items-center gap-3">
               <button onClick={saveDraft} disabled={saving} className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
                 {saving ? "Saving…" : "Save theme"}
+              </button>
+              <button onClick={() => { setDraft(null); setSelectedId(null); }}
+                className="rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+                Cancel
               </button>
               {selectedId && (
                 <button onClick={() => deleteEntry(selectedId)} className="rounded-full border border-destructive/50 px-4 py-1.5 text-xs text-destructive hover:bg-destructive/10">
