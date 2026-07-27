@@ -13,13 +13,13 @@ they can never drift apart.
 """
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models import ModelConfig
+from app.models import ModelConfig, get_config_row, get_config_row_sync
 
 DEFAULT_RETENTION_MONTHS = 6
 
 
 async def get_retention_months(db) -> int:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "retention")
     stored = row.config if row and row.config else {}
     retention_cfg = stored.get("retention") or {}
     value = retention_cfg.get("months")
@@ -33,7 +33,7 @@ def get_retention_months_sync(db) -> int:
     """SYNC equivalent — for use inside Celery tasks (tasks.py), which
     run on a sync SQLAlchemy session/engine, same reasoning as
     credits.get_available_models_sync."""
-    row = db.get(ModelConfig, 1)
+    row = get_config_row_sync(db, "retention")
     stored = row.config if row and row.config else {}
     retention_cfg = stored.get("retention") or {}
     value = retention_cfg.get("months")
@@ -66,11 +66,8 @@ async def validate_schedule_within_retention(db, ad_created_at, scheduled_at) ->
 
 
 async def set_retention_months(db, months: int) -> None:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "retention")
+
     config = dict(row.config or {})
     retention_cfg = dict(config.get("retention") or {})
     retention_cfg["months"] = months
@@ -91,7 +88,7 @@ DEFAULT_POST_RETENTION_MONTHS = 24  # 2 years
 
 
 async def get_post_retention_months(db) -> int:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "retention")
     stored = row.config if row and row.config else {}
     retention_cfg = stored.get("retention") or {}
     value = retention_cfg.get("post_months")
@@ -103,7 +100,7 @@ async def get_post_retention_months(db) -> int:
 
 def get_post_retention_months_sync(db) -> int:
     """SYNC equivalent — for use inside Celery tasks."""
-    row = db.get(ModelConfig, 1)
+    row = get_config_row_sync(db, "retention")
     stored = row.config if row and row.config else {}
     retention_cfg = stored.get("retention") or {}
     value = retention_cfg.get("post_months")
@@ -114,11 +111,8 @@ def get_post_retention_months_sync(db) -> int:
 
 
 async def set_post_retention_months(db, months: int) -> None:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "retention")
+
     config = dict(row.config or {})
     retention_cfg = dict(config.get("retention") or {})
     retention_cfg["post_months"] = months
@@ -137,7 +131,7 @@ DEFAULT_LOG_RETENTION_DAYS = 30
 
 
 async def get_log_retention_days(db) -> int:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "retention")
     stored = row.config if row and row.config else {}
     value = (stored.get("retention") or {}).get("log_days")
     try:
@@ -147,7 +141,7 @@ async def get_log_retention_days(db) -> int:
 
 
 def get_log_retention_days_sync(db) -> int:
-    row = db.get(ModelConfig, 1)
+    row = get_config_row_sync(db, "retention")
     stored = row.config if row and row.config else {}
     value = (stored.get("retention") or {}).get("log_days")
     try:
@@ -157,11 +151,8 @@ def get_log_retention_days_sync(db) -> int:
 
 
 async def set_log_retention_days(db, days: int) -> None:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "retention")
+
     config = dict(row.config or {})
     retention_cfg = dict(config.get("retention") or {})
     retention_cfg["log_days"] = days

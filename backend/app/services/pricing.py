@@ -28,8 +28,8 @@ async def get_markup_multiplier(db) -> float:
     platform integrations are — reuses the ModelConfig JSON blob, no
     migration needed. Falls back to DEFAULT_MARKUP_MULTIPLIER until the
     developer sets one explicitly."""
-    from app.models import ModelConfig
-    row = await db.get(ModelConfig, 1)
+    from app.models import ModelConfig, get_config_row, get_config_row_sync
+    row = await get_config_row(db, "pricing")
     stored = row.config if row and row.config else {}
     pricing_cfg = stored.get("pricing_config") or {}
     value = pricing_cfg.get("markup_multiplier")
@@ -41,12 +41,9 @@ async def get_markup_multiplier(db) -> float:
 
 async def set_markup_multiplier(db, multiplier: float) -> None:
     from sqlalchemy.orm.attributes import flag_modified
-    from app.models import ModelConfig
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    from app.models import ModelConfig, get_config_row, get_config_row_sync
+    row = await get_config_row(db, "pricing")
+
     config = dict(row.config or {})
     pricing_cfg = dict(config.get("pricing_config") or {})
     pricing_cfg["markup_multiplier"] = multiplier

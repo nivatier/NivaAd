@@ -19,7 +19,7 @@ import httpx
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
-from app.models import ModelConfig
+from app.models import ModelConfig, get_config_row
 from app.services.storage import upload_bytes
 
 DEFAULT_ASSISTANT_SETTINGS = {
@@ -49,7 +49,7 @@ DEPRECATED_MODEL_SLUGS = {
 }
 
 async def get_assistant_settings(db) -> dict:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "assistant")
     stored = (row.config if row and row.config else {}).get("assistant_settings") or {}
     merged = {**DEFAULT_ASSISTANT_SETTINGS, **stored}
     # Auto-correct stale model slugs saved before the correct ID was known —
@@ -60,11 +60,8 @@ async def get_assistant_settings(db) -> dict:
 
 
 async def set_assistant_settings(db, typing_ms_per_char: int, tts_voice: str = "nova", tts_model: str = "openai/gpt-audio-mini", assistant_name: str = "Nova") -> dict:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "assistant")
+
     config = dict(row.config or {})
     existing = dict(config.get("assistant_settings") or {})
     existing.update({
@@ -84,7 +81,7 @@ async def get_assistant_hints(db) -> list[dict]:
     """Returns exactly what's stored under assistant_hints in the DB — no
     code-side defaults are merged in. An empty/missing list simply means the
     developer hasn't added any hints yet from Developer > Assistant."""
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "assistant")
     stored = (row.config if row and row.config else {}).get("assistant_hints")
     hints = stored if stored is not None else []
     # Backfill audio_url for hints saved before this field existed.
@@ -94,11 +91,8 @@ async def get_assistant_hints(db) -> list[dict]:
 
 
 async def set_assistant_hints(db, hints: list[dict]) -> list[dict]:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "assistant")
+
     config = dict(row.config or {})
     config["assistant_hints"] = hints
     row.config = config
@@ -259,11 +253,8 @@ async def generate_intro_audio(db, text: str) -> str:
         await set_assistant_settings(db, s["typing_ms_per_char"], s["tts_voice"], s["tts_model"], s.get("assistant_name", "Nova"))
     wav = await _generate_audio_via_openrouter(text, s["tts_voice"], s["tts_model"])
     url = await asyncio.to_thread(upload_bytes, wav, "audio/wav", "wav", "nova-audio")
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "assistant")
+
     config = dict(row.config or {})
     blob = dict(config.get("assistant_settings") or {})
     blob["intro_audio_url"] = url

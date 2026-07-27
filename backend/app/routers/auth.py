@@ -8,7 +8,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import AuditLog, BrandKit, Company, CreditLedger, ModelConfig, Subscription, User
+from app.models import AuditLog, BrandKit, Company, CreditLedger, ModelConfig, Subscription, User, get_config_row
 from app.schemas import (
     AcceptInviteIn, ChangePasswordIn, InviteCheckOut, LoginIn, MeOut, RefreshIn, RegisterIn,
     TokenOut, UpdateProfileIn, UserOut,
@@ -25,15 +25,13 @@ FREE_PLAN_CREDITS = 3
 
 # ── Launch config helpers (stored in ModelConfig singleton, "launch" key) ────
 async def _get_launch_cfg(db: AsyncSession) -> dict:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "platform")
     cfg = (row.config if row else {}) or {}
     return cfg.get("launch", {})
 
 async def _save_launch_cfg(db: AsyncSession, patch: dict) -> dict:
-    row = await db.get(ModelConfig, 1)
-    if not row:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
+    row = await get_config_row(db, "platform")
+
     cfg = dict(row.config or {})
     cfg["launch"] = {**cfg.get("launch", {}), **patch}
     row.config = cfg

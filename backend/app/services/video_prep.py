@@ -24,11 +24,11 @@ developer settings lives in.
 """
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models import ModelConfig
+from app.models import ModelConfig, get_config_row, get_config_row_sync
 
 
 async def get_video_prep_settings(db) -> dict:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "platform")
     stored = row.config if row and row.config else {}
     cfg = stored.get("video_prep") or {}
     return {
@@ -41,7 +41,7 @@ def get_video_prep_settings_sync(db) -> dict:
     """SYNC equivalent — for use inside Celery tasks (tasks.py), which
     run on a sync SQLAlchemy session/engine, same reasoning as
     credits.get_available_models_sync."""
-    row = db.get(ModelConfig, 1)
+    row = get_config_row_sync(db, "platform")
     stored = row.config if row and row.config else {}
     cfg = stored.get("video_prep") or {}
     return {
@@ -51,11 +51,8 @@ def get_video_prep_settings_sync(db) -> dict:
 
 
 async def set_video_prep_settings(db, prompt_review_model_id: str | None, image_model_id: str | None) -> None:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "platform")
+
     config = dict(row.config or {})
     config["video_prep"] = {
         "prompt_review_model_id": prompt_review_model_id,

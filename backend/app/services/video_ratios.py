@@ -7,14 +7,14 @@ settings lives in — no migration needed.
 """
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models import ModelConfig
+from app.models import ModelConfig, get_config_row, get_config_row_sync
 
 DEFAULT_RATIOS = ["1:1", "9:16", "16:9", "1.91:1", "4:5"]
 FALLBACK_RATIO = "1:1"  # used whenever a stored ratio (a platform's video_ratio, or a company's override) no longer exists in the current list — silently falls back rather than erroring, per the agreed design
 
 
 async def get_video_ratios(db) -> list[str]:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "platform")
     stored = row.config if row and row.config else {}
     raw = stored.get("video_ratios")
     return list(raw) if isinstance(raw, list) and raw else list(DEFAULT_RATIOS)
@@ -22,7 +22,7 @@ async def get_video_ratios(db) -> list[str]:
 
 def get_video_ratios_sync(db) -> list[str]:
     """SYNC equivalent — for use inside Celery tasks."""
-    row = db.get(ModelConfig, 1)
+    row = get_config_row_sync(db, "platform")
     stored = row.config if row and row.config else {}
     raw = stored.get("video_ratios")
     return list(raw) if isinstance(raw, list) and raw else list(DEFAULT_RATIOS)
@@ -44,11 +44,8 @@ async def remove_video_ratio(db, ratio: str) -> list[str]:
 
 
 async def _save(db, ratios: list[str]) -> None:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "platform")
+
     config = dict(row.config or {})
     config["video_ratios"] = ratios
     row.config = config

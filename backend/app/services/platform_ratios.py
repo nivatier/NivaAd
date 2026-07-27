@@ -9,7 +9,7 @@ until the developer actually edits one.
 """
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models import ModelConfig
+from app.models import ModelConfig, get_config_row, get_config_row_sync
 
 VALID_RATIOS = {"1:1", "9:16", "16:9", "1.91:1", "4:5"}
 
@@ -23,7 +23,7 @@ DEFAULT_PLATFORM_RATIOS = {
 
 
 async def get_platform_ratios(db) -> dict:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "platform")
     stored = row.config if row and row.config else {}
     raw = stored.get("platform_ratios")
     if isinstance(raw, dict) and raw:
@@ -38,7 +38,7 @@ async def get_platform_ratios(db) -> dict:
 
 def get_platform_ratios_sync(db) -> dict:
     """SYNC equivalent — for use inside Celery tasks."""
-    row = db.get(ModelConfig, 1)
+    row = get_config_row_sync(db, "platform")
     stored = row.config if row and row.config else {}
     raw = stored.get("platform_ratios")
     if isinstance(raw, dict) and raw:
@@ -47,11 +47,8 @@ def get_platform_ratios_sync(db) -> dict:
 
 
 async def set_platform_ratio(db, platform_id: str, ratio: str) -> None:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "platform")
+
     config = dict(row.config or {})
     ratios = dict(config.get("platform_ratios") or DEFAULT_PLATFORM_RATIOS)
     ratios[platform_id] = ratio

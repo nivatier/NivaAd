@@ -10,7 +10,7 @@ their own list, so nothing breaks on a fresh deployment.
 """
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models import ModelConfig
+from app.models import ModelConfig, get_config_row, get_config_row_sync
 
 # Two independent tag axes, multi-select on each theme: STYLE (the visual
 # mood/aesthetic) and CATEGORY (what kind of product it suits). These are
@@ -74,17 +74,14 @@ DEFAULT_VIDEO_REFERENCE_PROMPT = (
 
 
 async def get_video_reference_prompt_default(db) -> str:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "themes")
     stored = (row.config if row and row.config else {}).get("themes") or {}
     return stored.get("video_reference_prompt_default") or DEFAULT_VIDEO_REFERENCE_PROMPT
 
 
 async def set_video_reference_prompt_default(db, prompt: str) -> str:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "themes")
+
     config = dict(row.config or {})
     themes = dict(config.get("themes") or {})
     themes["video_reference_prompt_default"] = prompt
@@ -96,17 +93,14 @@ async def set_video_reference_prompt_default(db, prompt: str) -> str:
 
 
 async def get_camera_style_presets(db) -> list[dict]:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "themes")
     stored = (row.config if row and row.config else {}).get("themes") or {}
     return stored.get("camera_style_presets") or list(DEFAULT_CAMERA_STYLE_PRESETS)
 
 
 async def _save_camera_style_presets(db, presets: list[dict]) -> list[dict]:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "themes")
+
     config = dict(row.config or {})
     themes = dict(config.get("themes") or {})
     themes["camera_style_presets"] = presets
@@ -188,17 +182,14 @@ DEFAULT_MUSIC_PRESETS = [
 
 
 async def get_music_presets(db) -> list[dict]:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "themes")
     stored = (row.config if row and row.config else {}).get("themes") or {}
     return stored.get("music_presets") or list(DEFAULT_MUSIC_PRESETS)
 
 
 async def _save_music_presets(db, presets: list[dict]) -> list[dict]:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "themes")
+
     config = dict(row.config or {})
     themes = dict(config.get("themes") or {})
     themes["music_presets"] = presets
@@ -421,7 +412,7 @@ DEFAULT_VIDEO_THEMES = [
 
 
 async def get_themes(db) -> dict:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "themes")
     stored = (row.config if row and row.config else {}).get("themes") or {}
     image_themes = stored.get("image_themes", DEFAULT_IMAGE_THEMES)
     # Backfill: every Image Theme Reference should offer the standard
@@ -443,11 +434,8 @@ async def set_themes(db, themes: dict) -> dict:
     """Replaces the entire themes blob at once — same all-or-nothing save
     as the raw model list editor, so a malformed paste can't partially
     corrupt what's stored."""
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "themes")
+
     config = dict(row.config or {})
     config["themes"] = themes
     row.config = config
@@ -457,17 +445,14 @@ async def set_themes(db, themes: dict) -> dict:
 
 
 async def get_text_style_presets(db) -> list[dict]:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "themes")
     stored = (row.config if row and row.config else {}).get("themes") or {}
     return stored.get("text_style_presets") or list(DEFAULT_TEXT_STYLE_PRESETS)
 
 
 async def _save_text_style_presets(db, presets: list[dict]) -> list[dict]:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "themes")
+
     config = dict(row.config or {})
     themes = dict(config.get("themes") or {})
     themes["text_style_presets"] = presets
@@ -548,7 +533,7 @@ def _seed_image_theme_editor() -> dict:
 
 
 async def get_image_theme_editor(db) -> dict:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "themes")
     stored = (row.config if row and row.config else {}).get("themes") or {}
     style_tags = stored.get("style_tags", DEFAULT_STYLE_TAGS)
     category_tags = stored.get("category_tags", DEFAULT_CATEGORY_TAGS)
@@ -581,11 +566,8 @@ async def get_image_theme_editor(db) -> dict:
 
 
 async def set_image_theme_editor(db, text_for_image: dict, image_for_image: dict) -> dict:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "themes")
+
     config = dict(row.config or {})
     themes = dict(config.get("themes") or {})
     themes["image_theme_editor"] = {"text_for_image": text_for_image, "image_for_image": image_for_image}
@@ -607,11 +589,8 @@ async def add_theme_tag(db, axis: str, tag: str) -> dict:
     replace), ready for the developer to fill in."""
     if axis not in ("style", "category"):
         raise ValueError('axis must be "style" or "category"')
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "themes")
+
     config = dict(row.config or {})
     themes = dict(config.get("themes") or {})
     key = "style_tags" if axis == "style" else "category_tags"

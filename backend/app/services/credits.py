@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.models import CreditLedger, ModelConfig
+from app.models import CreditLedger, ModelConfig, get_config_row, get_config_row_sync
 
 # Seed values only — used to populate the list the FIRST time it's ever
 # read (before any developer edit exists). From that point on, the
@@ -71,27 +71,22 @@ MAX_VIDEO_SHOTS = 4  # caps how many shots can be described within the one combi
 
 
 async def get_available_models(db: AsyncSession) -> dict:
-    """The full, current list of image/video models, platform-wide —
-    editable only by the developer. Seeds from DEFAULT_MODELS the first
-    time (if nothing's been stored yet); once ANY edit has been made,
-    the stored list is authoritative and DEFAULT_MODELS is never
-    consulted again."""
-    row = await db.get(ModelConfig, 1)
-    stored = row.config if row and row.config else {}
+    """The full, current list of image/video/text models, platform-wide."""
+    row = await get_config_row(db, "models")
+    stored = row.config or {}
     return {
-        "text": stored["text"] if isinstance(stored.get("text"), list) and stored["text"] else list(DEFAULT_MODELS["text"]),
+        "text":  stored["text"]  if isinstance(stored.get("text"),  list) and stored["text"]  else list(DEFAULT_MODELS["text"]),
         "image": stored["image"] if isinstance(stored.get("image"), list) and stored["image"] else list(DEFAULT_MODELS["image"]),
         "video": stored["video"] if isinstance(stored.get("video"), list) and stored["video"] else list(DEFAULT_MODELS["video"]),
     }
 
 
 def get_available_models_sync(db: Session) -> dict:
-    """SYNC equivalent of get_available_models — for use inside Celery
-    tasks (tasks.py), which run on a sync SQLAlchemy session/engine."""
-    row = db.get(ModelConfig, 1)
-    stored = row.config if row and row.config else {}
+    """SYNC equivalent — for Celery tasks."""
+    row = get_config_row_sync(db, "models")
+    stored = row.config or {}
     return {
-        "text": stored["text"] if isinstance(stored.get("text"), list) and stored["text"] else list(DEFAULT_MODELS["text"]),
+        "text":  stored["text"]  if isinstance(stored.get("text"),  list) and stored["text"]  else list(DEFAULT_MODELS["text"]),
         "image": stored["image"] if isinstance(stored.get("image"), list) and stored["image"] else list(DEFAULT_MODELS["image"]),
         "video": stored["video"] if isinstance(stored.get("video"), list) and stored["video"] else list(DEFAULT_MODELS["video"]),
     }

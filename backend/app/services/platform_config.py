@@ -13,7 +13,7 @@ built."""
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models import ModelConfig
+from app.models import ModelConfig, get_config_row, get_config_row_sync
 from app.services.token_crypto import decrypt_token, encrypt_token
 
 # Seed values only — used to populate the list the FIRST time it's ever
@@ -68,7 +68,7 @@ async def get_platform_integrations(db: AsyncSession) -> list[dict]:
     platform the developer added themselves (not one of the 7 defaults)
     falls back to "1:1" as a safe, common default rather than being
     left with no ratio at all."""
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "platform")
     stored = row.config if row and row.config else {}
     raw = stored.get("platforms")
     platforms = raw if isinstance(raw, list) and raw else list(DEFAULT_PLATFORMS)
@@ -84,7 +84,7 @@ def get_platform_integrations_sync(db) -> list[dict]:
     run on a sync SQLAlchemy session/engine, same reasoning as
     credits.get_available_models_sync. Same backfill logic as the async
     version above."""
-    row = db.get(ModelConfig, 1)
+    row = get_config_row_sync(db, "platform")
     stored = row.config if row and row.config else {}
     raw = stored.get("platforms")
     platforms = raw if isinstance(raw, list) and raw else list(DEFAULT_PLATFORMS)
@@ -125,11 +125,8 @@ def get_ad_targeting_ratios_sync(db) -> dict:
 
 
 async def save_platform_integrations(db: AsyncSession, platforms: list[dict]) -> None:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "platform")
+
     config = dict(row.config or {})
     config["platforms"] = platforms
     row.config = config

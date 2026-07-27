@@ -6,7 +6,7 @@ needed.
 """
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models import ModelConfig
+from app.models import ModelConfig, get_config_row, get_config_row_sync
 
 DEFAULT_MAX_EXTRA_USERS = 2
 
@@ -16,7 +16,7 @@ async def get_max_extra_users(db) -> int:
     globally, the same limit for every company — not a per-company
     override (that's a reasonable future extension if a tiered-plan
     model comes later, but isn't what was asked for here)."""
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "team")
     stored = row.config if row and row.config else {}
     team_cfg = stored.get("team_limits") or {}
     value = team_cfg.get("max_extra_users")
@@ -27,11 +27,8 @@ async def get_max_extra_users(db) -> int:
 
 
 async def set_max_extra_users(db, max_extra_users: int) -> None:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "team")
+
     config = dict(row.config or {})
     team_cfg = dict(config.get("team_limits") or {})
     team_cfg["max_extra_users"] = max_extra_users

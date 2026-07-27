@@ -294,12 +294,41 @@ class AuditLog(Base):
 
 
 class ModelConfig(Base):
-    """Legacy global singleton - no longer read anywhere in the app.
-    Kept in place (not dropped) to avoid a destructive migration;
-    CompanyModelConfig below is what's actually used now."""
+    """Global developer configuration, split into one row per topic.
+    Each topic owns a disjoint set of JSON keys — see migration
+    m1n2o3p4q5r6 for the full topic->keys mapping.
+
+    Use get_config_row(db, topic) / get_config_row_sync(db, topic)
+    instead of db.get(ModelConfig, <id>) everywhere.
+
+    Topics: models | themes | assistant | platform | pricing | retention | team
+    """
     __tablename__ = "model_config"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    topic: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, default="models")
     config: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+async def get_config_row(db, topic: str) -> "ModelConfig":
+    """Fetch (or create) the ModelConfig row for *topic* — async version."""
+    from sqlalchemy import select
+    row = await db.scalar(select(ModelConfig).where(ModelConfig.topic == topic))
+    if row is None:
+        row = ModelConfig(topic=topic, config={})
+        db.add(row)
+        await db.flush()
+    return row
+
+
+def get_config_row_sync(db, topic: str) -> "ModelConfig":
+    """Sync version of get_config_row — for Celery tasks."""
+    from sqlalchemy import select
+    row = db.scalars(select(ModelConfig).where(ModelConfig.topic == topic)).first()
+    if row is None:
+        row = ModelConfig(topic=topic, config={})
+        db.add(row)
+        db.flush()
+    return row
 
 
 class CompanyModelConfig(Base):

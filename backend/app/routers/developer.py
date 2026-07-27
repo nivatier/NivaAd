@@ -20,7 +20,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.config import settings
 from app.database import get_db
 from app.deps import require_developer, require_developer_permission
-from app.models import Ad, AuditLog, Campaign, Company, CreditLedger, FlaggedContent, GenerationJob, GuardrailRule, ModelConfig, Subscription, User
+from app.models import Ad, AuditLog, Campaign, Company, CreditLedger, FlaggedContent, GenerationJob, GuardrailRule, ModelConfig, Subscription, User, get_config_row
 from app.schemas import (
     AddAssistantHintIn, AddCameraStylePresetIn, AddDeveloperTeamUserIn, AddModelIn, AddPlatformIntegrationIn,
     AddMusicPresetIn, AddTextStylePresetIn, AddThemeTagIn, AddVideoRatioIn, AddVisionModelIn,
@@ -911,14 +911,12 @@ async def get_global_models(_: str = Depends(require_developer_permission("model
 
 
 async def _save_models(db: AsyncSession, models: dict) -> None:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "models")
     config = dict(row.config or {})
     config["image"] = models["image"]
     config["video"] = models["video"]
+    if "text" in models:
+        config["text"] = models["text"]
     row.config = config
     flag_modified(row, "config")
     await db.commit()
@@ -1672,15 +1670,12 @@ async def update_markup(data: MarkupMultiplierIn, _: str = Depends(require_devel
 # ── Launch control ────────────────────────────────────────────────────────────
 
 async def _get_launch_cfg_dev(db: AsyncSession) -> dict:
-    row = await db.get(ModelConfig, 1)
-    cfg = (row.config if row else {}) or {}
+    row = await get_config_row(db, "platform")
+    cfg = row.config or {}
     return cfg.get("launch", {})
 
 async def _save_launch_cfg_dev(db: AsyncSession, patch: dict) -> dict:
-    row = await db.get(ModelConfig, 1)
-    if not row:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
+    row = await get_config_row(db, "platform")
     cfg = dict(row.config or {})
     cfg["launch"] = {**cfg.get("launch", {}), **patch}
     row.config = cfg
@@ -1905,15 +1900,12 @@ async def delete_developer_created_user(
 # key — no new table or migration needed.
 
 async def _get_platform_cfg(db: AsyncSession) -> dict:
-    row = await db.get(ModelConfig, 1)
-    cfg = (row.config if row else {}) or {}
+    row = await get_config_row(db, "platform")
+    cfg = row.config or {}
     return cfg.get("platform", {})
 
 async def _save_platform_cfg(db: AsyncSession, patch: dict) -> dict:
-    row = await db.get(ModelConfig, 1)
-    if not row:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
+    row = await get_config_row(db, "platform")
     cfg = dict(row.config or {})
     cfg["platform"] = {**cfg.get("platform", {}), **patch}
     row.config = cfg

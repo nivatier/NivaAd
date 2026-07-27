@@ -28,7 +28,7 @@ import json
 
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models import ModelConfig
+from app.models import ModelConfig, get_config_row, get_config_row_sync
 from app.services import credits as credit_svc
 from app.services import text_gen
 from app.services.images import generate_image
@@ -41,7 +41,7 @@ DEFAULT_VISION_MODELS = [
 
 
 async def get_theme_ai_settings(db) -> dict:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "themes")
     stored = (row.config if row and row.config else {}).get("theme_ai") or {}
     vision_models = stored.get("vision_models") or list(DEFAULT_VISION_MODELS)
     return {
@@ -53,11 +53,8 @@ async def get_theme_ai_settings(db) -> dict:
 
 
 async def set_theme_ai_settings(db, text_model_id: str | None, vision_model_id: str | None, image_transform_model_id: str | None) -> dict:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "themes")
+
     config = dict(row.config or {})
     theme_ai = dict(config.get("theme_ai") or {})
     theme_ai["text_model_id"] = text_model_id
@@ -71,11 +68,8 @@ async def set_theme_ai_settings(db, text_model_id: str | None, vision_model_id: 
 
 
 async def add_vision_model(db, label: str, model: str) -> dict:
-    row = await db.get(ModelConfig, 1)
-    if row is None:
-        row = ModelConfig(id=1, config={})
-        db.add(row)
-        await db.flush()
+    row = await get_config_row(db, "themes")
+
     config = dict(row.config or {})
     theme_ai = dict(config.get("theme_ai") or {})
     vision_models = list(theme_ai.get("vision_models") or DEFAULT_VISION_MODELS)
@@ -90,7 +84,7 @@ async def add_vision_model(db, label: str, model: str) -> dict:
 
 
 async def delete_vision_model(db, model_id: str) -> dict:
-    row = await db.get(ModelConfig, 1)
+    row = await get_config_row(db, "themes")
     if row is None:
         return await get_theme_ai_settings(db)
     config = dict(row.config or {})

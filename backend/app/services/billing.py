@@ -51,12 +51,11 @@ def _load_maps(db=None):
     if db is not None:
         try:
             from sqlalchemy import select as _select
-            from app.models import ModelConfig as _ModelConfig
+            from app.models import get_config_row_sync as _get_cfg
             # Sync fetch — billing is called from sync Stripe webhook context
-            result = db.execute(_select(_ModelConfig).where(_ModelConfig.id == 1))
-            row = result.scalar_one_or_none()
+            row = _get_cfg(db, "platform")
             if row and row.config:
-                platform = row.config.get("platform", {})
+                platform = row.config
                 if platform.get("stripe_price_ids"):
                     price_ids_raw = platform["stripe_price_ids"]
                 if platform.get("stripe_price_topup"):
