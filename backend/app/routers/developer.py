@@ -1696,6 +1696,51 @@ async def put_launch_control(body: dict, _: str = Depends(require_developer), db
     return {"registration_open": saved.get("registration_open", settings.REGISTRATION_OPEN)}
 
 
+
+
+# ── Legal content — Terms, Privacy, Acceptable Use, Cookies ─────────────────
+# Stored under platform topic as {"legal": {"terms": "...", "privacy": "...",
+#   "acceptable_use": "...", "cookies": "..."}}
+# Content is plain text / markdown shown in a popup modal on the landing page.
+# Public GET so the landing page can fetch without auth.
+
+DEFAULT_LEGAL = {
+    "terms": "Terms of Service content goes here. Edit this in Developer → Settings → Legal.",
+    "privacy": "Privacy Policy content goes here. Edit this in Developer → Settings → Legal.",
+    "acceptable_use": "Acceptable Use Policy content goes here. Edit this in Developer → Settings → Legal.",
+    "cookies": "We use cookies to improve your experience. By using NivaSpark you agree to our use of cookies for analytics, authentication and preferences.",
+}
+
+async def _get_legal(db: AsyncSession) -> dict:
+    row = await get_config_row(db, "platform")
+    cfg = row.config if row and row.config else {}
+    return {**DEFAULT_LEGAL, **cfg.get("legal", {})}
+
+async def _save_legal(db: AsyncSession, patch: dict) -> dict:
+    row = await get_config_row(db, "platform")
+    cfg = dict(row.config or {})
+    cfg["legal"] = {**DEFAULT_LEGAL, **cfg.get("legal", {}), **patch}
+    row.config = cfg
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(row, "config")
+    await db.commit()
+    return cfg["legal"]
+
+@router.get("/legal-content")
+async def get_legal_content(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Developer — get current legal page content."""
+    return await _get_legal(db)
+
+@router.put("/legal-content")
+async def put_legal_content(body: dict, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
+    """Developer — update legal page content (plain text / markdown)."""
+    allowed = {"terms", "privacy", "acceptable_use", "cookies"}
+    patch = {k: str(v) for k, v in body.items() if k in allowed}
+    if not patch:
+        raise HTTPException(422, "Provide at least one of: terms, privacy, acceptable_use, cookies")
+    saved = await _save_legal(db, patch)
+    return saved
+
 # ── Developer-created users ───────────────────────────────────────────────────
 # Bypasses registration — developer creates a company + admin user directly.
 

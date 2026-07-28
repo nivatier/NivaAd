@@ -1,0 +1,67 @@
+Here's a complete, reusable prompt you can drop into any project:
+
+---
+
+**SCROLL-SCRUBBER HERO SECTION — REUSABLE PROMPT**
+
+> Build a full-page scroll-scrubber hero section in React + TypeScript + Tailwind CSS with the following behaviour and structure.
+>
+> **Core mechanic**
+> The outer wrapper div has a total height of `calc(100vh + N×90vh)` where N is the number of scenes. Inside it sits a `sticky top-0 h-screen` viewport that stays fixed while the user scrolls through the full height. A scroll event listener reads `window.scrollY` relative to the section's `getBoundingClientRect().top + window.scrollY` to calculate a `progress` value from 0 to 1 across all scenes. Use `requestAnimationFrame` throttling. Also listen to `resize` to recalculate. The outer page wrapper must use `overflowX: "clip"` not `overflow-x-hidden` — the latter creates a new scroll context in Chrome/Safari and breaks `window.scroll` events.
+>
+> **Scene definitions**
+> Define scenes as a typed const array. Each scene has: `id`, `icon` (Lucide icon), `label`, `headline` (two lines separated by `\n`), `body`, `stat`, `cardTitle`, and `cardPoints` (string array of 3–4 bullet points). The number of scenes determines total scroll height.
+>
+> **Background images**
+> Two sets of images — one for dark theme, one for light theme. Detect theme by checking `document.documentElement.classList.contains("dark")` via `MutationObserver`. Images crossfade between scenes: the active image fades out in the last 20% of its scene, the next image fades in simultaneously. Apply a subtle `scale(1 + sceneProgress × 0.025)` to the active image for a breathing effect. Stack both a top-to-bottom and left-to-right dark gradient vignette over all images so text always reads clearly.
+>
+> **Left side — text content**
+> Position as `absolute inset-x-0 top-0` on mobile/tablet, switching to `absolute inset-0` side-by-side on desktop (`lg` breakpoint, 1024px). Use a JS `isDesktop` state (`window.innerWidth >= 1024`) to control `maxWidth: isDesktop ? "58%" : "100%"`. The left side has two layers stacked with `position: absolute`:
+> - **Layer 1 — initial hero copy** (scene 0): large display headline, subtitle, CTA buttons, footnote. Fades out and lifts up (`translateY`) as soon as scrolling begins (`progress * 10` opacity multiplier). Buttons need `pointerEvents: "auto"` override since the parent has `pointerEvents: none`.
+> - **Layer 2 — scene text** (all scenes including 0): for each scene compute `textOpacity` based on `sceneStart = i / sceneCount` and `sceneEnd = (i+1) / sceneCount` with a `fadeDuration = 0.03` fade-in and fade-out zone. Show feature badge pill, large display headline split on `\n` with second line in brand accent colour, body paragraph, stat pill. Scene 0 text hides before any scroll (`progress < 0.01`).
+>
+> **All left-side text** should be white with a multi-layer `textShadow` for readability on any background image:
+> `"0 2px 12px rgba(0,0,0,0.9), 0 1px 4px rgba(0,0,0,0.95), 0 0 40px rgba(0,0,0,0.6)"`
+> Badge pills use `background: rgba(0,0,0,0.45)` on light theme and `rgba(255,255,255,0.18)` on dark theme, both with `backdropFilter: blur(10px)`.
+>
+> **Right side — glass card**
+> Position as `absolute inset-x-0 bottom-0` on mobile/tablet (pinned to bottom), switching to `absolute inset-0 justify-end` on desktop (`lg`). Each scene renders its own card as `position: absolute inset-0`, fading in/out with `opacity` based on `isActive`. The card itself uses:
+> - Dark mode: `background: rgba(0,0,0,0.40)`, `border: rgba(255,255,255,0.10)`
+> - Light mode: `background: rgba(255,255,255,0.55)`, `border: rgba(255,255,255,0.60)`
+> - Both: `backdropFilter: blur(24px) saturate(1.4)`, `borderRadius: 1.5rem`, generous padding
+> Card interior: icon badge (brand gradient background, black icon), scene label, scene counter (`01 / 05`), card title in brand accent colour (darker shade on light theme for readability), bullet point list with brand-coloured dots, gold progress bar at the bottom that fills across `sceneProgress`.
+> Wrap all scene cards in an invisible spacer div that matches the tallest card's content so the container has a stable height.
+>
+> **Navigation indicators**
+> - Bottom centre: pill-expanding dots (`width: activeIdx === i ? 24px : 6px`, fixed `height: 6px`) in brand colour when active, white/35 when inactive. Position `absolute bottom-4 md:bottom-8`.
+> - Bottom left (desktop only, `hidden lg:block`): vertical stepper — dots that expand in `height` (active: 20px, inactive: 4px) instead of width, fixed `width: 4px`.
+> - Scroll hint: visible only when `progress < 0.04`, animated bouncing line, fades out on first scroll.
+>
+> **Responsive behaviour**
+> - Mobile (`< 640px`): headline `text-2xl`, body `text-xs`, stacked layout
+> - Small (`sm`, 640px+): headline `text-4xl`, body `text-sm`
+> - Tablet (`md`, 768px+): headline `text-5xl`, body `text-base`
+> - Desktop (`lg`, 1024px+): side-by-side layout, headline `text-6xl/7xl`, full body
+>
+> **Header**
+> Fixed floating header above the hero with `position: fixed top-0 z-50`. The hero section must have `paddingTop` equal to header height so content starts below it.
+>
+> **What NOT to do**
+> - Do not use `overflow-x-hidden` on any ancestor — use `overflowX: "clip"`
+> - Do not use `<video>` for the background — use crossfading images
+> - Do not use `getBoundingClientRect().top` alone for scroll calculation — it changes as the page scrolls. Always add `window.scrollY` to get absolute position
+> - Do not split `\n` in scene headlines using a template literal with a real newline inside a JS string — use `scene.headline.split("\\n")` with the escape sequence
+> - Do not use Python f-strings to generate JSX — they corrupt `{{` double braces into single `{` causing parse errors
+
+---
+
+**How to adapt it for a new project**
+
+| Thing to change | Where |
+|---|---|
+| Number of scenes | `SCENES` array length — total height auto-adjusts |
+| Brand accent colour | Replace `oklch(0.85 0.18 52)` (gold) with your colour |
+| Image paths | `darkImages[]` and `lightImages[]` arrays |
+| Card content | `cardTitle` and `cardPoints` per scene |
+| Desktop breakpoint | Change `1024` in `isDesktop` and `lg:` Tailwind classes |
+| Scroll speed | Change `SCENE_HEIGHT = 90` (vh per scene) — higher = slower scroll |

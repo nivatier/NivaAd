@@ -212,3 +212,20 @@ async def change_password(data: ChangePasswordIn, user: User = Depends(get_curre
     db.add(AuditLog(company_id=user.company_id, user_id=user.id, action="user.password_changed"))
     await db.commit()
     return {"ok": True}
+
+
+# ── Public legal content — no auth required ──────────────────────────────────
+@router.get("/legal-content")
+async def public_legal_content(db: AsyncSession = Depends(get_db)):
+    """Public endpoint — returns Terms, Privacy, Acceptable Use and Cookies content.
+    Called by the landing page footer popups without any authentication."""
+    from app.models import get_config_row
+    DEFAULT_LEGAL = {
+        "terms": "Terms of Service content goes here.",
+        "privacy": "Privacy Policy content goes here.",
+        "acceptable_use": "Acceptable Use Policy content goes here.",
+        "cookies": "We use cookies to improve your experience.",
+    }
+    row = await get_config_row(db, "platform")
+    cfg = row.config if row and row.config else {}
+    return {**DEFAULT_LEGAL, **cfg.get("legal", {})}

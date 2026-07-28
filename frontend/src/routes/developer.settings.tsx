@@ -1162,6 +1162,102 @@ function RailwayTab() {
   );
 }
 
+
+function LegalLinksCard() {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [terms, setTerms] = useState("");
+  const [privacy, setPrivacy] = useState("");
+  const [acceptableUse, setAcceptableUse] = useState("");
+  const [cookies, setCookies] = useState("");
+  const [active, setActive] = useState<"terms"|"privacy"|"acceptable_use"|"cookies">("terms");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    devApi("/developer/legal-content")
+      .then((r: any) => {
+        setTerms(r.terms || "");
+        setPrivacy(r.privacy || "");
+        setAcceptableUse(r.acceptable_use || "");
+        setCookies(r.cookies || "");
+      })
+      .catch((e: any) => { if (!handleAuthError(e)) setErr(e.message || "Could not load legal content"); });
+  }, []);
+
+  async function save() {
+    setSaving(true); setErr(""); setSaved(false);
+    try {
+      await devApi("/developer/legal-content", {
+        method: "PUT",
+        body: { terms, privacy, acceptable_use: acceptableUse, cookies },
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not save");
+    }
+    setSaving(false);
+  }
+
+  const tabs = [
+    { key: "terms" as const,           label: "Terms of Service",      value: terms,         set: setTerms },
+    { key: "privacy" as const,         label: "Privacy Policy",         value: privacy,       set: setPrivacy },
+    { key: "acceptable_use" as const,  label: "Acceptable Use",         value: acceptableUse, set: setAcceptableUse },
+    { key: "cookies" as const,         label: "Cookie Notice",          value: cookies,       set: setCookies },
+  ];
+
+  const current = tabs.find(t => t.key === active)!;
+
+  return (
+    <div className="rounded-xl border border-border bg-card/60 p-5 flex flex-col gap-4">
+      <div>
+        <div className="text-sm font-semibold text-foreground">Legal content</div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          This text appears in popup modals on the landing page when users click Terms, Privacy, Acceptable Use or the cookie notice.
+          Plain text or basic markdown supported.
+        </p>
+      </div>
+      {/* Sub-tabs */}
+      <div className="flex flex-wrap gap-1.5">
+        {tabs.map(t => (
+          <button key={t.key} onClick={() => setActive(t.key)}
+            className={`rounded-full border px-3 py-1 text-xs font-medium transition-all ${active === t.key
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border text-muted-foreground hover:border-primary/40"}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {/* Textarea */}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-xs font-medium text-muted-foreground">{current.label} content</label>
+        <textarea
+          value={current.value}
+          onChange={(e) => current.set(e.target.value)}
+          rows={14}
+          placeholder={`Enter ${current.label} content here…`}
+          className="w-full rounded-lg border border-border bg-input/40 px-3 py-2.5 text-sm text-foreground focus:border-ring focus:outline-none resize-y font-mono leading-relaxed"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          {current.value.length} characters · use blank lines to separate paragraphs
+        </p>
+      </div>
+      <div className="flex items-center gap-3">
+        <button
+          disabled={saving}
+          onClick={save}
+          className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50"
+        >
+          {saving ? "Saving…" : "Save all"}
+        </button>
+        {saved && <span className="text-xs text-emerald-400">✓ Saved</span>}
+        {err && <span className="text-xs text-destructive">{err}</span>}
+      </div>
+    </div>
+  );
+}
+
 const SETTINGS_TABS = [
   { key: "launch",    label: "🚀 Launch" },
   { key: "billing",   label: "💳 Billing" },
@@ -1171,6 +1267,7 @@ const SETTINGS_TABS = [
   { key: "theme",     label: "🎨 Theme AI" },
   { key: "ratios",    label: "📐 Video Ratios" },
   { key: "railway",   label: "🚂 Railway" },
+  { key: "legal",     label: "📄 Legal" },
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number]["key"];
 
@@ -1202,6 +1299,7 @@ function DeveloperSettings() {
       {tab === "theme"     && <ThemeAiSettingsCard />}
       {tab === "ratios"    && <VideoRatiosCard />}
       {tab === "railway"   && <RailwayTab />}
+      {tab === "legal"     && <LegalLinksCard />}
     </DeveloperShell>
   );
 }
