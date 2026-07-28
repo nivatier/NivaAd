@@ -18,7 +18,7 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-const VIMEO_ID = "1118789146";
+const VIMEO_ID = "1213550777";
 
 const platforms = [
   { tag: "Instagram", title: "Pulse One Smartwatch", copy: "Your health, one glance away. 7-day battery.", img: adPulse },
@@ -293,8 +293,8 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
                   <div
                     className={cn(
                       "relative overflow-hidden rounded-3xl border p-9",
-                      // Dark mode glass
-                      "dark:border-white/10 dark:bg-black/40",
+                      // Dark mode glass — brighter, more visible
+                      "dark:border-white/20 dark:bg-white/10",
                       // Light mode glass
                       "border-white/60 bg-white/55",
                     )}
@@ -302,7 +302,7 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
                       backdropFilter: "blur(24px) saturate(1.4)",
                       WebkitBackdropFilter: "blur(24px) saturate(1.4)",
                       boxShadow: isDark
-                        ? "0 8px 40px oklch(0 0 0 / 0.5), inset 0 1px 0 oklch(1 0 0 / 0.08)"
+                        ? "0 8px 40px oklch(0 0 0 / 0.45), inset 0 1px 0 oklch(1 0 0 / 0.22), inset 0 -1px 0 oklch(0 0 0 / 0.10), 0 0 0 1px oklch(1 0 0 / 0.06)"
                         : "0 8px 40px oklch(0 0 0 / 0.12), inset 0 1px 0 oklch(1 0 0 / 0.9)",
                     }}
                   >
@@ -679,11 +679,40 @@ function LandingFooter() {
 
   return (
     <>
-      <footer className="border-t border-border">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-8 text-xs text-muted-foreground">
+      <footer
+        className="relative overflow-hidden mx-3 mb-3 rounded-2xl"
+        style={{
+          background: "oklch(1 0 0 / 0.04)",
+          backdropFilter: "blur(20px) saturate(1.5)",
+          WebkitBackdropFilter: "blur(20px) saturate(1.5)",
+          border: "1px solid oklch(1 0 0 / 0.12)",
+          boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.10)",
+        }}
+      >
+        {/* Subtle aurora wash — mirrors the hero palette */}
+        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+          <div
+            className="absolute -inset-[60%] animate-aurora-a opacity-40"
+            style={{ background: "radial-gradient(50% 55% at 10% 50%, oklch(0.85 0.2 200 / 0.12), transparent 70%)" }}
+          />
+          <div
+            className="absolute -inset-[60%] animate-aurora-b opacity-30"
+            style={{ background: "radial-gradient(40% 50% at 88% 50%, oklch(0.66 0.26 305 / 0.10), transparent 70%)" }}
+          />
+        </div>
+
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-8 text-xs"
+          style={{ color: "oklch(0.68 0.01 280)" }}
+        >
           <div>
             © 2026 NivaSpark · Powered by{" "}
-            <a href="https://www.nivatier.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+            <a
+              href="https://www.nivatier.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "oklch(0.85 0.18 52)" }}
+              className="hover:underline"
+            >
               Nivatier
             </a>
           </div>
@@ -692,12 +721,14 @@ function LandingFooter() {
               <button
                 key={key}
                 onClick={() => setOpenModal(key)}
-                className="hover:text-foreground transition-colors capitalize"
+                className="transition-colors capitalize hover:underline"
+                style={{ color: "oklch(0.68 0.01 280)" }}
+                onMouseEnter={e => (e.currentTarget.style.color = "oklch(0.92 0.01 280)")}
+                onMouseLeave={e => (e.currentTarget.style.color = "oklch(0.68 0.01 280)")}
               >
                 {key === "acceptable_use" ? "Acceptable Use" : key.charAt(0).toUpperCase() + key.slice(1)}
               </button>
-            ))}
-          </div>
+            ))}</div>
         </div>
       </footer>
 
@@ -805,8 +836,36 @@ function StudioCarousel() {
             {[...STUDIO_CARDS, ...STUDIO_CARDS, ...STUDIO_CARDS].map((p, idx) => (
               <article
                 key={idx}
-                className="group relative shrink-0 overflow-hidden rounded-2xl border border-border/70 bg-card/40 p-5 transition-all duration-300 hover:border-primary/60 hover:shadow-lg hover:-translate-y-1"
-                style={{ width: `${CARD_WIDTH}px` }}
+                className="group relative shrink-0 overflow-hidden rounded-2xl p-5 transition-all duration-300 hover:-translate-y-1"
+                style={{
+                  width: `${CARD_WIDTH}px`,
+                  background: "oklch(1 0 0 / 0.05)",
+                  backdropFilter: "blur(16px) saturate(1.4)",
+                  WebkitBackdropFilter: "blur(16px) saturate(1.4)",
+                  border: "1px solid oklch(1 0 0 / 0.11)",
+                  boxShadow: [
+                    "inset 0 1px 0 oklch(1 0 0 / 0.14)",
+                    "inset 0 -1px 0 oklch(0 0 0 / 0.08)",
+                    "0 8px 32px -8px oklch(0 0 0 / 0.35)",
+                  ].join(", "),
+                }}
+                onMouseEnter={e => {
+                  (e.currentTarget as HTMLElement).style.border = "1px solid oklch(0.85 0.18 52 / 0.45)";
+                  (e.currentTarget as HTMLElement).style.boxShadow = [
+                    "inset 0 1px 0 oklch(1 0 0 / 0.18)",
+                    "inset 0 -1px 0 oklch(0 0 0 / 0.08)",
+                    "0 16px 48px -8px oklch(0 0 0 / 0.45)",
+                    "0 0 0 1px oklch(0.85 0.18 52 / 0.15)",
+                  ].join(", ");
+                }}
+                onMouseLeave={e => {
+                  (e.currentTarget as HTMLElement).style.border = "1px solid oklch(1 0 0 / 0.11)";
+                  (e.currentTarget as HTMLElement).style.boxShadow = [
+                    "inset 0 1px 0 oklch(1 0 0 / 0.14)",
+                    "inset 0 -1px 0 oklch(0 0 0 / 0.08)",
+                    "0 8px 32px -8px oklch(0 0 0 / 0.35)",
+                  ].join(", ");
+                }}
               >
                 <span className="inline-flex rounded-full border border-primary/40 bg-background/50 px-2.5 py-1 text-[10px] font-medium uppercase tracking-widest text-primary">
                   {p.tag}
@@ -879,7 +938,29 @@ function FeaturedVideo() {
 
   return (
     <>
-      <div className="group relative overflow-hidden rounded-2xl border border-border bg-card/40">
+      <div
+        className="group relative overflow-hidden rounded-2xl"
+        style={{
+          background: "oklch(1 0 0 / 0.05)",
+          backdropFilter: "blur(20px) saturate(1.5)",
+          WebkitBackdropFilter: "blur(20px) saturate(1.5)",
+          border: "1px solid oklch(1 0 0 / 0.12)",
+          boxShadow: [
+            "0 0 0 1px oklch(0.85 0.18 52 / 0.12)",
+            "inset 0 1px 0 oklch(1 0 0 / 0.16)",
+            "inset 0 -1px 0 oklch(0 0 0 / 0.08)",
+            "0 24px 60px -12px oklch(0 0 0 / 0.50)",
+          ].join(", "),
+        }}
+      >
+        {/* Aurora colour wash behind glass */}
+        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden rounded-2xl">
+          <div className="absolute -inset-[40%] animate-aurora-a opacity-60"
+            style={{ background: "radial-gradient(50% 60% at 10% 40%, oklch(0.85 0.2 200 / 0.18), transparent 70%)" }} />
+          <div className="absolute -inset-[40%] animate-aurora-b opacity-50"
+            style={{ background: "radial-gradient(40% 50% at 85% 60%, oklch(0.66 0.26 305 / 0.15), transparent 70%)" }} />
+        </div>
+
         <div className="flex flex-col md:flex-row">
           {/* Vimeo embed preview — pointer-events-none; click anywhere opens modal */}
           <div
@@ -904,7 +985,10 @@ function FeaturedVideo() {
           </div>
 
           {/* Text */}
-          <div className="flex flex-col justify-center p-6 md:w-2/5 md:p-10">
+          <div
+            className="flex flex-col justify-center p-6 md:w-2/5 md:p-10"
+            style={{ borderLeft: "1px solid oklch(1 0 0 / 0.08)" }}
+          >
             <span className="inline-flex w-fit rounded-full border border-primary/40 bg-background/50 px-2.5 py-1 text-[10px] font-medium uppercase tracking-widest text-primary">
               Overview
             </span>
@@ -931,6 +1015,184 @@ function FeaturedVideo() {
 }
 
 // ── Main page ────────────────────────────────────────────────────────────────
+// ── Signup popup — fires after 8s + 30% scroll, suppressed for 7 days ────────
+function SignupPopup({ onSignup }: { onSignup: () => void }) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    // Don't show if already authed check is handled by parent (not rendered when authed)
+    const STORAGE_KEY = "nivaspark_popup_dismissed";
+    const COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+    function isDismissed() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return false;
+        return Date.now() - Number(raw) < COOLDOWN_MS;
+      } catch { return false; }
+    }
+
+    if (isDismissed()) return;
+
+    let scrolled = false;
+    let timedOut = false;
+
+    function maybeShow() {
+      if (scrolled && timedOut && !isDismissed()) setOpen(true);
+    }
+
+    const onScroll = () => {
+      if (scrolled) return;
+      const pct = window.scrollY / (document.body.scrollHeight - window.innerHeight);
+      if (pct >= 0.30) { scrolled = true; maybeShow(); }
+    };
+
+    const timer = setTimeout(() => { timedOut = true; maybeShow(); }, 8000);
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("scroll", onScroll);
+    };
+  }, []);
+
+  function dismiss() {
+    try { localStorage.setItem("nivaspark_popup_dismissed", String(Date.now())); } catch {}
+    setOpen(false);
+  }
+
+  function handleSignup() {
+    dismiss();
+    onSignup();
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) dismiss(); }}>
+      <DialogPortal>
+        {/* Heavier backdrop blur so the glass card pops */}
+        <DialogOverlay className="bg-black/50 backdrop-blur-md" />
+        <DialogPrimitive.Content className="fixed left-[50%] top-[50%] z-[110] w-full max-w-md -translate-x-1/2 -translate-y-1/2 focus:outline-none px-4">
+
+          {/* ── Glass card ── */}
+          <div
+            className="relative overflow-hidden rounded-3xl"
+            style={{
+              /* Frosted glass layer */
+              background: "oklch(1 0 0 / 0.06)",
+              backdropFilter: "blur(28px) saturate(1.6)",
+              WebkitBackdropFilter: "blur(28px) saturate(1.6)",
+              /* Hair-line border that catches the light */
+              border: "1px solid oklch(1 0 0 / 0.14)",
+              /* Outer glow + depth shadow */
+              boxShadow: [
+                "0 0 0 1px oklch(0.85 0.18 52 / 0.18)",
+                "inset 0 1px 0 oklch(1 0 0 / 0.18)",   /* inner top highlight */
+                "inset 0 -1px 0 oklch(0 0 0 / 0.12)",  /* inner bottom shadow */
+                "0 32px 80px -12px oklch(0 0 0 / 0.65)",
+                "0 0 60px -20px oklch(0.85 0.18 52 / 0.20)",
+              ].join(", "),
+            }}
+          >
+            {/* Animated colour wash behind the glass */}
+            <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden rounded-3xl">
+              <div
+                className="absolute -inset-[50%] animate-aurora-a"
+                style={{ background: "radial-gradient(55% 65% at 15% 35%, oklch(0.85 0.2 200 / 0.28), transparent 70%)", opacity: 0.9 }}
+              />
+              <div
+                className="absolute -inset-[50%] animate-aurora-b"
+                style={{ background: "radial-gradient(45% 55% at 80% 65%, oklch(0.66 0.26 305 / 0.22), transparent 70%)", opacity: 0.9 }}
+              />
+              {/* Gold radial at bottom-right for warmth */}
+              <div
+                className="absolute -inset-[50%]"
+                style={{ background: "radial-gradient(35% 40% at 85% 90%, oklch(0.85 0.18 52 / 0.15), transparent 65%)" }}
+              />
+            </div>
+
+            {/* Gold top accent line */}
+            <div
+              className="h-[2px] w-full"
+              style={{ background: "linear-gradient(90deg, transparent 0%, oklch(0.85 0.18 52 / 0.9) 30%, oklch(0.72 0.22 45 / 0.9) 70%, transparent 100%)" }}
+            />
+
+            <div className="px-8 py-8">
+              {/* Close */}
+              <DialogPrimitive.Close
+                onClick={dismiss}
+                className="absolute right-4 top-4 grid h-7 w-7 place-items-center rounded-full text-white/50 hover:text-white transition-colors"
+                style={{ background: "oklch(1 0 0 / 0.08)", border: "1px solid oklch(1 0 0 / 0.12)" }}
+              >
+                <X className="h-3.5 w-3.5" />
+                <span className="sr-only">Close</span>
+              </DialogPrimitive.Close>
+
+              {/* Logo */}
+              <div className="flex items-center gap-2.5 mb-6">
+                <img src="/logo-icon.png" alt="NivaSpark" className="h-8 w-8 object-contain" />
+                <img src="/logo-wording-dark.png" alt="NivaSpark" className="hidden dark:block h-6 object-contain object-left" />
+                <img src="/logo-wording-light.png" alt="NivaSpark" className="block dark:hidden h-6 object-contain object-left" />
+              </div>
+
+              {/* Hook headline */}
+              <h2
+                className="font-display text-2xl font-bold leading-tight tracking-tight"
+                style={{ color: "oklch(0.97 0.01 280)" }}
+              >
+                Stop making ads<br />
+                <span style={{ color: "oklch(0.88 0.18 52)" }}>manually.</span>
+              </h2>
+
+              {/* Sub-copy */}
+              <p className="mt-3 text-sm leading-relaxed" style={{ color: "oklch(0.80 0.01 280)" }}>
+                One product brief. Ready-to-post ads with copy, image and video — for Instagram, LinkedIn, TikTok, Facebook, X and Threads. In seconds.
+              </p>
+
+              {/* Social proof pill */}
+              <div
+                className="mt-4 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-medium"
+                style={{
+                  background: "oklch(0.85 0.18 52 / 0.12)",
+                  border: "1px solid oklch(0.85 0.18 52 / 0.35)",
+                  color: "oklch(0.88 0.18 52)",
+                }}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Free plan · no card required · start in 60 seconds
+              </div>
+
+              {/* CTA */}
+              <button
+                onClick={handleSignup}
+                className="mt-6 w-full rounded-full py-3.5 text-sm font-semibold text-black transition-opacity hover:opacity-90"
+                style={{
+                  background: "linear-gradient(135deg, oklch(0.88 0.18 52), oklch(0.74 0.22 45))",
+                  boxShadow: "0 4px 24px oklch(0.72 0.22 45 / 0.50), inset 0 1px 0 oklch(1 0 0 / 0.25)",
+                }}
+              >
+                Start free — create your first ad →
+              </button>
+
+              {/* Dismiss */}
+              <button
+                onClick={dismiss}
+                className="mt-3 w-full text-center text-xs transition-colors"
+                style={{ color: "oklch(0.60 0.01 280)" }}
+                onMouseEnter={e => (e.currentTarget.style.color = "oklch(0.80 0.01 280)")}
+                onMouseLeave={e => (e.currentTarget.style.color = "oklch(0.60 0.01 280)")}
+              >
+                Maybe later
+              </button>
+            </div>
+          </div>
+
+        </DialogPrimitive.Content>
+      </DialogPortal>
+    </Dialog>
+  );
+}
+
+
 function Index() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -1030,31 +1292,6 @@ function Index() {
 
           <FeaturedVideo />
 
-          {/* Subscribe hook — static gradient background, no aurora */}
-          <div className="mt-8 relative overflow-hidden rounded-2xl border border-border px-6 py-8 text-center md:px-12 tutorial-cta-box">
-            {/* Colour wash — theme-aware via CSS */}
-            <div aria-hidden className="tutorial-cta-wash pointer-events-none absolute inset-0" />
-            <div className="relative">
-              <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full border border-primary/40 bg-primary/10 text-primary">
-                <Play className="h-5 w-5 translate-x-0.5" strokeWidth={2} />
-              </div>
-              <h3 className="font-display text-xl font-bold text-glow md:text-2xl">
-                Want the full feature walkthrough?
-              </h3>
-              <p className="mt-2 mx-auto max-w-lg text-sm text-muted-foreground md:text-base">
-                Subscribers get access to 11 in-depth tutorials — one for every part of NivaSpark, from creating your first ad to automating campaigns with Agent Niva.
-              </p>
-              <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-                <button onClick={openRegister} className="rounded-full bg-gold-gradient px-6 py-3 font-medium text-background shadow-[var(--shadow-gold)]">
-                  Start free — unlock all tutorials →
-                </button>
-                <Link to="/pricing" className="rounded-full border border-border px-6 py-3 text-sm font-medium hover:border-primary/60">
-                  See plans
-                </Link>
-              </div>
-              <p className="mt-4 text-xs text-muted-foreground">Free plan available · no credit card required</p>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -1066,6 +1303,9 @@ function Index() {
       <GlowDivider />
 
       <LandingFooter />
+
+      {/* Signup popup — only for non-authed visitors */}
+      {!isAuthed && <SignupPopup onSignup={openRegister} />}
 
       <LoginModal open={showLogin} onClose={() => setShowLogin(false)} initialMode={loginInitialMode} />
     </div>

@@ -16,6 +16,7 @@ import { Route as Index_oldRouteImport } from './routes/index_old'
 import { Route as DeveloperLoginRouteImport } from './routes/developer-login'
 import { Route as AcceptInviteRouteImport } from './routes/accept-invite'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ArchiveIndexRouteImport } from './routes/archive/index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as DeveloperThemesRouteImport } from './routes/developer.themes'
 import { Route as DeveloperTeamRouteImport } from './routes/developer.team'
@@ -77,6 +78,11 @@ const AcceptInviteRoute = AcceptInviteRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ArchiveIndexRoute = ArchiveIndexRouteImport.update({
+  id: '/archive/',
+  path: '/archive/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppIndexRoute = AppIndexRouteImport.update({
@@ -250,6 +256,7 @@ export interface FileRoutesByFullPath {
   '/developer/team': typeof DeveloperTeamRoute
   '/developer/themes': typeof DeveloperThemesRoute
   '/app/': typeof AppIndexRoute
+  '/archive/': typeof ArchiveIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -286,6 +293,7 @@ export interface FileRoutesByTo {
   '/developer/team': typeof DeveloperTeamRoute
   '/developer/themes': typeof DeveloperThemesRoute
   '/app': typeof AppIndexRoute
+  '/archive': typeof ArchiveIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -323,6 +331,7 @@ export interface FileRoutesById {
   '/developer/team': typeof DeveloperTeamRoute
   '/developer/themes': typeof DeveloperThemesRoute
   '/app/': typeof AppIndexRoute
+  '/archive/': typeof ArchiveIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -361,6 +370,7 @@ export interface FileRouteTypes {
     | '/developer/team'
     | '/developer/themes'
     | '/app/'
+    | '/archive/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -397,6 +407,7 @@ export interface FileRouteTypes {
     | '/developer/team'
     | '/developer/themes'
     | '/app'
+    | '/archive'
   id:
     | '__root__'
     | '/'
@@ -433,6 +444,7 @@ export interface FileRouteTypes {
     | '/developer/team'
     | '/developer/themes'
     | '/app/'
+    | '/archive/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -470,6 +482,7 @@ export interface RootRouteChildren {
   DeveloperTeamRoute: typeof DeveloperTeamRoute
   DeveloperThemesRoute: typeof DeveloperThemesRoute
   AppIndexRoute: typeof AppIndexRoute
+  ArchiveIndexRoute: typeof ArchiveIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -521,6 +534,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/archive/': {
+      id: '/archive/'
+      path: '/archive'
+      fullPath: '/archive/'
+      preLoaderRoute: typeof ArchiveIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app/': {
@@ -750,6 +770,7 @@ const rootRouteChildren: RootRouteChildren = {
   DeveloperTeamRoute: DeveloperTeamRoute,
   DeveloperThemesRoute: DeveloperThemesRoute,
   AppIndexRoute: AppIndexRoute,
+  ArchiveIndexRoute: ArchiveIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
