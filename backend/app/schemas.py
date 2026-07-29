@@ -449,6 +449,7 @@ class AddAssistantHintIn(BaseModel):
 
 
 class UpdateAssistantHintIn(BaseModel):
+    key: str | None = Field(default=None, min_length=1, max_length=100)  # optional — if supplied, changes the hint's key (moves it to a new group); key must not already exist
     label: str = Field(min_length=1, max_length=100)
     message: str = Field(min_length=1, max_length=600)
 

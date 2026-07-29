@@ -1249,7 +1249,7 @@ async def add_assistant_hint(data: AddAssistantHintIn, _: str = Depends(require_
 @router.put("/assistant-hints/{hint_id}", response_model=list[AssistantHintOut])
 async def update_assistant_hint(hint_id: str, data: UpdateAssistantHintIn, _: str = Depends(require_developer_permission("assistant")), db: AsyncSession = Depends(get_db)):
     try:
-        hints = await assistant_hints_svc.update_assistant_hint(db, hint_id, data.label.strip(), data.message.strip())
+        hints = await assistant_hints_svc.update_assistant_hint(db, hint_id, data.label.strip(), data.message.strip(), key=data.key.strip() if data.key else None)
     except ValueError as exc:
         raise HTTPException(404, str(exc))
     return [AssistantHintOut(**h) for h in hints]

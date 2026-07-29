@@ -34,6 +34,31 @@ const PAGE_SUBGROUPS: { label: string; keys: string[] }[] = [
   { label: "Admin",           keys: ["page:admin-users", "page:admin-profiles"] },
 ];
 
+// All page hint keys that the frontend actually uses — defined here so
+// PageSubGroupBox can show missing ones as a checklist (same pattern as
+// NavHintChecklist), not just silently show "No hints yet."
+const ALL_PAGE_HINT_KEYS: Record<string, { label: string; group: string }> = {
+  "page:image-theme-gallery": { label: "Image theme gallery",    group: "Themes Gallery" },
+  "page:video-theme-gallery": { label: "Video theme gallery",    group: "Themes Gallery" },
+  "page:quick-start":         { label: "Quick start",            group: "Agent Niva" },
+  "page:quick-spark":         { label: "Quick Spark",            group: "Agent Niva" },
+  "page:recurring-events":    { label: "Recurring events",       group: "Agent Niva" },
+  "page:brand-logo":          { label: "Logo & brand",           group: "Brand Kit" },
+  "page:image-padding":       { label: "Image padding",          group: "Brand Kit" },
+  "page:video-padding":       { label: "Video padding",          group: "Brand Kit" },
+  "page:video-shots":         { label: "Brand video shots",      group: "Brand Kit" },
+  "page:admin-users":         { label: "Admin — users tab",      group: "Admin" },
+  "page:admin-profiles":      { label: "Admin — profiles tab",   group: "Admin" },
+};
+
+// All known key prefixes and their display labels — used to populate the
+// "Move to group" dropdown in EditForm.
+const ALL_GROUP_PREFIXES = [
+  { prefix: "nav",   label: "Navigation" },
+  { prefix: "field", label: "Create Ad" },
+  { prefix: "page",  label: "Pages (themes/agent/brand/admin)" },
+];
+
 function groupLabelFor(prefix: string) {
   return GROUP_LABELS[prefix] || (prefix.charAt(0).toUpperCase() + prefix.slice(1));
 }
@@ -99,7 +124,7 @@ function SettingsCard({
   wakeHint: Hint | undefined;
   hintBusy: boolean;
   generatingAudioId: string | null;
-  onSaveHint: (id: string, v: { label: string; message: string }) => void;
+  onSaveHint: (id: string, v: { key: string; label: string; message: string }) => void;
   onAddHint: (v: { key: string; label: string; message: string }) => void;
   onGenerateAudio: (id: string) => void;
 }) {
@@ -223,11 +248,39 @@ function SettingsCard({
   );
 }
 
-function EditForm({ hint, busy, onSave, onCancel }: { hint: Hint; busy: boolean; onSave: (v: { label: string; message: string }) => void; onCancel: () => void }) {
+function EditForm({ hint, busy, onSave, onCancel }: { hint: Hint; busy: boolean; onSave: (v: { key: string; label: string; message: string }) => void; onCancel: () => void }) {
   const [label, setLabel] = useState(hint.label);
   const [message, setMessage] = useState(hint.message);
+  // Key editing — split into prefix + suffix so moving to another group is clear
+  const currentPrefix = hint.key.includes(":") ? hint.key.split(":")[0] : hint.key;
+  const currentSuffix = hint.key.includes(":") ? hint.key.slice(hint.key.indexOf(":") + 1) : "";
+  const [prefix, setPrefix] = useState(currentPrefix);
+  const [suffix, setSuffix] = useState(currentSuffix);
+  const finalKey = suffix.trim() ? `${prefix}:${suffix.trim()}` : hint.key;
+  const keyChanged = finalKey !== hint.key;
   return (
     <div className="space-y-2">
+      {/* Key — shown and editable so the hint can be moved to a different group */}
+      <div>
+        <label className="text-[11px] text-muted-foreground">Key <span className="text-primary/60">(edit prefix to move to a different group)</span></label>
+        <div className="flex items-center gap-1.5">
+          <select value={prefix} onChange={(e) => setPrefix(e.target.value)}
+            className="rounded-lg border border-border bg-input/40 px-2 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+            {ALL_GROUP_PREFIXES.map((g) => (
+              <option key={g.prefix} value={g.prefix}>{g.prefix} — {g.label}</option>
+            ))}
+            {!ALL_GROUP_PREFIXES.find((g) => g.prefix === currentPrefix) && (
+              <option value={currentPrefix}>{currentPrefix}</option>
+            )}
+          </select>
+          <span className="text-xs text-muted-foreground">:</span>
+          <input value={suffix} onChange={(e) => setSuffix(e.target.value)}
+            className="flex-1 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
+        </div>
+        {keyChanged && (
+          <div className="mt-0.5 text-[10px] text-amber-400">Key will change to <code className="font-mono">{finalKey}</code> — this moves the hint to the "{prefix}" group</div>
+        )}
+      </div>
       <div>
         <label className="text-[11px] text-muted-foreground">Label</label>
         <input value={label} onChange={(e) => setLabel(e.target.value)}
@@ -240,7 +293,7 @@ function EditForm({ hint, busy, onSave, onCancel }: { hint: Hint; busy: boolean;
         <div className="text-[10px] text-muted-foreground mt-0.5">Changing the message clears the stored audio — regenerate after saving.</div>
       </div>
       <div className="flex items-center gap-2">
-        <button disabled={busy || !label.trim() || !message.trim()} onClick={() => onSave({ label: label.trim(), message: message.trim() })}
+        <button disabled={busy || !label.trim() || !message.trim() || !finalKey} onClick={() => onSave({ key: finalKey, label: label.trim(), message: message.trim() })}
           className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
           {busy ? "Saving…" : "Save"}
         </button>
@@ -303,7 +356,7 @@ function HintRow({ hint, busy, editing, generating, onEdit, onCancelEdit, onSave
   generating: boolean;
   onEdit: () => void;
   onCancelEdit: () => void;
-  onSave: (v: { label: string; message: string }) => void;
+  onSave: (v: { key: string; label: string; message: string }) => void;
   onGenerateAudio: () => void;
   onRemove: () => void;
 }) {
@@ -396,7 +449,7 @@ function NavHintChecklist({
   onAddHint: (v: { key: string; label: string; message: string }) => void;
   onEdit: (id: string) => void;
   onCancelEdit: () => void;
-  onSaveHint: (id: string, v: { label: string; message: string }) => void;
+  onSaveHint: (id: string, v: { key: string; label: string; message: string }) => void;
   onGenerateAudio: (id: string) => void;
   onRemove: (id: string) => void;
 }) {
@@ -477,7 +530,7 @@ function GroupBox({
   onAddHint: (v: { key: string; label: string; message: string }) => void;
   onEdit: (id: string) => void;
   onCancelEdit: () => void;
-  onSaveHint: (id: string, v: { label: string; message: string }) => void;
+  onSaveHint: (id: string, v: { key: string; label: string; message: string }) => void;
   onGenerateAudio: (id: string) => void;
   onRemove: (id: string) => void;
 }) {
@@ -530,8 +583,9 @@ function GroupBox({
 }
 
 /** Renders one page sub-group (e.g. "Themes Gallery") as its own
- * collapsible card, exactly like GroupBox but with a fixed key list
- * rather than a prefix match. */
+ * collapsible card. Known keys that don't have a hint yet are shown as
+ * dashed "missing" rows with a pre-filled "+ Add hint" button — same
+ * pattern as NavHintChecklist, so you can't miss any required hints. */
 function PageSubGroupBox({
   subLabel, subKeys, allHints, expanded, onToggle, editingId, busy, generatingAudioId,
   addingGroup, onStartAdd, onCancelAdd, onAddHint,
@@ -546,18 +600,19 @@ function PageSubGroupBox({
   busy: boolean;
   generatingAudioId: string | null;
   addingGroup: string | null;
-  onStartAdd: () => void;
+  onStartAdd: (key: string) => void;
   onCancelAdd: () => void;
   onAddHint: (v: { key: string; label: string; message: string }) => void;
   onEdit: (id: string) => void;
   onCancelEdit: () => void;
-  onSaveHint: (id: string, v: { label: string; message: string }) => void;
+  onSaveHint: (id: string, v: { key: string; label: string; message: string }) => void;
   onGenerateAudio: (id: string) => void;
   onRemove: (id: string) => void;
 }) {
   const groupId = "page-sub:" + subLabel;
-  const isAdding = addingGroup === groupId;
-  const hints = subKeys.map((k) => allHints.find((h) => h.key === k)).filter(Boolean) as Hint[];
+  const isAdding = (key: string) => addingGroup === groupId + ":" + key;
+  const presentHints = subKeys.map((k) => allHints.find((h) => h.key === k));
+  const missingCount = presentHints.filter((h) => !h).length;
 
   return (
     <div className="rounded-xl border border-border bg-card/40 overflow-hidden">
@@ -566,40 +621,58 @@ function PageSubGroupBox({
         <span className="flex items-center gap-2 min-w-0">
           <span className={`inline-block text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`}>▶</span>
           <span className="text-sm font-semibold text-foreground truncate">{subLabel}</span>
-          <span className="text-[10px] text-muted-foreground shrink-0">{hints.length}/{subKeys.length}</span>
+          <span className="text-[10px] text-muted-foreground shrink-0">{subKeys.length - missingCount}/{subKeys.length}</span>
         </span>
+        {missingCount > 0 && <span className="shrink-0 rounded-full bg-destructive/15 px-2 py-0.5 text-[10px] text-destructive">{missingCount} missing</span>}
       </button>
       {expanded && (
-        <div className="px-4 pb-4">
-          <div className="mb-3">
-            {isAdding ? (
-              <div className="rounded-xl border border-border bg-card/60 p-3">
-                <AddForm busy={busy} keyPrefix="page" onCancel={onCancelAdd} onAdd={onAddHint} />
+        <div className="px-4 pb-4 space-y-2">
+          {subKeys.map((k) => {
+            const hint = allHints.find((h) => h.key === k);
+            const knownMeta = ALL_PAGE_HINT_KEYS[k];
+            if (hint) {
+              return (
+                <HintRow
+                  key={hint.id}
+                  hint={hint}
+                  busy={busy}
+                  editing={editingId === hint.id}
+                  generating={generatingAudioId === hint.id}
+                  onEdit={() => onEdit(hint.id)}
+                  onCancelEdit={onCancelEdit}
+                  onSave={(v) => onSaveHint(hint.id, v)}
+                  onGenerateAudio={() => onGenerateAudio(hint.id)}
+                  onRemove={() => onRemove(hint.id)}
+                />
+              );
+            }
+            // Missing — show dashed row with pre-filled add form
+            const addKey = groupId + ":" + k;
+            return (
+              <div key={k} className="rounded-xl border border-dashed border-destructive/40 bg-destructive/5 p-3">
+                {isAdding(k) ? (
+                  <FixedKeyAddForm
+                    fixedKey={k}
+                    initialLabel={knownMeta?.label || k}
+                    busy={busy}
+                    onCancel={onCancelAdd}
+                    onAdd={onAddHint}
+                  />
+                ) : (
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold text-foreground">{knownMeta?.label || k}</div>
+                      <div className="text-[10px] text-muted-foreground font-mono">{k} — no message yet</div>
+                    </div>
+                    <button onClick={() => onStartAdd(addKey)}
+                      className="shrink-0 rounded-full border border-dashed border-primary/50 px-3 py-1 text-[11px] text-primary hover:bg-primary/5">
+                      + Add hint
+                    </button>
+                  </div>
+                )}
               </div>
-            ) : (
-              <button onClick={onStartAdd}
-                className="rounded-full border border-dashed border-primary/50 px-3 py-1 text-[11px] text-primary hover:bg-primary/5">
-                + Add hint
-              </button>
-            )}
-          </div>
-          <div className="space-y-2">
-            {hints.map((h) => (
-              <HintRow
-                key={h.id}
-                hint={h}
-                busy={busy}
-                editing={editingId === h.id}
-                generating={generatingAudioId === h.id}
-                onEdit={() => onEdit(h.id)}
-                onCancelEdit={onCancelEdit}
-                onSave={(v) => onSaveHint(h.id, v)}
-                onGenerateAudio={() => onGenerateAudio(h.id)}
-                onRemove={() => onRemove(h.id)}
-              />
-            ))}
-            {hints.length === 0 && <div className="text-[11px] text-muted-foreground">No hints yet.</div>}
-          </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -629,7 +702,7 @@ function DeveloperAssistant() {
   }
   useEffect(() => { load(); }, []);
 
-  async function save(id: string, v: { label: string; message: string }) {
+  async function save(id: string, v: { key: string; label: string; message: string }) {
     setBusy(true); setErr("");
     try { setHints(await devApi(`/developer/assistant-hints/${id}`, { method: "PUT", body: v })); setEditingId(null); }
     catch (e: any) { if (!handleAuthError(e)) setErr(e.message || "Could not save"); }
@@ -843,7 +916,7 @@ function DeveloperAssistant() {
                     <PageSubGroupBox key={sub.label} subLabel={sub.label} subKeys={sub.keys} allHints={pageHints}
                       expanded={isExpanded(groupId)} onToggle={() => toggleGroup(groupId)}
                       editingId={editingId} busy={busy} generatingAudioId={generatingAudioId}
-                      addingGroup={addingGroup} onStartAdd={() => setAddingGroup(groupId)}
+                      addingGroup={addingGroup} onStartAdd={(key) => setAddingGroup(key)}
                       onCancelAdd={() => setAddingGroup(null)} onAddHint={add}
                       onEdit={setEditingId} onCancelEdit={() => setEditingId(null)}
                       onSaveHint={save} onGenerateAudio={generateAudio} onRemove={remove} />

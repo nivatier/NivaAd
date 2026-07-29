@@ -2238,24 +2238,25 @@ function CreateAd() {
             )}
           </div>
 
-          <RequirementChecklist items={[
-            { label: "Product name", met: !!productName.trim() },
-            { label: "Description (min 10 characters)", met: description.trim().length >= 10 },
-            { label: "Target audience", met: !!audience.trim() },
-            { label: "At least one output (text / image / video)", met: !!(outputs.text || outputs.image || outputs.video) },
-            { label: "Image model selected", met: !outputs.image || !!imageModelId },
-            { label: "Video model selected", met: !outputs.video || !!videoModelId },
-            { label: "Text model selected", met: !outputs.text || !!textModelId },
-            { label: "Sufficient credits", met: credits >= cost },
-          ]} />
           <div className="mt-5 flex flex-wrap items-center gap-3">
-            <button
-              disabled={!productName.trim() || description.trim().length < 10 || !audience.trim() || (!outputs.text && !outputs.image && !outputs.video) || !videoShotsValid || (outputs.video && videoMode === "first_last_frame" && (!videoFrameImage || !videoEndFrameImage)) || credits < cost || previewBusy}
-              onClick={openPromptPreview}
-              className="rounded-full bg-gold-gradient px-6 py-2.5 text-sm font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-40"
-            >
-              {previewBusy ? "Building prompts…" : credits < cost ? `Needs ${cost} credits — ${credits} left` : `Review prompts & generate (${cost} credit${cost > 1 ? "s" : ""}) →`}
-            </button>
+            <RequirementChecklist items={[
+              { label: "Product name", met: !!productName.trim() },
+              { label: "Description (min 10 characters)", met: description.trim().length >= 10 },
+              { label: "Target audience", met: !!audience.trim() },
+              { label: "At least one output (text / image / video)", met: !!(outputs.text || outputs.image || outputs.video) },
+              { label: "Image model selected", met: !outputs.image || !!imageModelId },
+              { label: "Video model selected", met: !outputs.video || !!videoModelId },
+              { label: "Text model selected", met: !outputs.text || !!textModelId },
+              { label: "Sufficient credits", met: credits >= cost },
+            ]}>
+              <button
+                disabled={!productName.trim() || description.trim().length < 10 || !audience.trim() || (!outputs.text && !outputs.image && !outputs.video) || !videoShotsValid || (outputs.video && videoMode === "first_last_frame" && (!videoFrameImage || !videoEndFrameImage)) || credits < cost || previewBusy}
+                onClick={openPromptPreview}
+                className="rounded-full bg-gold-gradient px-6 py-2.5 text-sm font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-40"
+              >
+                {previewBusy ? "Building prompts…" : credits < cost ? `Needs ${cost} credits — ${credits} left` : `Review prompts & generate (${cost} credit${cost > 1 ? "s" : ""}) →`}
+              </button>
+            </RequirementChecklist>
             <button
               disabled={!productName.trim() || savingProduct}
               onClick={saveToLibrary}

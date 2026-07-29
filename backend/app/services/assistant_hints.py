@@ -110,14 +110,18 @@ async def add_assistant_hint(db, key: str, label: str, message: str) -> list[dic
     return await set_assistant_hints(db, hints)
 
 
-async def update_assistant_hint(db, hint_id: str, label: str, message: str) -> list[dict]:
-    """Only label/message are editable — key is immutable (it's wired to a
-    real DOM element). Updating the message also clears any existing audio_url
-    so the developer knows to regenerate audio for the new text."""
+async def update_assistant_hint(db, hint_id: str, label: str, message: str, key: str | None = None) -> list[dict]:
+    """Only label/message are required. key is optional — if supplied it must
+    not already exist (avoids duplicates) and moves the hint to a new group.
+    Updating the message also clears any existing audio_url."""
     hints = await get_assistant_hints(db)
+    if key and any(h["key"] == key for h in hints if h["id"] != hint_id):
+        raise ValueError(f'A hint with key "{key}" already exists.')
     for h in hints:
         if h["id"] == hint_id:
             text_changed = h["message"] != message
+            if key:
+                h["key"] = key
             h["label"] = label
             h["message"] = message
             if text_changed:
