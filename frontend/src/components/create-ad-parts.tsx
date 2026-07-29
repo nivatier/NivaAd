@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import type React from "react";
 
 export type Platform = { id: string; name: string; color: string; tag: string; ratio: string };
 
@@ -67,7 +68,15 @@ const PLATFORM_ICONS: Record<string, string[]> = {
 
 type MediaItem = { type: "image" | "video"; url: string };
 
-export function CarouselMedia({ items, altPrefix }: { items: MediaItem[]; altPrefix: string }) {
+export function CarouselMedia({
+  items,
+  altPrefix,
+  onVideoDimensions,
+}: {
+  items: MediaItem[];
+  altPrefix: string;
+  onVideoDimensions?: (w: number, h: number) => void;
+}) {
   const [idx, setIdx] = useState(0);
   if (items.length === 0) {
     return <div className="grid h-full place-items-center text-xs text-muted-foreground">No media generated</div>;
@@ -76,7 +85,19 @@ export function CarouselMedia({ items, altPrefix }: { items: MediaItem[]; altPre
   return (
     <div className="relative h-full w-full">
       {current.type === "video" ? (
-        <video key={current.url} src={current.url} controls playsInline className="h-full w-full object-cover" />
+        <video
+          key={current.url}
+          src={current.url}
+          controls
+          playsInline
+          className="h-full w-full object-contain"
+          onLoadedMetadata={(e) => {
+            const v = e.currentTarget;
+            if (v.videoWidth && v.videoHeight && onVideoDimensions) {
+              onVideoDimensions(v.videoWidth, v.videoHeight);
+            }
+          }}
+        />
       ) : (
         <img src={current.url} alt={`${altPrefix} ${idx + 1}`} className="h-full w-full object-cover" />
       )}
@@ -122,6 +143,17 @@ export function PostPreviewCard({
   companyName: string;
 }) {
   const media = buildMediaItems(imageUrl, imageUrls, videoUrl);
+  // Detected from the video's real pixel dimensions once metadata loads.
+  // Falls back to the platform-based default so images keep their expected ratio.
+  const [detectedRatio, setDetectedRatio] = useState<string | null>(null);
+  const handleVideoDimensions = useCallback((w: number, h: number) => {
+    setDetectedRatio(`${w}/${h}`);
+  }, []);
+
+  // Default aspect ratio from the platform; overridden by real video dimensions.
+  const defaultRatio = platform.id === "tiktok" ? "9/16" : "1/1";
+  const containerRatio = detectedRatio ?? defaultRatio;
+
   return (
     <div className="overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -139,8 +171,8 @@ export function PostPreviewCard({
           </div>
           <span className="ml-auto text-muted-foreground">⋯</span>
         </div>
-        <div className="overflow-hidden rounded-xl border border-border/60 bg-card/60" style={{ aspectRatio: platform.id === "tiktok" ? "9/16" : "1/1" }}>
-          <CarouselMedia items={media} altPrefix={platform.name} />
+        <div className="overflow-hidden rounded-xl border border-border/60 bg-card/60" style={{ aspectRatio: containerRatio }}>
+          <CarouselMedia items={media} altPrefix={platform.name} onVideoDimensions={handleVideoDimensions} />
         </div>
         <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
           {(PLATFORM_ICONS[platform.id] || ["♡ Like", "💬 Comment", "↗ Share"]).map((ic) => <span key={ic}>{ic}</span>)}
@@ -182,6 +214,132 @@ export function PostPreviewModal({
   );
 }
 
+/** Brand kit shape — just the fields we need for the posted view overlay. */
+export type BrandKitPreview = {
+  logo_url: string | null;
+  logo_placement: string;  // "top-left" | "top-right" | "bottom-left" | "bottom-right"
+  primary_color: string;
+};
+
+/** Maps a placement string to CSS positioning on the overlay container. */
+function placementStyle(placement: string): React.CSSProperties {
+  const base: React.CSSProperties = { position: "absolute", margin: "8px" };
+  if (placement === "top-left")     return { ...base, top: 0, left: 0 };
+  if (placement === "top-right")    return { ...base, top: 0, right: 0 };
+  if (placement === "bottom-left")  return { ...base, bottom: 0, left: 0 };
+  return { ...base, bottom: 0, right: 0 }; // bottom-right default
+}
+
+/**
+ * "Posted view" modal — shows the platform-specific reframed image/video
+ * (platform_image_urls / platform_video_urls from the variant) with the
+ * brand logo composited at its configured placement position, exactly as
+ * it will look when posted. Falls back to the master image/video when no
+ * platform-specific version was generated (e.g. brand kit wasn't set up
+ * at generation time or the model doesn't produce per-platform crops).
+ */
+export function PostedViewModal({
+  platform,
+  variant,
+  brandKit,
+  onClose,
+}: {
+  platform: Platform;
+  variant: Record<string, any>;
+  brandKit: BrandKitPreview | null;
+  onClose: () => void;
+}) {
+  const [detectedRatio, setDetectedRatio] = useState<string | null>(null);
+
+  // Prefer the platform-specific reframed media; fall back to master
+  const postedImageUrl: string | undefined =
+    variant?.platform_image_urls?.[platform.id] ?? variant?.image_url;
+  const postedVideoUrl: string | undefined =
+    variant?.platform_video_urls?.[platform.id] ?? variant?.video_url;
+  const hasMedia = !!(postedImageUrl || postedVideoUrl);
+
+  const containerRatio = detectedRatio ?? (platform.id === "tiktok" ? "9/16" : "1/1");
+  const isPerPlatform =
+    !!(variant?.platform_image_urls?.[platform.id] || variant?.platform_video_urls?.[platform.id]);
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm flex flex-col gap-3">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold text-slate-950" style={{ background: platform.color }}>{platform.tag}</span>
+            <span className="text-sm font-semibold text-white">{platform.name} — posted view</span>
+          </div>
+          <button onClick={onClose} className="text-lg leading-none text-white/70 hover:text-white">✕</button>
+        </div>
+
+        {/* Media with logo overlay */}
+        <div className="relative overflow-hidden rounded-2xl bg-black border border-white/10" style={{ aspectRatio: containerRatio }}>
+          {hasMedia ? (
+            postedVideoUrl ? (
+              <video
+                key={postedVideoUrl}
+                src={postedVideoUrl}
+                controls
+                playsInline
+                className="h-full w-full object-contain"
+                onLoadedMetadata={(e) => {
+                  const v = e.currentTarget;
+                  if (v.videoWidth && v.videoHeight) setDetectedRatio(`${v.videoWidth}/${v.videoHeight}`);
+                }}
+              />
+            ) : (
+              <img src={postedImageUrl} alt={`${platform.name} posted view`} className="h-full w-full object-contain" />
+            )
+          ) : (
+            <div className="flex h-full items-center justify-center text-xs text-white/40">No media</div>
+          )}
+
+          {/* Brand logo overlay */}
+          {brandKit?.logo_url && (
+            <div style={placementStyle(brandKit.logo_placement)}>
+              <img
+                src={brandKit.logo_url}
+                alt="Brand logo"
+                className="h-8 w-auto max-w-[80px] rounded object-contain"
+                style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}
+              />
+            </div>
+          )}
+
+          {/* Brand colour accent bar */}
+          {brandKit?.primary_color && (
+            <div
+              className="absolute bottom-0 left-0 right-0 h-1"
+              style={{ background: brandKit.primary_color, opacity: 0.85 }}
+            />
+          )}
+        </div>
+
+        {/* Info strip */}
+        <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-[11px] text-white/60 space-y-0.5">
+          <div>
+            {isPerPlatform
+              ? <span className="text-emerald-400">✓ Platform-specific crop</span>
+              : <span className="text-amber-400/80">⚠ Master image (no platform crop generated)</span>}
+          </div>
+          {brandKit?.logo_url
+            ? <div>Logo: <span className="text-white/80">{brandKit.logo_placement}</span></div>
+            : <div className="text-white/40">No brand logo configured</div>}
+          {brandKit?.primary_color && (
+            <div className="flex items-center gap-1.5">
+              Accent:
+              <span className="inline-block h-3 w-3 rounded-full border border-white/20" style={{ background: brandKit.primary_color }} />
+              <span className="text-white/80">{brandKit.primary_color}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Text-only version of PlatformPreviewCard, for the 3-column Create Ad
  * results layout (Text | Image | Video side by side, not stacked) —
  * image/video are shared across every platform (only the caption
@@ -200,6 +358,8 @@ export function PlatformPreviewCard({
   posted,
   onPost,
   onEditCaption,
+  variant,
+  brandKit,
 }: {
   platform: Platform;
   result: PlatformResult | undefined;
@@ -210,9 +370,19 @@ export function PlatformPreviewCard({
   posted: boolean;
   onPost: () => void;
   onEditCaption: (text: string) => void;
+  variant?: Record<string, any>;
+  brandKit?: BrandKitPreview | null;
 }) {
   const [showPreview, setShowPreview] = useState(false);
+  const [showPostedView, setShowPostedView] = useState(false);
+  const [detectedRatio, setDetectedRatio] = useState<string | null>(null);
+  const handleVideoDimensions = useCallback((w: number, h: number) => {
+    setDetectedRatio(`${w}/${h}`);
+  }, []);
   const score = result?.score;
+  const thumbStyle: React.CSSProperties = detectedRatio
+    ? { aspectRatio: detectedRatio, maxHeight: "12rem" }
+    : { height: "10rem" };
   return (
     <div className="rounded-2xl border border-border bg-card/60 p-4 flex flex-col gap-3">
       <div className="flex items-center justify-between">
@@ -226,12 +396,15 @@ export function PlatformPreviewCard({
               ◎ {score}/100
             </span>
           )}
+          {variant && (imageUrl || videoUrl) && (
+            <button onClick={() => setShowPostedView(true)} className="rounded-full border border-secondary/50 px-2.5 py-0.5 text-[10px] text-secondary hover:bg-secondary/10">📲 Posted view</button>
+          )}
           <button onClick={() => setShowPreview(true)} className="rounded-full border border-border px-2.5 py-0.5 text-[10px] text-muted-foreground hover:border-primary/40 hover:text-primary">👁 Preview</button>
         </div>
       </div>
 
-      <div className="relative overflow-hidden rounded-xl border border-border/60 h-40 bg-background/60">
-        <CarouselMedia items={buildMediaItems(imageUrl, imageUrls, videoUrl)} altPrefix={platform.name} />
+      <div className="relative overflow-hidden rounded-xl border border-border/60 bg-background/60 w-full" style={thumbStyle}>
+        <CarouselMedia items={buildMediaItems(imageUrl, imageUrls, videoUrl)} altPrefix={platform.name} onVideoDimensions={handleVideoDimensions} />
       </div>
 
       <div className="flex items-center gap-2">
@@ -259,6 +432,9 @@ export function PlatformPreviewCard({
       )}
       {showPreview && (
         <PostPreviewModal platform={platform} result={result} imageUrl={imageUrl} imageUrls={imageUrls} videoUrl={videoUrl} companyName={companyName} onClose={() => setShowPreview(false)} />
+      )}
+      {showPostedView && variant && (
+        <PostedViewModal platform={platform} variant={variant} brandKit={brandKit ?? null} onClose={() => setShowPostedView(false)} />
       )}
     </div>
   );

@@ -28,12 +28,12 @@ def _post_with_retry(url: str, **kwargs) -> httpx.Response:
     raise last_exc
 
 
-def generate_image(prompt: str, model: str, reference_urls: list[str] | None = None) -> tuple[bytes, str]:
+def generate_image(prompt: str, model: str, reference_urls: list[str] | None = None, aspect_ratio: str = "1:1") -> tuple[bytes, str]:
     body = {
         "model": model,
         "prompt": prompt,
         "resolution": "1K",
-        "aspect_ratio": "1:1",
+        "aspect_ratio": aspect_ratio,
     }
     if reference_urls:
         body["input_references"] = [

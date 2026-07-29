@@ -160,6 +160,7 @@ class AvailableModelOut(BaseModel):
     supports_audio: bool = False  # video only — whether to show an audio on/off toggle at all; only meaningful for models with dynamic pricing that actually vary by audio
     supports_last_frame: bool = False  # video only — whether this model accepts a separate end frame, enabling the "start + end frame" mode in Create Ad's video section
     has_dynamic_pricing: bool = False  # true if this model's cost genuinely varies by the customer's resolution/audio/duration choice; false means `credits` above is the fixed cost regardless of selection
+    aspect_ratios: list[str] | None = None  # image + video — the aspect ratios this model supports; shown as chips in Create Ad so the user can pick before generating; None = no picker shown (model handles ratio itself via reframe pipeline)
 
 
 class AvailableModelsOut(BaseModel):
@@ -641,6 +642,7 @@ class AddModelIn(BaseModel):
     supports_last_frame: bool = False  # video only — whether this model accepts a separate end frame alongside the starting frame
     price_per_second_usd: float | None = Field(default=None, ge=0)  # video only; informational (from OpenRouter's catalog)
     pricing: dict | None = None  # see DeveloperModelOut.pricing — omit to keep this model on flat legacy credits
+    aspect_ratios: list[str] | None = None  # image + video — aspect ratios to offer in Create Ad; e.g. ["1:1","16:9","9:16"]; None = no picker
 
 
 class UpdateModelIn(BaseModel):
@@ -661,6 +663,7 @@ class UpdateModelIn(BaseModel):
     price_per_second_usd: float | None = Field(default=None, ge=0)
     enabled: bool | None = None
     pricing: dict | None = None
+    aspect_ratios: list[str] | None = None
 
 
 class ReorderModelsIn(BaseModel):
@@ -812,9 +815,11 @@ class AdCreateIn(BaseModel):
     image_reference_image: str | None = None  # raw base64 data URL — a DEDICATED reference for IMAGE generation, set in Step 2's AI image section; when present it takes priority over the Step 1 product photo as the generation reference (same explicit-over-implicit principle as video's frame image)
     image_reference_image_url: str | None = None  # already-stored URL variant of the above
     image_model_id: str | None = None  # which entry from GET /ads/available-models the user picked in Step 2's dropdown — replaces the old company-wide "active tier" concept; required if outputs.image is true
+    image_aspect_ratio: str | None = None  # aspect ratio for image generation, e.g. "1:1", "16:9", "9:16" — only sent when the chosen image model exposes aspect_ratios; defaults to "1:1" in the image service
     video_model_id: str | None = None  # same, for video; required if outputs.video is true
     text_model_id: str | None = None  # same, for text — text generation is no longer free/bundled; if outputs.text is true this is required, resolved to a real credit cost like image/video
     video_resolution: str | None = None  # which of the chosen video model's offered resolutions to generate at (validated against that model's own list); defaults server-side to the model's first offered resolution if omitted
+    video_aspect_ratio: str | None = None  # aspect ratio for video generation e.g. "16:9", "9:16", "1:1" — sent to OpenRouter's video API alongside resolution; None = omit (model default applies)
     video_audio: bool = False  # whether to generate with native audio, for models that support the choice (see AvailableModelOut.supports_audio) — genuinely affects both the output AND the price for dynamically-priced models; ignored for models without an audio toggle
     video_start_shot_id: str | None = None  # a Brand Kit intro clip (see /brand-kit/video-shots, kind="intro") to prepend via ffmpeg concat — null/omitted means no intro, same as any other optional field here
     video_end_shot_id: str | None = None  # same, for a Brand Kit outro/credits clip (kind="outro") appended at the end
@@ -911,6 +916,12 @@ class PromptPreviewIn(BaseModel):
     carousel_slides: list[str] | None = None
     video_shots: list[VideoShotIn] | None = None
     refine_video_prompt: bool = False  # opt-in — mirrors AdCreateIn's field; the preview only runs shot review when this is checked, so the preview matches what generation would actually do
+    # Video-specific fields that affect the prompt — must mirror AdCreateIn
+    # so the preview shows EXACTLY what generation will produce.
+    video_camera_style_ids: list[str] = Field(default_factory=list)
+    video_negative_prompt: str | None = None
+    video_background_music_id: str | None = None
+    image_aspect_ratio: str | None = None  # mirrors AdCreateIn
 
 
 class PromptPreviewOut(BaseModel):

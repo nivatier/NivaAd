@@ -547,6 +547,8 @@ function CreateAd() {
   const [brandTagline, setBrandTagline] = useState("");
   const [useTagline, setUseTagline] = useState(false);
   const [brandLogoUrl, setBrandLogoUrl] = useState<string | null>(null);
+  const [brandLogoPlacement, setBrandLogoPlacement] = useState("bottom-right");
+  const [brandPrimaryColor, setBrandPrimaryColor] = useState("#7c3aed");
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [useLogo, setUseLogo] = useState(false);
 
@@ -558,6 +560,8 @@ function CreateAd() {
   const [availableModels, setAvailableModels] = useState<AvailableModelsOut | null>(null);
   const [textModelId, setTextModelId] = useState<string | null>(null);
   const [imageModelId, setImageModelId] = useState<string | null>(null);
+  const [imageAspectRatio, setImageAspectRatio] = useState<string | null>(null);
+  const [videoAspectRatio, setVideoAspectRatio] = useState<string | null>(null);
   const [videoModelId, setVideoModelId] = useState<string | null>(null);
   const [videoResolution, setVideoResolution] = useState<string | null>(null);
   const [videoAudio, setVideoAudio] = useState(true);
@@ -797,6 +801,7 @@ function CreateAd() {
     setVideoReferencePrompt(""); setShowVideoReferencePrompt(false);
     setVideoNegativePrompt(""); setShowVideoNegativePrompt(false);
     setVideoCameraStyleIds([]); setVideoBackgroundMusicId("none");
+    setImageAspectRatio(null); setVideoAspectRatio(null);
     setOpenSection("text");
   }
 
@@ -825,6 +830,8 @@ function CreateAd() {
     api("/brand-kit").then((kit) => {
       setBrandTagline(kit.tagline || "");
       setBrandLogoUrl(kit.logo_url || null);
+      setBrandLogoPlacement(kit.logo_placement || "bottom-right");
+      setBrandPrimaryColor(kit.primary_color || "#7c3aed");
     }).catch(() => { /* non-fatal */ });
     api("/ads/retention-info").then((r) => { setRetentionMonths(r.retention_months); setPostRetentionMonths(r.post_retention_months); }).catch(() => { /* non-fatal — notice just won't show a specific number */ });
     api("/ads/available-models").then((models: AvailableModelsOut) => {
@@ -834,7 +841,12 @@ function CreateAd() {
       if (models.video.length > 0) {
         setVideoModelId(models.video[0].id);
         setVideoResolution(models.video[0].resolutions?.[0] ?? null);
-        setVideoShots([{ prompt: "", duration: models.video[0].min_duration ?? 6 }]);
+        setVideoAspectRatio(models.video[0].aspect_ratios?.[0] ?? null);
+        // Don't overwrite videoShots if a video theme prefill was applied or
+        // is still pending — either way, the theme shots are the right ones.
+        if (!videoThemePrefillApplied.current && (!pendingThemePrefillRef.current || pendingThemePrefillRef.current.themeKind !== "video")) {
+          setVideoShots([{ prompt: "", duration: models.video[0].min_duration ?? 6 }]);
+        }
       }
     }).catch(() => {});
     api("/ads/video-themes").then((themes: typeof videoThemes) => {
@@ -879,6 +891,9 @@ function CreateAd() {
   // applied once the matching theme list actually has entries, rather
   // than trying to apply it immediately against an empty array.
   const pendingThemePrefillRef = useRef<{ themeKind: "image" | "video"; themeId: string; product: any | null } | null>(null);
+  // Tracks whether a video theme prefill was applied — prevents the
+  // available-models fetch from race-wiping the pre-loaded shot list.
+  const videoThemePrefillApplied = useRef(false);
   useEffect(() => {
     const raw = sessionStorage.getItem("nivaad_prefill_theme");
     if (!raw) return;
@@ -925,7 +940,9 @@ function CreateAd() {
     const theme = videoThemes.find((t) => t.id === pending.themeId);
     if (!theme) return;
     pendingThemePrefillRef.current = null;
+    videoThemePrefillApplied.current = true;
     setOutputs((o) => ({ ...o, video: true, image: false }));
+    setOpenSection("video");
     setVideoRefMode("theme");
     setSelectedVideoThemeId(theme.id);
     setVideoShots(theme.shots.map((s) => ({
@@ -992,8 +1009,21 @@ function CreateAd() {
           outputs,
           format, variations,
           carousel_slides: null,
-          video_shots: outputs.video ? videoShots.map((s) => ({ prompt: s.prompt, duration: s.duration, voiceover_text: s.voiceoverText?.trim() || null })) : null,
+          video_shots: outputs.video ? videoShots.map((s) => ({
+            prompt: s.prompt,
+            duration: s.duration,
+            voiceover_text: s.voiceoverText?.trim() || null,
+            text_overlays: (s.textOverlays || []).filter((o: any) => o.text?.trim()).map((o: any) => ({
+              text: o.text.trim(), start_time: o.startTime, end_time: o.endTime,
+              position: o.position, font_style: o.fontStyle, font_size: o.fontSize,
+              text_color: o.textColor, overlay_style: o.overlayStyle,
+            })),
+          })) : null,
           refine_video_prompt: outputs.video ? refineVideoPrompt : false,
+          video_camera_style_ids: outputs.video ? videoCameraStyleIds : [],
+          video_negative_prompt: outputs.video && videoNegativePrompt.trim() ? videoNegativePrompt.trim() : null,
+          video_background_music_id: outputs.video && videoBackgroundMusicId !== "none" ? videoBackgroundMusicId : null,
+          image_aspect_ratio: outputs.image ? (imageAspectRatio || null) : null,
         },
       });
       setTextPrompt(res.text_prompt);
@@ -1063,11 +1093,13 @@ function CreateAd() {
             image_reference_image_url: outputs.image && !isDataUrlImageReference && imageReferenceImage ? imageReferenceImage : null,
             text_prompt_override: textPrompt || null,
             image_prompt_override: outputs.image && format !== "carousel" ? (imagePrompt || null) : null,
-            video_prompt_override: outputs.video && videoShots.length === 1 ? (videoPrompt || null) : null,
+            video_prompt_override: outputs.video ? (videoPrompt || null) : null,
             text_model_id: outputs.text ? textModelId : null,
             image_model_id: outputs.image ? imageModelId : null,
+            image_aspect_ratio: outputs.image ? (imageAspectRatio || null) : null,
             video_model_id: outputs.video ? videoModelId : null,
             video_resolution: outputs.video ? videoResolution : null,
+            video_aspect_ratio: outputs.video ? (videoAspectRatio || null) : null,
             video_audio: outputs.video ? videoAudio : false,
             video_start_shot_id: outputs.video ? videoStartShotId : null,
             video_end_shot_id: outputs.video ? videoEndShotId : null,
@@ -1372,13 +1404,26 @@ function CreateAd() {
                     <div className="space-y-3">
                       <div>
                         <div className="text-xs font-semibold text-foreground mb-1.5">Image Model <NovaHint hintKey="field:image-model" /></div>
-                        <select value={imageModelId || ""} onChange={(e) => setImageModelId(e.target.value)}
+                        <select value={imageModelId || ""} onChange={(e) => {
+                          setImageModelId(e.target.value);
+                          const m = availableModels?.image.find((x) => x.id === e.target.value);
+                          setImageAspectRatio(m?.aspect_ratios?.[0] ?? null);
+                        }}
                           className="w-full rounded-lg border border-input bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary">
                           {!availableModels && <option value="">Loading…</option>}
                           {availableModels?.image.map((m) => (
                             <option key={m.id} value={m.id}>{m.label} — {m.credits}cr</option>
                           ))}
                         </select>
+                        {selectedImageModel?.aspect_ratios && selectedImageModel.aspect_ratios.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                            <span className="text-[11px] text-muted-foreground">Aspect ratio:</span>
+                            {selectedImageModel.aspect_ratios.map((r) => (
+                              <button key={r} onClick={() => setImageAspectRatio(r)}
+                                className={`rounded-full border px-2 py-0.5 text-[11px] ${imageAspectRatio === r ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>{r}</button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       <div className="rounded-lg border border-border/60 bg-background/40 p-3">
                         <div className="text-xs font-semibold text-foreground mb-2">Reference image (optional) <NovaHint hintKey="field:image-reference" /></div>
@@ -1576,7 +1621,7 @@ function CreateAd() {
                         <select value={videoModelId || ""} onChange={(e) => {
                           const id = e.target.value; setVideoModelId(id);
                           const m = availableModels?.video.find((x) => x.id === id);
-                          if (m) { setVideoShots((s) => s.length === 1 ? [{ ...s[0], duration: m.min_duration ?? s[0].duration }] : s); setVideoResolution(m.resolutions?.[0] ?? null); }
+                          if (m) { setVideoShots((s) => s.length === 1 ? [{ ...s[0], duration: m.min_duration ?? s[0].duration }] : s); setVideoResolution(m.resolutions?.[0] ?? null); setVideoAspectRatio(m.aspect_ratios?.[0] ?? null); }
                         }} className="w-full rounded-lg border border-input bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary">
                           {!availableModels && <option value="">Loading…</option>}
                           {availableModels?.video.map((m) => (
@@ -1589,6 +1634,15 @@ function CreateAd() {
                             {selectedVideoModel.resolutions.map((r) => (
                               <button key={r} onClick={() => setVideoResolution(r)}
                                 className={`rounded-full border px-2 py-0.5 text-[11px] ${videoResolution === r ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>{r}</button>
+                            ))}
+                          </div>
+                        )}
+                        {selectedVideoModel?.aspect_ratios && selectedVideoModel.aspect_ratios.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                            <span className="text-[11px] text-muted-foreground">Aspect ratio:</span>
+                            {selectedVideoModel.aspect_ratios.map((r) => (
+                              <button key={r} onClick={() => setVideoAspectRatio(r)}
+                                className={`rounded-full border px-2 py-0.5 text-[11px] ${videoAspectRatio === r ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>{r}</button>
                             ))}
                           </div>
                         )}
@@ -1795,12 +1849,103 @@ function CreateAd() {
                                         </div>
                                         <span className="shrink-0 text-[11px] text-muted-foreground mt-1">{shot.duration}s</span>
                                       </div>
-                                      {!shot.showVoiceover ? (
-                                        <button onClick={() => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, showVoiceover: true } : x))}
-                                          className="ml-5 flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-secondary"><span>＋</span> Voice-over</button>
-                                      ) : (
+                                      {/* Per-shot extras — same as custom shots */}
+                                      <div className="flex flex-wrap gap-1.5 pl-5">
+                                        {!shot.showOverlays ? (
+                                          <button onClick={() => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, showOverlays: true, textOverlays: x.textOverlays || [] } : x))}
+                                            className="flex items-center gap-0.5 rounded-full border border-dashed border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary/50 hover:text-primary">
+                                            <span>＋</span> Text overlay</button>
+                                        ) : <span className="text-[10px] font-medium text-primary">💬 Overlays</span>}
+                                        {!shot.showVoiceover ? (
+                                          <button onClick={() => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, showVoiceover: true } : x))}
+                                            className="flex items-center gap-0.5 rounded-full border border-dashed border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-secondary/50 hover:text-secondary">
+                                            <span>＋</span> Voice-over</button>
+                                        ) : <span className="text-[10px] font-medium text-secondary">🎙 Voice-over</span>}
+                                      </div>
+                                      {/* Text overlays panel */}
+                                      {shot.showOverlays && (() => {
+                                        const shotStart = videoShots.slice(0, i).reduce((acc, s) => acc + (s.duration || 0), 0);
+                                        const shotEnd = shotStart + (shot.duration || 0);
+                                        return (
+                                          <div className="pl-5 space-y-1.5">
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[10px] text-muted-foreground">Text overlays <span className="text-primary/70">({shotStart}s – {shotEnd}s in video)</span></span>
+                                              <button onClick={() => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: [...(x.textOverlays || []), { text: "", startTime: 0, endTime: null, position: "bottom-center", fontStyle: "sans", fontSize: "medium", textColor: "#FFFFFF", overlayStyle: "fade" }] } : x))}
+                                                className="rounded-full border border-primary/50 px-1.5 py-0.5 text-[10px] text-primary">＋ Add</button>
+                                            </div>
+                                            {(shot.textOverlays || []).map((ov, oi) => (
+                                              <div key={oi} className="rounded-lg border border-border/60 bg-background/50 p-1.5 space-y-1.5">
+                                                <div className="flex items-center gap-1.5">
+                                                  <input placeholder={`"The wait is almost over."`} value={ov.text}
+                                                    onChange={(e) => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, text: e.target.value } : o) } : x))}
+                                                    className="flex-1 rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none" />
+                                                  <button onClick={() => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).filter((_, oi2) => oi2 !== oi) } : x))}
+                                                    className="shrink-0 rounded-full border border-destructive/40 px-1.5 py-0.5 text-[10px] text-destructive">✕</button>
+                                                </div>
+                                                <div className="grid grid-cols-4 gap-1">
+                                                  <div>
+                                                    <label className="text-[9px] text-muted-foreground">Start ({shotStart}–{shotEnd}s)</label>
+                                                    <input type="number" min={shotStart} max={shotEnd} step="0.5"
+                                                      value={ov.startTime + shotStart}
+                                                      onChange={(e) => {
+                                                        const rel = Math.min(shot.duration || 0, Math.max(0, (Number(e.target.value) || shotStart) - shotStart));
+                                                        setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, startTime: rel } : o) } : x));
+                                                      }}
+                                                      className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground" />
+                                                  </div>
+                                                  <div>
+                                                    <label className="text-[9px] text-muted-foreground">End (–{shotEnd}s)</label>
+                                                    <input type="number" min={shotStart} max={shotEnd} step="0.5"
+                                                      value={ov.endTime !== null ? ov.endTime + shotStart : ""} placeholder={String(shotEnd)}
+                                                      onChange={(e) => {
+                                                        const raw = e.target.value;
+                                                        const val = raw === "" ? null : Math.min(shot.duration || 0, Math.max(0, (Number(raw) || shotEnd) - shotStart));
+                                                        setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, endTime: val } : o) } : x));
+                                                      }}
+                                                      className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground" />
+                                                  </div>
+                                                  <div><label className="text-[9px] text-muted-foreground">Position</label>
+                                                    <select value={ov.position} onChange={(e) => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, position: e.target.value } : o) } : x))}
+                                                      className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
+                                                      {POSITION_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}</select></div>
+                                                  <div><label className="text-[9px] text-muted-foreground">Style</label>
+                                                    <select value={ov.overlayStyle} onChange={(e) => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, overlayStyle: e.target.value } : o) } : x))}
+                                                      className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
+                                                      <option value="fade">Fade</option><option value="solid">Solid</option><option value="slide_up">Slide up</option></select></div>
+                                                </div>
+                                                <div className="grid grid-cols-3 gap-1">
+                                                  <div><label className="text-[9px] text-muted-foreground">Font</label>
+                                                    <select value={ov.fontStyle} onChange={(e) => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, fontStyle: e.target.value } : o) } : x))}
+                                                      className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
+                                                      <option value="sans">Sans</option><option value="sans_bold">Bold</option><option value="serif">Serif</option></select></div>
+                                                  <div><label className="text-[9px] text-muted-foreground">Size</label>
+                                                    <select value={ov.fontSize} onChange={(e) => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, fontSize: e.target.value } : o) } : x))}
+                                                      className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
+                                                      <option value="small">Sm</option><option value="medium">Md</option><option value="large">Lg</option></select></div>
+                                                  <div><label className="text-[9px] text-muted-foreground">Color</label>
+                                                    <div className="flex items-center gap-1">
+                                                      <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(ov.textColor) ? ov.textColor : "#FFFFFF"}
+                                                        onChange={(e) => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, textColor: e.target.value } : o) } : x))}
+                                                        className="h-6 w-7 rounded border border-border bg-transparent shrink-0" />
+                                                      <input value={ov.textColor} onChange={(e) => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, textColor: e.target.value } : o) } : x))}
+                                                        className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[10px] text-foreground" /></div></div>
+                                                </div>
+                                              </div>
+                                            ))}
+                                            {(shot.textOverlays || []).length > 0 && (
+                                              <button onClick={() => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, showOverlays: false } : x))}
+                                                className="text-[10px] text-muted-foreground hover:text-foreground">↑ Hide</button>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
+                                      {/* Voice-over panel */}
+                                      {shot.showVoiceover && (
                                         <div className="pl-5 space-y-1">
-                                          <div className="flex items-center justify-between"><label className="text-[10px] font-semibold text-secondary">🎙 Voice-over</label><button onClick={() => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, showVoiceover: false, voiceoverText: "" } : x))} className="text-[10px] text-muted-foreground hover:text-destructive">✕</button></div>
+                                          <div className="flex items-center justify-between">
+                                            <label className="text-[10px] font-semibold text-secondary">🎙 Voice-over</label>
+                                            <button onClick={() => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, showVoiceover: false, voiceoverText: "" } : x))} className="text-[10px] text-muted-foreground hover:text-destructive">✕</button>
+                                          </div>
                                           <textarea rows={1} value={shot.voiceoverText || ""} onChange={(e) => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, voiceoverText: e.target.value } : x))}
                                             placeholder="Narration for this shot…"
                                             className="w-full rounded-lg border border-secondary/30 bg-secondary/5 p-1.5 text-[11px] text-foreground focus:border-secondary/60 focus:outline-none resize-y" />
@@ -1856,7 +2001,19 @@ function CreateAd() {
                                       className="w-full rounded-lg border border-input bg-input/40 px-2 py-1.5 text-[11px] text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" />
                                     <input type="number" value={shot.duration}
                                       disabled={!!(selectedVideoModel?.duration_options && videoShots.length === 1)}
-                                      onChange={(e) => setVideoShots((s) => s.map((x, idx) => idx === i ? { ...x, duration: Number(e.target.value) || 0 } : x))}
+                                      onChange={(e) => {
+                                        const newDur = Number(e.target.value) || 0;
+                                        setVideoShots((s) => s.map((x, idx) => {
+                                          if (idx !== i) return x;
+                                          // Clamp any existing overlay times to the new duration
+                                          const clampedOverlays = (x.textOverlays || []).map((o) => ({
+                                            ...o,
+                                            startTime: Math.min(o.startTime, newDur),
+                                            endTime: o.endTime !== null ? Math.min(o.endTime, newDur) : null,
+                                          }));
+                                          return { ...x, duration: newDur, textOverlays: clampedOverlays };
+                                        }));
+                                      }}
                                       className="w-12 shrink-0 rounded-lg border border-input bg-input/40 px-1.5 py-1.5 text-[11px] text-foreground focus:border-primary focus:outline-none disabled:opacity-50" />
                                     <span className="shrink-0 text-[11px] text-muted-foreground">s</span>
                                   </div>
@@ -1876,10 +2033,21 @@ function CreateAd() {
                                   </div>
 
                                   {/* Text overlays panel */}
-                                  {shot.showOverlays && (
+                                  {shot.showOverlays && (() => {
+                                    // Absolute timeline position of this shot
+                                    const shotStart = videoShots.slice(0, i).reduce((acc, s) => acc + (s.duration || 0), 0);
+                                    const shotEnd = shotStart + (shot.duration || 0);
+                                    // Values are stored RELATIVE to this shot (0 = first frame).
+                                    // The UI shows ABSOLUTE timeline seconds so it's obvious
+                                    // where each shot falls in the full video.
+                                    // On read:  display = stored + shotStart
+                                    // On write: store   = clamped(display - shotStart, 0, duration)
+                                    return (
                                     <div className="pl-5 space-y-1.5">
                                       <div className="flex items-center justify-between">
-                                        <span className="text-[10px] text-muted-foreground">Text overlays</span>
+                                        <span className="text-[10px] text-muted-foreground">
+                                          Text overlays <span className="text-primary/70">({shotStart}s – {shotEnd}s in video)</span>
+                                        </span>
                                         <button onClick={() => setVideoShots((s) => s.map((x, idx) => idx === i ? { ...x, textOverlays: [...(x.textOverlays || []), { text: "", startTime: 0, endTime: null, position: "bottom-center", fontStyle: "sans", fontSize: "medium", textColor: "#FFFFFF", overlayStyle: "fade" }] } : x))}
                                           className="rounded-full border border-primary/50 px-1.5 py-0.5 text-[10px] text-primary">＋ Add</button>
                                       </div>
@@ -1893,14 +2061,35 @@ function CreateAd() {
                                               className="shrink-0 rounded-full border border-destructive/40 px-1.5 py-0.5 text-[10px] text-destructive">✕</button>
                                           </div>
                                           <div className="grid grid-cols-4 gap-1">
-                                            <div><label className="text-[9px] text-muted-foreground">Start s</label>
-                                              <input type="number" min="0" step="0.5" value={ov.startTime}
-                                                onChange={(e) => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, startTime: Number(e.target.value) || 0 } : o) } : x))}
-                                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground" /></div>
-                                            <div><label className="text-[9px] text-muted-foreground">End s</label>
-                                              <input type="number" min="0" step="0.5" value={ov.endTime ?? ""} placeholder="end"
-                                                onChange={(e) => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, endTime: e.target.value === "" ? null : Number(e.target.value) } : o) } : x))}
-                                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground" /></div>
+                                            <div>
+                                              <label className="text-[9px] text-muted-foreground">Start ({shotStart}–{shotEnd}s)</label>
+                                              <input type="number" min={shotStart} max={shotEnd} step="0.5"
+                                                value={ov.startTime + shotStart}
+                                                onChange={(e) => {
+                                                  // Convert absolute → relative, clamp to this shot's range
+                                                  const abs = Number(e.target.value) || shotStart;
+                                                  const rel = Math.min(shot.duration || 0, Math.max(0, abs - shotStart));
+                                                  setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, startTime: rel } : o) } : x));
+                                                }}
+                                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground" />
+                                            </div>
+                                            <div>
+                                              <label className="text-[9px] text-muted-foreground">End (–{shotEnd}s)</label>
+                                              <input type="number" min={shotStart} max={shotEnd} step="0.5"
+                                                value={ov.endTime !== null ? ov.endTime + shotStart : ""}
+                                                placeholder={String(shotEnd)}
+                                                onChange={(e) => {
+                                                  const raw = e.target.value;
+                                                  if (raw === "") {
+                                                    setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, endTime: null } : o) } : x));
+                                                  } else {
+                                                    const abs = Number(raw) || shotEnd;
+                                                    const rel = Math.min(shot.duration || 0, Math.max(0, abs - shotStart));
+                                                    setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, endTime: rel } : o) } : x));
+                                                  }
+                                                }}
+                                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground" />
+                                            </div>
                                             <div><label className="text-[9px] text-muted-foreground">Position</label>
                                               <select value={ov.position} onChange={(e) => setVideoShots((s) => s.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, position: e.target.value } : o) } : x))}
                                                 className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
@@ -1934,7 +2123,8 @@ function CreateAd() {
                                           className="text-[10px] text-muted-foreground hover:text-foreground">↑ Hide</button>
                                       )}
                                     </div>
-                                  )}
+                                    );
+                                  })()}
 
                                   {/* Voice-over panel */}
                                   {shot.showVoiceover && (
@@ -2141,6 +2331,8 @@ function CreateAd() {
                 companyName={me?.company_name || ""}
                 posted={!!postedMap[p.id]}
                 onPost={() => postPlatform(p.id)}
+                variant={results}
+                brandKit={{ logo_url: brandLogoUrl, logo_placement: brandLogoPlacement, primary_color: brandPrimaryColor }}
                 onEditCaption={(text) => setVariants((vs) => {
                   if (!vs) return vs;
                   const copy = [...vs];
@@ -2150,24 +2342,6 @@ function CreateAd() {
               />
             ))}
           </div>
-          <Panel className="mt-6">
-            <div className="text-sm font-semibold text-foreground">✏️ Edit copy</div>
-            <p className="mt-1 text-[11px] text-muted-foreground">Regenerates the caption based on your feedback. Free.</p>
-            <div className="mt-3 flex gap-2">
-              <Input placeholder='e.g. "make it shorter and add urgency"' value={refineText} onChange={(e) => setRefineText(e.target.value)} />
-              <button disabled={!refineText || busy} onClick={() => generate(refineText)} className="rounded-full border border-primary/50 text-primary px-5 text-sm disabled:opacity-40">{busy ? "Applying…" : "Regenerate"}</button>
-            </div>
-          </Panel>
-          {outputs.image && (
-            <Panel className="mt-4">
-              <div className="text-sm font-semibold text-foreground">🖼️ Edit image</div>
-              <p className="mt-1 text-[11px] text-muted-foreground">Describe how to change the image (e.g. "zoom out so the whole bottle is visible", "make the background brighter"). Uses the current image as the reference. Costs the same as generating a new image.</p>
-              <div className="mt-3 flex gap-2">
-                <Input placeholder='e.g. "zoom out so the whole product is visible"' value={imageEditText} onChange={(e) => setImageEditText(e.target.value)} />
-                <button disabled={!imageEditText || busy} onClick={editImage} className="rounded-full border border-secondary/50 text-secondary px-5 text-sm disabled:opacity-40">{busy ? "Editing…" : "Edit"}</button>
-              </div>
-            </Panel>
-          )}
           <Panel className="mt-4">
             <div className="mt-1 flex flex-wrap gap-3">
               {chosenPlatforms.length > 0 && <button onClick={postAll} className="rounded-full bg-gold-gradient px-6 py-2.5 text-sm font-semibold text-background shadow-[var(--shadow-gold)]">🚀 Post all ({chosenPlatforms.filter((p) => !postedMap[p.id]).length} remaining)</button>}

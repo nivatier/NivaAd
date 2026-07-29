@@ -10,6 +10,40 @@ export const Route = createFileRoute("/developer/models")({
 });
 
 const COMMON_RESOLUTIONS = ["480p", "720p", "1080p"];
+const COMMON_ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:5", "1.91:1", "4:3", "3:4"];
+
+function AspectRatioPicker({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const [custom, setCustom] = useState("");
+  function addCustom() {
+    const r = custom.trim();
+    if (r && !value.includes(r)) onChange([...value, r]);
+    setCustom("");
+  }
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] text-muted-foreground">Aspect ratios:</span>
+        {COMMON_ASPECT_RATIOS.map((r) => (
+          <button key={r} onClick={() => onChange(value.includes(r) ? value.filter((x) => x !== r) : [...value, r])}
+            className={`rounded-full border px-2 py-0.5 text-[10px] ${value.includes(r) ? "border-ring bg-foreground text-background" : "border-border text-muted-foreground"}`}>
+            {value.includes(r) ? "☑" : "☐"} {r}
+          </button>
+        ))}
+      </div>
+      {/* Custom ratio entry */}
+      <div className="flex items-center gap-1.5">
+        <input value={custom} onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCustom()}
+          placeholder="Custom e.g. 2:1" className="w-28 rounded-lg border border-border bg-input/40 px-2 py-0.5 text-[11px] text-foreground focus:border-ring focus:outline-none" />
+        <button onClick={addCustom} disabled={!custom.trim()} className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-40">Add</button>
+        {value.filter((r) => !COMMON_ASPECT_RATIOS.includes(r)).map((r) => (
+          <span key={r} className="flex items-center gap-1 rounded-full border border-ring bg-foreground px-2 py-0.5 text-[10px] text-background">
+            {r} <button onClick={() => onChange(value.filter((x) => x !== r))} className="opacity-60 hover:opacity-100">✕</button>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /** The "Fetch from OpenRouter" popup — browse the REAL live catalog and
  * click a model to pre-fill the Add form, instead of hand-typing a slug
@@ -105,6 +139,7 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
   const [maxD, setMaxD] = useState(String(entry.max_duration ?? ""));
   const [durationOptions, setDurationOptions] = useState(entry.duration_options?.join(", ") ?? "");
   const [resolutions, setResolutions] = useState<string[]>(entry.resolutions || []);
+  const [aspectRatios, setAspectRatios] = useState<string[]>(entry.aspect_ratios || []);
   const [supportsAudio, setSupportsAudio] = useState(entry.supports_audio ?? false);
   const [supportsLastFrame, setSupportsLastFrame] = useState(entry.supports_last_frame ?? false);
   const [pricingJson, setPricingJson] = useState(entry.pricing ? JSON.stringify(entry.pricing, null, 2) : "");
@@ -135,6 +170,7 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
       resolutions: kind === "video" && resolutions.length > 0 ? resolutions : null,
       supports_audio: kind === "video" ? supportsAudio : null,
       supports_last_frame: kind === "video" ? supportsLastFrame : null,
+      aspect_ratios: (kind === "image" || kind === "video") && aspectRatios.length > 0 ? aspectRatios : null,
       pricing,
     });
     setSaving(false);
@@ -175,6 +211,7 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
               </div>
               <input value={durationOptions} onChange={(e) => setDurationOptions(e.target.value)} placeholder="Exact durations only, e.g. 4, 6, 8 (leave blank for a normal range)" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
               <ResolutionPicker value={resolutions} onChange={setResolutions} />
+              <AspectRatioPicker value={aspectRatios} onChange={setAspectRatios} />
               <label className="flex items-center gap-1.5 text-[11px] text-foreground">
                 <input type="checkbox" checked={supportsAudio} onChange={(e) => setSupportsAudio(e.target.checked)} />
                 Supports an audio on/off choice (shows a real toggle in Create Ad — independent of whether dynamic pricing is set up)
@@ -200,16 +237,19 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
             </>
           )}
           {(kind === "image" || kind === "text") && (
-            <div>
-              <div className="text-[10px] font-semibold text-muted-foreground mb-1">Dynamic pricing (optional — leave blank to keep the flat credits above)</div>
-              <textarea
-                value={pricingJson}
-                onChange={(e) => setPricingJson(e.target.value)}
-                rows={2}
-                placeholder='{"cost_usd": 0.001}'
-                className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 font-mono text-[11px] text-foreground focus:border-ring focus:outline-none"
-              />
-              {pricingError && <div className="mt-1 text-[11px] text-destructive">{pricingError}</div>}
+            <div className="space-y-2">
+              {kind === "image" && <AspectRatioPicker value={aspectRatios} onChange={setAspectRatios} />}
+              <div>
+                <div className="text-[10px] font-semibold text-muted-foreground mb-1">Dynamic pricing (optional — leave blank to keep the flat credits above)</div>
+                <textarea
+                  value={pricingJson}
+                  onChange={(e) => setPricingJson(e.target.value)}
+                  rows={2}
+                  placeholder='{"cost_usd": 0.001}'
+                  className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 font-mono text-[11px] text-foreground focus:border-ring focus:outline-none"
+                />
+                {pricingError && <div className="mt-1 text-[11px] text-destructive">{pricingError}</div>}
+              </div>
             </div>
           )}
           <div className="flex items-center gap-2">
@@ -262,6 +302,7 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
   const [maxD, setMaxD] = useState("15");
   const [durationOptions, setDurationOptions] = useState("");
   const [resolutions, setResolutions] = useState<string[]>(["720p"]);
+  const [aspectRatios, setAspectRatios] = useState<string[]>([]);
   const [supportsAudio, setSupportsAudio] = useState(false);
   const [supportsLastFrame, setSupportsLastFrame] = useState(false);
   const [pricePerSec, setPricePerSec] = useState<number | null>(null);
@@ -293,9 +334,10 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
       supports_audio: kind === "video" ? supportsAudio : null,
       supports_last_frame: kind === "video" ? supportsLastFrame : null,
       price_per_second_usd: kind === "video" ? pricePerSec : null,
+      aspect_ratios: (kind === "image" || kind === "video") && aspectRatios.length > 0 ? aspectRatios : null,
     });
     setSaving(false);
-    setLabel(""); setModel(""); setCredits("2"); setMinD("4"); setMaxD("15"); setDurationOptions(""); setResolutions(["720p"]); setSupportsAudio(false); setSupportsLastFrame(false); setPricePerSec(null);
+    setLabel(""); setModel(""); setCredits("2"); setMinD("4"); setMaxD("15"); setDurationOptions(""); setResolutions(["720p"]); setAspectRatios([]); setSupportsAudio(false); setSupportsLastFrame(false); setPricePerSec(null);
     setOpen(false);
   }
 
@@ -332,6 +374,7 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
               </div>
               <input value={durationOptions} onChange={(e) => setDurationOptions(e.target.value)} placeholder="Exact durations only, e.g. 4, 6, 8 (leave blank for a normal range)" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
               <ResolutionPicker value={resolutions} onChange={setResolutions} />
+              <AspectRatioPicker value={aspectRatios} onChange={setAspectRatios} />
               <label className="flex items-center gap-1.5 text-[11px] text-foreground">
                 <input type="checkbox" checked={supportsAudio} onChange={(e) => setSupportsAudio(e.target.checked)} />
                 Supports an audio on/off choice
@@ -341,6 +384,9 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
                 Supports a separate start + end frame
               </label>
             </>
+          )}
+          {kind === "image" && (
+            <AspectRatioPicker value={aspectRatios} onChange={setAspectRatios} />
           )}
           <div className="flex items-center gap-2">
             <button disabled={saving || !label.trim() || !model.trim()} onClick={add} className="rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">{saving ? "Adding…" : "Add"}</button>

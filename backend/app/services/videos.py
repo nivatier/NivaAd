@@ -124,12 +124,14 @@ def _prepare_frame_image(data_url: str) -> str:
         return data_url
 
 
-def generate_video(prompt: str, model: str, duration: int = 6, resolution: str = "720p", frame_image_url: str | None = None, end_frame_image_url: str | None = None, audio: bool | None = None) -> bytes:
+def generate_video(prompt: str, model: str, duration: int = 6, resolution: str = "720p", frame_image_url: str | None = None, end_frame_image_url: str | None = None, audio: bool | None = None, aspect_ratio: str | None = None) -> bytes:
     headers = {
         "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
     body = {"model": model, "prompt": prompt, "duration": duration, "resolution": resolution}
+    if aspect_ratio:
+        body["aspect_ratio"] = aspect_ratio
     if audio is not None:
         # Confirmed exact field name via OpenRouter's video generation API
         # docs — defaults to true for models that support audio, false

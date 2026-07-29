@@ -103,116 +103,117 @@ def _build_prompt(brief: dict, platforms: list[str], outputs: dict, feedback: st
     return base
 
 
-def _video_prompt(brief: dict, shot_description: str | None = None) -> str:
-    """Video generation rewards specificity about motion, camera
-    movement, and pacing far more than static image prompts do (per
-    OpenRouter's own guidance) — so this deliberately asks for those
-    details explicitly, rather than reusing the image prompt as-is.
+def _video_prompt(brief: dict, shot_description: str | None = None, shot: dict | None = None) -> str:
+    """Builds a structured JSON prompt for a single-shot video generation.
 
-    When shot_description is given, it's trusted as the PRIMARY,
-    complete direction — no longer diluted with the full marketing
-    description (that's copy written for a human reading an ad caption,
-    not visual direction for a video model; it can contain phone
-    numbers, CTAs, and other text with nothing to do with what the
-    video should show) or generic camera-movement boilerplate that could
-    directly conflict with what the customer already specified (e.g.
-    their own "match-cut dissolve" vs. this function's old blanket
-    "keep pacing calm, not frantic" instruction). The fuller generic
-    template is now a fallback ONLY for the no-shot-description case,
-    where there's nothing specific to build from."""
+    JSON format gives the model unambiguous, field-by-field instructions
+    rather than a free-text paragraph where fields can bleed into each
+    other. Every field that has content is included; absent fields are
+    omitted so the model isn't confused by empty values.
+
+    shot — the full shot dict from the brief (carries voiceover_text and
+    text_overlays); shot_description is its .prompt field, passed
+    separately for backwards-compat with callers that only have the str."""
+    import json as _json
     product = brief.get("product_name", "the product")
     reference_prompt = (brief.get("video_reference_prompt") or "").strip()
     camera_prompt = (brief.get("video_camera_style_prompt") or "").strip()
     neg_prompt = (brief.get("video_negative_prompt") or "").strip()
     music_label = (brief.get("video_background_music_label") or "").strip()
 
-    if shot_description:
-        parts = []
-        if reference_prompt:
-            parts.append(reference_prompt)
-        parts.append(f'Professional advertising video for "{product}". {shot_description}')
-        parts.append("High-end commercial advertising style, no text overlay, no watermark.")
-        if camera_prompt:
-            parts.append(camera_prompt)
-        if music_label:
-            parts.append(f"Background music mood: {music_label}.")
-        if neg_prompt:
-            parts.append(f"Negative: {neg_prompt}.")
-        return " ".join(parts)
+    scene_desc = (shot_description or "").strip()
+    if not scene_desc:
+        if brief.get("image_scene"):
+            scene_desc = brief["image_scene"]
+        else:
+            scene_desc = "clean studio background, soft professional lighting, smooth camera movement"
 
-    p = f"Professional advertising video for a product called \"{product}\". "
+    doc: dict = {
+        "type": "advertising_video",
+        "product": product,
+        "style": "high-end commercial advertising, cinematic quality, no watermark",
+    }
     if reference_prompt:
-        p = reference_prompt + " " + p
-    if brief.get("image_scene"):
-        p += f"Setting: {brief['image_scene']}. "
-    else:
-        p += "Setting: clean studio background, soft professional lighting. "
-    p += (
-        "Include smooth, natural camera movement (e.g. a slow push-in, gentle orbit, or subtle pan) "
-        "and any product-appropriate motion (e.g. light catching a surface, gentle rotation, ambient movement "
-        "in the background). Keep pacing calm and premium, not frantic. "
-        "High-end commercial advertising style, no text overlay, no watermark."
-    )
+        doc["reference_instruction"] = reference_prompt
+    doc["scene"] = scene_desc
     if camera_prompt:
-        p += " " + camera_prompt
+        doc["camera_style"] = camera_prompt
     if music_label:
-        p += f" Background music mood: {music_label}."
+        doc["background_music_mood"] = music_label
+    # Per-shot voiceover and timed text overlays
+    if shot:
+        voiceover = (shot.get("voiceover_text") or "").strip()
+        if voiceover:
+            doc["voiceover"] = voiceover
+        overlays = shot.get("text_overlays") or []
+        if overlays:
+            doc["text_overlays"] = [
+                {k: v for k, v in o.items() if v is not None and k != "overlay_style"}
+                for o in overlays
+            ]
     if neg_prompt:
-        p += f" Negative: {neg_prompt}."
-    return p
+        doc["negative_prompt"] = neg_prompt
+
+    return _json.dumps(doc, ensure_ascii=False)
 
 
 def _multi_shot_video_prompt(brief: dict, shots: list[dict]) -> str:
-    """Combines multiple shots into ONE prompt with explicit timing
-    markers — this is what actually gets sent as a SINGLE prompt to a
-    SINGLE generation call, not one call per shot. Follows the exact
-    format OpenAI's own Sora documentation recommends for multi-shot
-    sequences ("Shot 1 (0-4s): ... Shot 2 (4-8s): ..."); the model
-    itself handles continuity and transitions between shots — there is
-    no video-processing/stitching step on NivaSpark's side at all."""
+    """Builds a structured JSON prompt for a multi-shot video generation.
+
+    Each shot is an object inside a "shots" array, carrying its own
+    timing, scene description, and any voiceover or timed text overlays.
+    Global fields (camera style, negative prompt, music mood) sit at the
+    top level so the model applies them across the whole video without
+    each shot needing to repeat them.
+
+    Single-shot callers should use _video_prompt() instead, which also
+    now emits JSON and accepts the full shot dict for per-shot fields."""
+    import json as _json
     product = brief.get("product_name", "the product")
-
-    # Global reference/preserve instruction (e.g. "use uploaded image as
-    # exact reference, preserve all design details") — prepended before shots.
     reference_prompt = (brief.get("video_reference_prompt") or "").strip()
+    camera_prompt = (brief.get("video_camera_style_prompt") or "").strip()
+    global_neg = (brief.get("video_negative_prompt") or "").strip()
+    music_label = (brief.get("video_background_music_label") or "").strip()
 
-    intro = (
-        f'Professional advertising video for "{product}". '
-        "This video has multiple distinct shots in sequence, each described below with its exact timing — "
-        "follow the shot breakdown precisely, keeping the same product and a consistent overall visual style "
-        "across every shot.\n\n"
-    )
-    if reference_prompt:
-        intro = f"{reference_prompt}\n\n" + intro
-
-    lines = []
+    shot_list = []
     elapsed = 0
     for i, shot in enumerate(shots):
         duration = shot.get("duration") or 6
         start, end = elapsed, elapsed + duration
         desc = (shot.get("prompt") or "").strip() or "continue the scene naturally"
-        lines.append(f"Shot {i + 1} ({start}-{end}s): {desc}")
+        entry: dict = {
+            "shot": i + 1,
+            "timing_seconds": f"{start}-{end}",
+            "scene": desc,
+        }
+        voiceover = (shot.get("voiceover_text") or "").strip()
+        if voiceover:
+            entry["voiceover"] = voiceover
+        overlays = shot.get("text_overlays") or []
+        if overlays:
+            entry["text_overlays"] = [
+                {k: v for k, v in o.items() if v is not None and k != "overlay_style"}
+                for o in overlays
+            ]
+        shot_list.append(entry)
         elapsed = end
 
-    # Camera style prompt appended after shot list.
-    camera_prompt = (brief.get("video_camera_style_prompt") or "").strip()
-    # Global negative prompt — what to avoid across the entire video.
-    global_neg = (brief.get("video_negative_prompt") or "").strip()
-    # Background music label — stored for reference/pipeline use.
-    music_label = (brief.get("video_background_music_label") or "").strip()
-
-    outro_parts = [
-        "High-end commercial advertising style throughout, smooth cinematic transitions between shots, "
-        "no text overlay, no watermark."
-    ]
+    doc: dict = {
+        "type": "advertising_video",
+        "product": product,
+        "style": "high-end commercial advertising, smooth cinematic transitions between shots, consistent visual style throughout, no watermark",
+        "shot_sequence": shot_list,
+    }
+    if reference_prompt:
+        doc["reference_instruction"] = reference_prompt
     if camera_prompt:
-        outro_parts.append(camera_prompt)
+        doc["camera_style"] = camera_prompt
     if music_label:
-        outro_parts.append(f"Background music mood: {music_label}.")
+        doc["background_music_mood"] = music_label
     if global_neg:
-        outro_parts.append(f"Negative: {global_neg}.")
+        doc["negative_prompt"] = global_neg
 
-    return intro + "\n".join(lines) + "\n\n" + " ".join(outro_parts)
+    return _json.dumps(doc, ensure_ascii=False)
 
 
 def _image_prompt(brief: dict, slide_description: str | None = None) -> str:
@@ -596,6 +597,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                             logger.warning("[branding] job=%s could not fetch logo, skipping: %s", job_id, brand_fetch_exc)
                     placement = ad.brief.get("brand_logo_placement") or "bottom-right"
                     image_model_used = ad.brief.get("image_model") or "google/gemini-2.5-flash-image"  # resolved once at ad-creation time (ads.py), not re-looked-up here — falls back to a sane default only if brief predates this field (old ads)
+                    image_aspect_ratio = ad.brief.get("image_aspect_ratio") or "1:1"
 
                     is_carousel = ad.outputs.get("format") == "carousel" and not ad.brief.get("image_prompt_override")
 
@@ -637,7 +639,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                                 job_id, i + 1, slide_count, img_prompt,
                             )
                             try:
-                                slide_bytes, slide_ext = generate_image(img_prompt, image_model_used, reference_urls=ref_urls)
+                                slide_bytes, slide_ext = generate_image(img_prompt, image_model_used, reference_urls=ref_urls, aspect_ratio=image_aspect_ratio)
                                 if logo_bytes:
                                     slide_bytes = composite_logo(slide_bytes, logo_bytes, placement)
                                     slide_ext = "png"
@@ -664,7 +666,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                             job_id, bool(ref_urls), img_prompt,
                         )
                         try:
-                            img_bytes, ext = generate_image(img_prompt, image_model_used, reference_urls=ref_urls)
+                            img_bytes, ext = generate_image(img_prompt, image_model_used, reference_urls=ref_urls, aspect_ratio=image_aspect_ratio)
                         except Exception as ref_exc:  # noqa: BLE001
                             if ref_urls:
                                 # Tagged (not auto-retried) — the frontend
@@ -805,6 +807,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
 
                     video_model = ad.brief.get("video_model") or "alibaba/wan-2.7"  # resolved once at ad-creation time (ads.py), not re-looked-up here
                     video_resolution = ad.brief.get("video_resolution") or "720p"
+                    video_aspect_ratio = ad.brief.get("video_aspect_ratio") or None
                     video_audio = ad.brief.get("video_audio")  # None means "let OpenRouter use the model's own default" — only set when the customer actually had an audio toggle to choose from
                     total_duration = sum(s.get("duration") or 0 for s in shots) or 6
 
@@ -819,6 +822,8 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                     if ad.brief.get("video_prompt_override"):
                         video_prompt = ad.brief["video_prompt_override"]
                         logger.info("[video_prompt] job=%s USING OVERRIDE from confirmation popup", job_id)
+                    elif len(shots) == 1:
+                        video_prompt = _video_prompt(ad.brief, shots[0].get("prompt"), shot=shots[0])
                     else:
                         video_prompt = _multi_shot_video_prompt(ad.brief, shots)
                     logger.info(
@@ -827,7 +832,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                     )
 
                     try:
-                        video_bytes = generate_video(video_prompt, video_model, duration=total_duration, resolution=video_resolution, frame_image_url=frame_image_url, end_frame_image_url=end_frame_image_url, audio=video_audio)
+                        video_bytes = generate_video(video_prompt, video_model, duration=total_duration, resolution=video_resolution, frame_image_url=frame_image_url, end_frame_image_url=end_frame_image_url, audio=video_audio, aspect_ratio=video_aspect_ratio)
                     except Exception as frame_exc:  # noqa: BLE001
                         if frame_image_url:
                             # Tagged (not auto-retried) — the frontend
@@ -1028,6 +1033,7 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
             try:
                 img_prompt = _image_prompt(ad.brief)
                 image_model = ad.brief.get("image_model") or "google/gemini-2.5-flash-image"  # reuse the SAME model this ad/phase was originally generated with, not a re-lookup
+                image_aspect_ratio = ad.brief.get("image_aspect_ratio") or "1:1"
                 ref_urls = None
                 image_ref_url = None if skip_reference else (ad.brief.get("image_reference_image_url") or ad.brief.get("product_image_url"))
                 if image_ref_url:
@@ -1038,7 +1044,7 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
                     job_id, bool(ref_urls), img_prompt,
                 )
                 try:
-                    img_bytes, ext = generate_image(img_prompt, image_model, reference_urls=ref_urls)
+                    img_bytes, ext = generate_image(img_prompt, image_model, reference_urls=ref_urls, aspect_ratio=image_aspect_ratio)
                 except Exception as ref_exc:  # noqa: BLE001
                     if ref_urls:
                         raise RuntimeError(f"REFERENCE_REJECTED::{ref_exc}") from ref_exc
@@ -1136,11 +1142,14 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
 
                 video_model = ad.brief.get("video_model") or "alibaba/wan-2.7"
                 video_resolution = ad.brief.get("video_resolution") or "720p"
+                video_aspect_ratio = ad.brief.get("video_aspect_ratio") or None
                 video_audio = ad.brief.get("video_audio")
                 total_duration = sum(s.get("duration") or 0 for s in shots) or 6
 
                 if ad.brief.get("video_prompt_override"):
                     video_prompt = ad.brief["video_prompt_override"]
+                elif len(shots) == 1:
+                    video_prompt = _video_prompt(ad.brief, shots[0].get("prompt"), shot=shots[0])
                 else:
                     video_prompt = _multi_shot_video_prompt(ad.brief, shots)
                 logger.info(
@@ -1149,7 +1158,7 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
                 )
 
                 try:
-                    video_bytes = generate_video(video_prompt, video_model, duration=total_duration, resolution=video_resolution, frame_image_url=frame_image_url, end_frame_image_url=end_frame_image_url, audio=video_audio)
+                    video_bytes = generate_video(video_prompt, video_model, duration=total_duration, resolution=video_resolution, frame_image_url=frame_image_url, end_frame_image_url=end_frame_image_url, audio=video_audio, aspect_ratio=video_aspect_ratio)
                 except Exception as frame_exc:  # noqa: BLE001
                     if frame_image_url:
                         raise RuntimeError(f"REFERENCE_REJECTED::{frame_exc}") from frame_exc

@@ -218,7 +218,7 @@ async def get_available_models_endpoint(user: User = Depends(require_capability(
             continue
         has_dynamic = bool(m.get("pricing", {}).get("cost_usd"))
         credits = pricing_svc.compute_image_credits(m, markup) if has_dynamic else m["credits"]
-        image_out.append(AvailableModelOut(id=m["id"], label=m["label"], credits=credits, has_dynamic_pricing=has_dynamic))
+        image_out.append(AvailableModelOut(id=m["id"], label=m["label"], credits=credits, has_dynamic_pricing=has_dynamic, aspect_ratios=m.get("aspect_ratios") or None))
 
     video_out = []
     for m in models["video"]:
@@ -239,6 +239,7 @@ async def get_available_models_endpoint(user: User = Depends(require_capability(
             supports_audio=m.get("supports_audio", False) or (has_dynamic and p.get("supports_audio", False)),
             supports_last_frame=m.get("supports_last_frame", False),
             has_dynamic_pricing=has_dynamic,
+            aspect_ratios=m.get("aspect_ratios") or None,
         ))
 
     return AvailableModelsOut(text=text_out, image=image_out, video=video_out)
@@ -279,12 +280,21 @@ async def preview_cost(data: PreviewCostIn, user: User = Depends(require_capabil
 
 @router.post("/preview-prompt", response_model=PromptPreviewOut)
 async def preview_prompt(data: PromptPreviewIn, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # Resolve camera style and music label the same way create_ad does,
+    # so the preview brief is identical to the real generation brief.
+    camera_style_prompt = await _resolve_camera_style_prompt(db, data.video_camera_style_ids) if data.video_camera_style_ids else None
+    music_label = await _resolve_music_label(db, data.video_background_music_id) if data.video_background_music_id else None
     brief = {
         "product_name": data.product_name, "description": data.description,
         "audience": data.audience, "offer": data.offer, "goal": data.goal,
         "tone": data.tone, "env": data.env, "image_scene": data.image_scene,
         "text_overlay": data.text_overlay, "tagline": data.tagline,
         "product_image_url": "preview-only" if data.has_photo else None,
+        # Video-specific fields — must be included so _video_prompt /
+        # _multi_shot_video_prompt produce exactly what generation will use.
+        "video_camera_style_prompt": camera_style_prompt,
+        "video_negative_prompt": data.video_negative_prompt,
+        "video_background_music_label": music_label,
     }
     outputs = {**data.outputs, "format": data.format, "variations": data.variations}
     text_prompt = _build_prompt(brief, _resolve_platforms(data.platforms), outputs, feedback=None)
@@ -310,7 +320,7 @@ async def preview_prompt(data: PromptPreviewIn, user: User = Depends(get_current
                         if shot.get("prompt"):
                             shot["prompt"] = await asyncio.to_thread(_review_shot_prompt, shot["prompt"], review_entry["model"])
                     reviewed_shots = shots
-        video_prompt = _video_prompt(brief, shots[0].get("prompt")) if len(shots) == 1 else _multi_shot_video_prompt(brief, shots)
+        video_prompt = _video_prompt(brief, shots[0].get("prompt"), shot=shots[0]) if len(shots) == 1 else _multi_shot_video_prompt(brief, shots)
     return PromptPreviewOut(text_prompt=text_prompt, image_prompt=image_prompt, video_prompt=video_prompt, reviewed_shots=reviewed_shots)
 
 
@@ -487,11 +497,13 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
             "video_prompt_override": data.video_prompt_override,
             "image_model": image_model["model"] if image_model else None,
             "image_model_credits": image_model["credits"] if image_model else None,
+            "image_aspect_ratio": data.image_aspect_ratio if image_model else None,
             "video_model": video_model["model"] if video_model else None,
             "video_model_credits": video_model["credits"] if video_model else None,
             "video_start_shot_id": data.video_start_shot_id if video_model else None,
             "video_end_shot_id": data.video_end_shot_id if video_model else None,
             "video_resolution": video_resolution,
+            "video_aspect_ratio": data.video_aspect_ratio if video_model else None,
             "video_mode": data.video_mode if video_model else None,
             "video_end_frame_image_url": video_end_frame_image_url,
             "refine_video_prompt": data.refine_video_prompt if video_model else False,

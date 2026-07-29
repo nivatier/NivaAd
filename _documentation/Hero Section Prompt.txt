@@ -1,7 +1,3 @@
-Here's a complete, reusable prompt you can drop into any project:
-
----
-
 **SCROLL-SCRUBBER HERO SECTION — REUSABLE PROMPT**
 
 > Build a full-page scroll-scrubber hero section in React + TypeScript + Tailwind CSS with the following behaviour and structure.
@@ -25,12 +21,93 @@ Here's a complete, reusable prompt you can drop into any project:
 > Badge pills use `background: rgba(0,0,0,0.45)` on light theme and `rgba(255,255,255,0.18)` on dark theme, both with `backdropFilter: blur(10px)`.
 >
 > **Right side — glass card**
-> Position as `absolute inset-x-0 bottom-0` on mobile/tablet (pinned to bottom), switching to `absolute inset-0 justify-end` on desktop (`lg`). Each scene renders its own card as `position: absolute inset-0`, fading in/out with `opacity` based on `isActive`. The card itself uses:
-> - Dark mode: `background: rgba(0,0,0,0.40)`, `border: rgba(255,255,255,0.10)`
+> Position as `absolute inset-x-0 bottom-0` on mobile/tablet (pinned to bottom), switching to `absolute inset-0 justify-end` on desktop (`lg`). Use `pb-16` on mobile so the card sits clear of the bottom edge and indicator dots — do not use `pb-0` or a small value or the card will collide with the navigation dots. Each scene renders its own card as `position: absolute inset-0`, fading in/out with `opacity` based on `isActive`.
+>
+> The card itself uses responsive sizing — compact on mobile, full-size on desktop:
+> - Border radius: `rounded-2xl lg:rounded-3xl`
+> - Padding: `p-5 lg:p-9`
+> - Dark mode: `background: rgba(255,255,255,0.10)`, `border: rgba(255,255,255,0.20)`
 > - Light mode: `background: rgba(255,255,255,0.55)`, `border: rgba(255,255,255,0.60)`
-> - Both: `backdropFilter: blur(24px) saturate(1.4)`, `borderRadius: 1.5rem`, generous padding
-> Card interior: icon badge (brand gradient background, black icon), scene label, scene counter (`01 / 05`), card title in brand accent colour (darker shade on light theme for readability), bullet point list with brand-coloured dots, gold progress bar at the bottom that fills across `sceneProgress`.
-> Wrap all scene cards in an invisible spacer div that matches the tallest card's content so the container has a stable height.
+> - Both: `backdropFilter: blur(24px) saturate(1.4)`, `-webkit-backdrop-filter` prefix required
+>
+> Card interior — all elements have mobile-first sizing with `lg:` overrides:
+> - **Header row**: icon badge `h-9 w-9 rounded-lg lg:h-12 lg:w-12 lg:rounded-xl` with brand gradient, icon `h-4 w-4 lg:h-5 lg:w-5`, gap `gap-2`, header margin `mb-2.5 lg:mb-4`
+> - **Scene label**: `text-xs font-semibold uppercase tracking-[0.14em] lg:text-sm` in brand colour
+> - **Scene counter** (`01 / 05`): `text-xs` white/30 or black/30
+> - **Card title**: `text-xs font-bold uppercase tracking-[0.12em] mb-2.5 lg:text-sm lg:mb-4` in brand colour
+> - **Bullet list**: `gap-2 lg:gap-3`, each item `text-sm leading-snug lg:text-base`, dot `h-1.5 w-1.5 mt-1.5 lg:h-2 lg:w-2 lg:mt-2`
+> - **Progress bar**: `mt-4 lg:mt-7`, fills across `sceneProgress`
+>
+> Wrap all scene cards in an invisible spacer div that matches the mobile card dimensions so the container has a stable height: `rounded-2xl border p-5 lg:rounded-3xl lg:p-7`, with child elements matching the mobile sizes above.
+>
+> **Mobile swipe-to-snap**
+> On mobile, any vertical swipe of 30px or more inside the sticky viewport should snap exactly one scene forward (swipe up) or back (swipe down), regardless of how long or short the swipe is. Implement with three parts:
+>
+> 1. **Touch handlers on the sticky viewport div** — attach `onTouchStart` and `onTouchEnd` as React props.
+>
+> 2. **Snap target is the CENTRE of the scene, not the start.** Use `fraction = (targetIdx + 0.5) / SCENES.length`. Snapping to the start (`targetIdx / SCENES.length`) causes the browser's native post-touchend momentum to carry the scroll past the target into the next scene, making single swipes jump two scenes. Centering gives the momentum nowhere to go.
+>
+> 3. **Kill native momentum during the snap** by registering a non-passive `touchmove` listener via `useEffect` (React synthetic events are always passive so `preventDefault()` doesn't work through them). Query the sticky element with `sectionRef.current.querySelector(".sticky")` and attach `{ passive: false }`. Call `e.preventDefault()` whenever `isSnapping.current` is true. Clean up in the effect's return function.
+>
+> Keep `activeIdx` in a `useRef` (`activeIdxRef`) and sync it on every render (`activeIdxRef.current = activeIdx`). Touch callbacks read from the ref so they always see the live value without stale closures and without needing `activeIdx` in their dependency arrays. Lock out new snaps during animation using `isSnapping` ref, set to `true` on snap start and released after 700ms via `setTimeout`.
+>
+> Full swipe implementation:
+> ```typescript
+> const touchStartY = useRef<number | null>(null);
+> const isSnapping = useRef(false);
+> const activeIdxRef = useRef(activeIdx);
+> activeIdxRef.current = activeIdx;
+>
+> const snapToScene = useCallback((targetIdx: number) => {
+>   const el = sectionRef.current;
+>   if (!el) return;
+>   const sectionTop = el.getBoundingClientRect().top + window.scrollY;
+>   const scrollable = el.offsetHeight - window.innerHeight;
+>   const fraction = (targetIdx + 0.5) / SCENES.length; // centre of scene
+>   const targetScroll = sectionTop + scrollable * fraction;
+>   isSnapping.current = true;
+>   window.scrollTo({ top: targetScroll, behavior: "smooth" });
+>   setTimeout(() => { isSnapping.current = false; }, 700);
+> }, []);
+>
+> // Non-passive touchmove — must be registered via useEffect, not React props
+> useEffect(() => {
+>   const el = sectionRef.current;
+>   if (!el) return;
+>   const sticky = el.querySelector<HTMLElement>(".sticky");
+>   if (!sticky) return;
+>   const onMove = (e: TouchEvent) => {
+>     if (isSnapping.current) e.preventDefault();
+>   };
+>   sticky.addEventListener("touchmove", onMove, { passive: false });
+>   return () => sticky.removeEventListener("touchmove", onMove);
+> }, []);
+>
+> const handleTouchStart = useCallback((e: React.TouchEvent) => {
+>   if (isSnapping.current) return;
+>   touchStartY.current = e.touches[0].clientY;
+> }, []);
+>
+> const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+>   if (touchStartY.current === null || isSnapping.current) return;
+>   const delta = touchStartY.current - e.changedTouches[0].clientY;
+>   touchStartY.current = null;
+>   if (Math.abs(delta) < 30) return;
+>   const direction = delta > 0 ? 1 : -1;
+>   const current = activeIdxRef.current;
+>   const nextIdx = Math.min(SCENES.length - 1, Math.max(0, current + direction));
+>   if (nextIdx !== current) snapToScene(nextIdx);
+> }, [snapToScene]);
+> ```
+>
+> Then on the sticky viewport div:
+> ```tsx
+> <div
+>   className="sticky top-0 h-screen w-full overflow-hidden"
+>   onTouchStart={handleTouchStart}
+>   onTouchEnd={handleTouchEnd}
+> >
+> ```
 >
 > **Navigation indicators**
 > - Bottom centre: pill-expanding dots (`width: activeIdx === i ? 24px : 6px`, fixed `height: 6px`) in brand colour when active, white/35 when inactive. Position `absolute bottom-4 md:bottom-8`.
@@ -38,10 +115,10 @@ Here's a complete, reusable prompt you can drop into any project:
 > - Scroll hint: visible only when `progress < 0.04`, animated bouncing line, fades out on first scroll.
 >
 > **Responsive behaviour**
-> - Mobile (`< 640px`): headline `text-2xl`, body `text-xs`, stacked layout
+> - Mobile (`< 640px`): headline `text-2xl`, body `text-xs`, stacked layout, compact card (`p-5`, smaller icon/text)
 > - Small (`sm`, 640px+): headline `text-4xl`, body `text-sm`
 > - Tablet (`md`, 768px+): headline `text-5xl`, body `text-base`
-> - Desktop (`lg`, 1024px+): side-by-side layout, headline `text-6xl/7xl`, full body
+> - Desktop (`lg`, 1024px+): side-by-side layout, headline `text-6xl/7xl`, full body, full card (`p-9`, larger icon/text)
 >
 > **Header**
 > Fixed floating header above the hero with `position: fixed top-0 z-50`. The hero section must have `paddingTop` equal to header height so content starts below it.
@@ -50,7 +127,10 @@ Here's a complete, reusable prompt you can drop into any project:
 > - Do not use `overflow-x-hidden` on any ancestor — use `overflowX: "clip"`
 > - Do not use `<video>` for the background — use crossfading images
 > - Do not use `getBoundingClientRect().top` alone for scroll calculation — it changes as the page scrolls. Always add `window.scrollY` to get absolute position
-> - Do not split `\n` in scene headlines using a template literal with a real newline inside a JS string — use `scene.headline.split("\\n")` with the escape sequence
+> - Do not split `\n` in scene headlines using a template literal with a real newline — use `scene.headline.split("\\n")` with the escape sequence
+> - Do not snap to `targetIdx / SCENES.length` (scene start) — always snap to `(targetIdx + 0.5) / SCENES.length` (scene centre) or a single swipe will skip two scenes
+> - Do not register the touchmove momentum-kill listener as a React prop — React synthetic touch events are passive and `preventDefault()` will be silently ignored. Use `useEffect` + `addEventListener` with `{ passive: false }`
+> - Do not put `pb-0` or a small bottom padding on the mobile card container — use `pb-16` so the card clears the navigation dots at the bottom of the screen
 > - Do not use Python f-strings to generate JSX — they corrupt `{{` double braces into single `{` causing parse errors
 
 ---
@@ -65,3 +145,5 @@ Here's a complete, reusable prompt you can drop into any project:
 | Card content | `cardTitle` and `cardPoints` per scene |
 | Desktop breakpoint | Change `1024` in `isDesktop` and `lg:` Tailwind classes |
 | Scroll speed | Change `SCENE_HEIGHT = 90` (vh per scene) — higher = slower scroll |
+| Swipe threshold | Change `30` in `Math.abs(delta) < 30` — lower = more sensitive |
+| Snap animation duration | Change `700` in the `setTimeout` — must be >= the smooth scroll duration |

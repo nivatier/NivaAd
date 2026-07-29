@@ -932,6 +932,8 @@ async def add_model(data: AddModelIn, _: str = Depends(require_developer_permiss
     entry = {"id": new_id, "label": data.label, "model": data.model, "credits": data.credits}
     if data.pricing is not None:
         entry["pricing"] = data.pricing
+    if data.aspect_ratios:
+        entry["aspect_ratios"] = data.aspect_ratios
     if data.kind == "video":
         entry["min_duration"] = data.min_duration or 4
         entry["max_duration"] = data.max_duration or 15
@@ -1510,6 +1512,8 @@ async def update_model(model_id: str, data: UpdateModelIn, _: str = Depends(requ
                         entry["price_per_second_usd"] = data.price_per_second_usd
                 if data.pricing is not None:
                     entry["pricing"] = data.pricing
+                if data.aspect_ratios is not None:
+                    entry["aspect_ratios"] = data.aspect_ratios if data.aspect_ratios else None
                 if data.enabled is not None:
                     if data.enabled is False:
                         currently_enabled = [m for m in models[kind] if m.get("enabled", True)]

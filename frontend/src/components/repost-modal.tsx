@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { api, apiDownload, type AdOut } from "@/lib/api";
-import { PLATFORMS, PostPreviewCard } from "@/components/create-ad-parts";
+import { PLATFORMS, PostPreviewCard, PostedViewModal, type BrandKitPreview } from "@/components/create-ad-parts";
 import { TimezoneSelect } from "@/components/timezone-picker";
 import { detectedTimeZone, formatInTimeZone, zonedWallTimeToUtcNaiveIso } from "@/lib/timezone";
 import { useAuth } from "@/hooks/use-auth";
@@ -52,6 +52,15 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [rescheduleTime, setRescheduleTime] = useState("");
   const [rescheduling, setRescheduling] = useState(false);
+  const [showPostedView, setShowPostedView] = useState(false);
+  const [brandKit, setBrandKit] = useState<BrandKitPreview | null>(null);
+
+  // Fetch brand kit once on mount for the Posted view overlay
+  useEffect(() => {
+    api("/brand-kit").then((kit: any) => {
+      setBrandKit({ logo_url: kit.logo_url || null, logo_placement: kit.logo_placement || "bottom-right", primary_color: kit.primary_color || "#7c3aed" });
+    }).catch(() => {});
+  }, []);
 
   function startReschedule(scheduledId: string, currentIso: string) {
     // Pre-fill with the CURRENT scheduled time (in the viewer's chosen
@@ -248,6 +257,24 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
               imageUrls={imageUrls}
               videoUrl={videoUrl}
               companyName={me?.company_name || ""}
+              variant={activeVariant}
+              brandKit={brandKit}
+            />
+          )}
+          {activePlatform && (imageUrl || videoUrl) && (
+            <button
+              onClick={() => setShowPostedView(true)}
+              className="mt-3 w-full rounded-full border border-secondary/50 py-2 text-xs font-semibold text-secondary hover:bg-secondary/10"
+            >
+              📲 Posted view — see how this looks with your brand kit &amp; platform crop
+            </button>
+          )}
+          {showPostedView && activePlatform && (
+            <PostedViewModal
+              platform={activePlatform}
+              variant={activeVariant}
+              brandKit={brandKit}
+              onClose={() => setShowPostedView(false)}
             />
           )}
 
