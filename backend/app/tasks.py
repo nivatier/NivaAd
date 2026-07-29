@@ -25,7 +25,7 @@ from app.services.credits import get_available_models_sync
 from app.services.retention import get_post_retention_months_sync, get_retention_months_sync
 from app.services import text_gen
 from app.services.platform_config import get_ad_targeting_ratios_sync
-from app.services.reframe import add_text_overlay, concat_video_clips, extract_last_frame, prepare_video_reference_frame, probe_video_url_dimensions, reframe_image, reframe_video, reframe_video_to_dims, strip_audio
+from app.services.reframe import add_text_overlay, concat_video_clips, extract_last_frame, overlay_logo_on_video, prepare_video_reference_frame, probe_video_url_dimensions, reframe_image, reframe_video, reframe_video_to_dims, strip_audio
 from app.services.video_ratios import get_video_ratios_sync, resolve_ratio
 from app.services.video_prep import get_video_prep_settings_sync
 from app.services.token_crypto import decrypt_token
@@ -596,6 +596,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                         except Exception as brand_fetch_exc:  # noqa: BLE001
                             logger.warning("[branding] job=%s could not fetch logo, skipping: %s", job_id, brand_fetch_exc)
                     placement = ad.brief.get("brand_logo_placement") or "bottom-right"
+                    logo_opacity = float(ad.brief.get("brand_logo_opacity") or 1.0)
                     image_model_used = ad.brief.get("image_model") or "google/gemini-2.5-flash-image"  # resolved once at ad-creation time (ads.py), not re-looked-up here — falls back to a sane default only if brief predates this field (old ads)
                     image_aspect_ratio = ad.brief.get("image_aspect_ratio") or "1:1"
 
@@ -641,7 +642,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                             try:
                                 slide_bytes, slide_ext = generate_image(img_prompt, image_model_used, reference_urls=ref_urls, aspect_ratio=image_aspect_ratio)
                                 if logo_bytes:
-                                    slide_bytes = composite_logo(slide_bytes, logo_bytes, placement)
+                                    slide_bytes = composite_logo(slide_bytes, logo_bytes, placement, opacity=logo_opacity)
                                     slide_ext = "png"
                                 slide_url = storage.upload_bytes(slide_bytes, f"image/{slide_ext}", slide_ext)
                                 urls.append(slide_url)
@@ -678,7 +679,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                                 raise RuntimeError(f"REFERENCE_REJECTED::{ref_exc}") from ref_exc
                             raise
                         if logo_bytes:
-                            img_bytes = composite_logo(img_bytes, logo_bytes, placement)
+                            img_bytes = composite_logo(img_bytes, logo_bytes, placement, opacity=float(ad.brief.get("brand_logo_opacity") or 1.0))
                             ext = "png"
                             logger.info("[branding] job=%s composited logo at %s", job_id, placement)
                         url = storage.upload_bytes(img_bytes, f"image/{ext}", ext)
@@ -845,6 +846,23 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                         raise
                     video_url = storage.upload_bytes(video_bytes, "video/mp4", "mp4")
                     video_url = _stitch_intro_outro(db, ad.brief, ad.company_id, video_url, f"job={job_id}")
+                    # Logo overlay — applied AFTER stitch so it appears on
+                    # the full [intro + main + outro] video, not just the
+                    # AI-generated main clip. Re-fetches the stitched bytes.
+                    video_logo_url = ad.brief.get("brand_logo_url")
+                    if video_logo_url:
+                        try:
+                            video_logo_bytes, _ = storage.fetch_bytes(video_logo_url)
+                            video_bytes_stitched, _ = storage.fetch_bytes(video_url)
+                            video_bytes_with_logo = overlay_logo_on_video(
+                                video_bytes_stitched, video_logo_bytes,
+                                placement=ad.brief.get("brand_logo_placement") or "bottom-right",
+                                opacity=float(ad.brief.get("brand_logo_opacity") or 1.0),
+                            )
+                            video_url = storage.upload_bytes(video_bytes_with_logo, "video/mp4", "mp4")
+                            logger.info("[branding] job=%s logo overlaid on video at %s opacity=%.2f", job_id, ad.brief.get("brand_logo_placement"), float(ad.brief.get("brand_logo_opacity") or 1.0))
+                        except Exception as vid_logo_exc:  # noqa: BLE001
+                            logger.warning("[branding] job=%s video logo overlay failed, using video without logo: %s", job_id, vid_logo_exc)
                     for v in new_results["variants"]:
                         v["video_url"] = video_url
 
@@ -973,7 +991,7 @@ def edit_ad_image(self, job_id: str, feedback: str, variant: int = 0):
                 try:
                     logo_bytes, _ = storage.fetch_bytes(logo_url)
                     placement = ad.brief.get("brand_logo_placement") or "bottom-right"
-                    img_bytes = composite_logo(img_bytes, logo_bytes, placement)
+                    img_bytes = composite_logo(img_bytes, logo_bytes, placement, opacity=float(ad.brief.get("brand_logo_opacity") or 1.0))
                     ext = "png"
                 except Exception as brand_exc:  # noqa: BLE001
                     logger.warning("[branding] job=%s re-composite after edit failed: %s", job_id, brand_exc)
@@ -1055,7 +1073,7 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
                     try:
                         logo_bytes, _ = storage.fetch_bytes(logo_url)
                         placement = ad.brief.get("brand_logo_placement") or "bottom-right"
-                        img_bytes = composite_logo(img_bytes, logo_bytes, placement)
+                        img_bytes = composite_logo(img_bytes, logo_bytes, placement, opacity=float(ad.brief.get("brand_logo_opacity") or 1.0))
                         ext = "png"
                     except Exception as brand_exc:  # noqa: BLE001
                         logger.warning("[branding] job=%s logo compositing failed: %s", job_id, brand_exc)
@@ -1166,6 +1184,21 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
 
                 video_url = storage.upload_bytes(video_bytes, "video/mp4", "mp4")
                 video_url = _stitch_intro_outro(db, ad.brief, ad.company_id, video_url, f"job={job_id}")
+                # Logo overlay — same as generate_ad, applied after stitch
+                video_logo_url = ad.brief.get("brand_logo_url")
+                if video_logo_url:
+                    try:
+                        video_logo_bytes, _ = storage.fetch_bytes(video_logo_url)
+                        video_bytes_stitched, _ = storage.fetch_bytes(video_url)
+                        video_bytes_with_logo = overlay_logo_on_video(
+                            video_bytes_stitched, video_logo_bytes,
+                            placement=ad.brief.get("brand_logo_placement") or "bottom-right",
+                            opacity=float(ad.brief.get("brand_logo_opacity") or 1.0),
+                        )
+                        video_url = storage.upload_bytes(video_bytes_with_logo, "video/mp4", "mp4")
+                        logger.info("[branding] job=%s (campaign) logo overlaid on video", job_id)
+                    except Exception as vid_logo_exc:  # noqa: BLE001
+                        logger.warning("[branding] job=%s (campaign) video logo overlay failed: %s", job_id, vid_logo_exc)
                 logger.info("[campaign_video] job=%s uploaded video, url=%s", job_id, video_url)
                 for v in variants:
                     v["video_url"] = video_url

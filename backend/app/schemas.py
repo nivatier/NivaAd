@@ -1035,6 +1035,7 @@ class BrandKitUpdateIn(BaseModel):
     primary_color: str | None = None
     tagline: str | None = None
     logo_placement: str | None = None
+    logo_opacity: float | None = Field(default=None, ge=0.0, le=1.0)  # 0.0 = invisible, 1.0 = fully opaque
     # Video padding (existing fields — unchanged meaning, now explicitly
     # video-only since image gets its own independent set below).
     vertical_pad_mode: str | None = Field(default=None, pattern="^(blurred_video|image|color)$")
@@ -1058,6 +1059,7 @@ class BrandKitUpdateIn(BaseModel):
 
 class BrandKitOut(BaseModel):
     logo_url: str | None
+    logo_opacity: float = 1.0
     primary_color: str
     tagline: str
     logo_placement: str

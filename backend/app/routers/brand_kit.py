@@ -215,6 +215,8 @@ async def update_brand_kit(data: BrandKitUpdateIn, user: User = Depends(require_
         kit.tagline = data.tagline
     if data.logo_placement is not None and data.logo_placement in VALID_PLACEMENTS:
         kit.logo_placement = data.logo_placement
+    if data.logo_opacity is not None:
+        kit.logo_opacity = max(0.0, min(1.0, data.logo_opacity))
     if data.vertical_pad_mode is not None and data.vertical_pad_mode in VALID_PAD_MODES:
         kit.vertical_pad_mode = data.vertical_pad_mode
     if data.horizontal_pad_mode is not None and data.horizontal_pad_mode in VALID_PAD_MODES:

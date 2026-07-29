@@ -464,11 +464,13 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
 
     brand_logo_url = None
     brand_logo_placement = None
+    brand_logo_opacity = 1.0
     if data.use_brand_logo:
         kit = await db.scalar(select(BrandKit).where(BrandKit.company_id == user.company_id))
         if kit and kit.logo_url:
             brand_logo_url = kit.logo_url
             brand_logo_placement = kit.logo_placement
+            brand_logo_opacity = float(kit.logo_opacity) if kit.logo_opacity is not None else 1.0
 
     # Validate the product belongs to this company before linking (categorization).
     product_id = None
@@ -490,6 +492,7 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
             "image_prompt_override": data.image_prompt_override,
             "brand_logo_url": brand_logo_url,
             "brand_logo_placement": brand_logo_placement,
+            "brand_logo_opacity": brand_logo_opacity,
             "carousel_slides": data.carousel_slides,
             "carousel_theme": [s.model_dump() if s else None for s in data.carousel_theme] if data.carousel_theme else None,
             "video_shots": [s.model_dump() for s in data.video_shots] if data.video_shots else None,

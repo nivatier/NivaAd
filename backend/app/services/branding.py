@@ -13,10 +13,12 @@ PADDING_RATIO = 0.03      # gap from the edge, as a fraction of the image's shor
 LOGO_WIDTH_RATIO = 0.14   # logo width, as a fraction of the image width
 
 
-def composite_logo(image_bytes: bytes, logo_bytes: bytes, placement: str = "bottom-right") -> bytes:
-    """Returns new PNG bytes with the logo pasted onto the image. Falls back
-    to the original image bytes (logged, not raised) if anything about the
-    logo file is unreadable — a bad logo should never break ad generation."""
+def composite_logo(image_bytes: bytes, logo_bytes: bytes, placement: str = "bottom-right", opacity: float = 1.0) -> bytes:
+    """Returns new PNG bytes with the logo pasted onto the image at the
+    requested placement corner. `opacity` (0.0–1.0) controls how
+    transparent the logo is — 1.0 is fully opaque, 0.0 is invisible.
+    Falls back to the original image bytes (logged, not raised) if
+    anything about the logo file is unreadable."""
     try:
         base = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
         logo = Image.open(io.BytesIO(logo_bytes)).convert("RGBA")
@@ -30,6 +32,13 @@ def composite_logo(image_bytes: bytes, logo_bytes: bytes, placement: str = "bott
     logo_w = max(24, int(bw * LOGO_WIDTH_RATIO))
     logo_h = max(24, int(logo_w * logo.size[1] / logo.size[0]))
     logo = logo.resize((logo_w, logo_h), Image.LANCZOS)
+
+    # Apply opacity by scaling the alpha channel
+    clamped = max(0.0, min(1.0, opacity))
+    if clamped < 1.0:
+        r, g, b, a = logo.split()
+        a = a.point(lambda v: int(v * clamped))
+        logo = Image.merge("RGBA", (r, g, b, a))
 
     positions = {
         "top-left": (padding, padding),

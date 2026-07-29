@@ -428,6 +428,77 @@ def add_text_overlay(video_bytes: bytes, text: str, font: str = "sans", color: s
         return output_path.read_bytes()
 
 
+LOGO_VIDEO_WIDTH_RATIO = 0.14   # logo width as a fraction of video width — matches branding.py's LOGO_WIDTH_RATIO
+LOGO_VIDEO_PAD_RATIO   = 0.03   # gap from edge as a fraction of the shorter dimension
+
+def overlay_logo_on_video(video_bytes: bytes, logo_bytes: bytes, placement: str = "bottom-right", opacity: float = 1.0) -> bytes:
+    """Composites a static logo PNG onto every frame of a video using
+    ffmpeg's overlay filter — the video-equivalent of branding.py's
+    composite_logo for images.
+
+    Uses a two-input filter_complex:
+      [1:v] scale to 14% of video width, then apply opacity via
+            the `format=rgba,colorchannelmixer` trick (ffmpeg doesn't
+            have a direct alpha-scale filter in all builds, but
+            colorchannelmixer's aa channel scales the alpha uniformly).
+      [0:v][logo] overlay at the computed corner position.
+
+    Audio is copied untouched. If anything fails the original video bytes
+    are returned unchanged and the error is logged — a logo failure should
+    never break a generation that already succeeded.
+    """
+    clamped_opacity = max(0.0, min(1.0, opacity))
+    try:
+        with tempfile.TemporaryDirectory(prefix="logo-video-") as tmp:
+            tmp_path = Path(tmp)
+            video_path  = tmp_path / "input.mp4"
+            logo_path   = tmp_path / "logo.png"
+            output_path = tmp_path / "output.mp4"
+            video_path.write_bytes(video_bytes)
+            logo_path.write_bytes(logo_bytes)
+
+            vw, vh = _probe_dimensions(video_path)
+            logo_w = max(24, int(vw * LOGO_VIDEO_WIDTH_RATIO))
+            pad    = max(8,  int(min(vw, vh) * LOGO_VIDEO_PAD_RATIO))
+
+            # Position expressions — evaluated at runtime by ffmpeg against
+            # the actual overlay dimensions (overlay_w / overlay_h).
+            positions = {
+                "top-left":     f"{pad}:{pad}",
+                "top-right":    f"main_w-overlay_w-{pad}:{pad}",
+                "bottom-left":  f"{pad}:main_h-overlay_h-{pad}",
+                "bottom-right": f"main_w-overlay_w-{pad}:main_h-overlay_h-{pad}",
+            }
+            pos = positions.get(placement, positions["bottom-right"])
+
+            # Scale the logo, then apply opacity via colorchannelmixer
+            # (scales all four alpha channel pixels by `aa`).
+            scale_part = f"[1:v]scale={logo_w}:-1,format=rgba"
+            if clamped_opacity < 1.0:
+                scale_part += f",colorchannelmixer=aa={clamped_opacity:.4f}"
+            scale_part += "[logo]"
+
+            filter_complex = f"{scale_part};[0:v][logo]overlay={pos}[outv]"
+
+            _run([
+                "ffmpeg", "-y",
+                "-i", str(video_path),
+                "-i", str(logo_path),
+                "-filter_complex", filter_complex,
+                "-map", "[outv]",
+                "-map", "0:a?",       # copy audio if present; skip if not
+                "-c:v", "libx264",
+                "-c:a", "copy",
+                "-preset", "fast",
+                "-crf", "22",
+                str(output_path),
+            ], timeout=180)
+            return output_path.read_bytes()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[overlay_logo_on_video] failed, returning original video: %s", exc)
+        return video_bytes
+
+
 def probe_video_url_dimensions(video_url: str) -> tuple[int, int]:
     """Downloads just enough to read a video's pixel dimensions — used by
     the intro/outro stitching pipeline (tasks.py) to learn the MAIN

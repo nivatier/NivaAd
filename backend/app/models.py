@@ -145,6 +145,7 @@ class BrandKit(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    logo_opacity: Mapped[float] = mapped_column(default=1.0)  # 0.0–1.0; applied when compositing the logo onto images and videos
     primary_color: Mapped[str] = mapped_column(String(9), default="#7c3aed")
     tagline: Mapped[str] = mapped_column(String(200), default="")
     logo_placement: Mapped[str] = mapped_column(String(20), default="bottom-right")

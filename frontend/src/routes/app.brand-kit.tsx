@@ -531,6 +531,7 @@ function BrandKit() {
   const [color, setColor] = useState(COLORS[0]);
   const [tagline, setTagline] = useState("");
   const [placement, setPlacement] = useState("bottom-right");
+  const [logoOpacity, setLogoOpacity] = useState(1.0);
   const [kit, setKit] = useState<Record<string, any> | null>(null); // raw brand-kit response — PaddingEditor reads its own fields straight from this
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -545,6 +546,7 @@ function BrandKit() {
       setColor(kit.primary_color || COLORS[0]);
       setTagline(kit.tagline || "");
       setPlacement(kit.logo_placement || "bottom-right");
+      setLogoOpacity(kit.logo_opacity ?? 1.0);
     } catch (e: any) {
       setErr(e.message || "Could not load brand kit");
     }
@@ -560,6 +562,11 @@ function BrandKit() {
   async function savePlacement(p: string) {
     setPlacement(p);
     try { await api("/brand-kit", { method: "PUT", body: { logo_placement: p } }); } catch { /* non-fatal */ }
+  }
+
+  async function saveOpacity(v: number) {
+    setLogoOpacity(v);
+    try { await api("/brand-kit", { method: "PUT", body: { logo_opacity: v } }); } catch { /* non-fatal */ }
   }
 
   async function uploadLogo(e: React.ChangeEvent<HTMLInputElement>) {
@@ -758,6 +765,28 @@ function BrandKit() {
                       {p.label}
                     </button>
                   ))}
+                </div>
+
+                {/* Opacity slider */}
+                <div className="mt-4 max-w-xs">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-medium text-foreground">Logo opacity</label>
+                    <span className="text-xs font-semibold text-primary tabular-nums">{Math.round(logoOpacity * 100)}%</span>
+                  </div>
+                  <input
+                    type="range" min="0" max="1" step="0.05"
+                    value={logoOpacity}
+                    onChange={(e) => setLogoOpacity(parseFloat(e.target.value))}
+                    onMouseUp={(e) => saveOpacity(parseFloat((e.target as HTMLInputElement).value))}
+                    onTouchEnd={(e) => saveOpacity(parseFloat((e.target as HTMLInputElement).value))}
+                    className="w-full accent-primary"
+                  />
+                  <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
+                    <span>Subtle (0%)</span>
+                    <span>Watermark (50%)</span>
+                    <span>Solid (100%)</span>
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">Applied when the logo is composited onto both images and videos.</p>
                 </div>
               </div>
             )}
