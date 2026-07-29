@@ -14,7 +14,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Dialog, DialogOverlay, DialogPortal } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
-export const Route = createFileRoute("/")({
+export const Route = createFileRoute("/archive/")({
   component: Index,
 });
 
@@ -163,58 +163,6 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
   const activeIdx = Math.min(Math.floor(rawScene), sceneCount - 1);
   const sceneProgress = rawScene - Math.floor(rawScene); // 0–1 within scene
 
-  // ── Mobile swipe-to-snap ──────────────────────────────────────────────────
-  // Any intentional swipe (>=30 px) snaps exactly one scene forward/back.
-  // Snaps to the CENTRE of the target scene so native momentum after touchend
-  // cannot carry the page past into the next scene.
-  const touchStartY = useRef<number | null>(null);
-  const isSnapping = useRef(false);
-  const activeIdxRef = useRef(activeIdx);
-  activeIdxRef.current = activeIdx;
-
-  const snapToScene = useCallback((targetIdx: number) => {
-    const el = sectionRef.current;
-    if (!el) return;
-    const sectionTop = el.getBoundingClientRect().top + window.scrollY;
-    const scrollable = el.offsetHeight - window.innerHeight;
-    // Centre of target scene — momentum cannot overshoot into the next one.
-    const fraction = (targetIdx + 0.5) / SCENES.length;
-    const targetScroll = sectionTop + scrollable * fraction;
-    isSnapping.current = true;
-    window.scrollTo({ top: targetScroll, behavior: "smooth" });
-    setTimeout(() => { isSnapping.current = false; }, 700);
-  }, []);
-
-  // Non-passive touchmove registered via useEffect — lets us call
-  // preventDefault() to kill native scroll momentum during a snap.
-  useEffect(() => {
-    const el = sectionRef.current;
-    if (!el) return;
-    const sticky = el.querySelector<HTMLElement>(".sticky");
-    if (!sticky) return;
-    const onMove = (e: TouchEvent) => {
-      if (isSnapping.current) e.preventDefault();
-    };
-    sticky.addEventListener("touchmove", onMove, { passive: false });
-    return () => sticky.removeEventListener("touchmove", onMove);
-  }, []);
-
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    if (isSnapping.current) return;
-    touchStartY.current = e.touches[0].clientY;
-  }, []);
-
-  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    if (touchStartY.current === null || isSnapping.current) return;
-    const delta = touchStartY.current - e.changedTouches[0].clientY;
-    touchStartY.current = null;
-    if (Math.abs(delta) < 30) return;
-    const direction = delta > 0 ? 1 : -1;
-    const current = activeIdxRef.current;
-    const nextIdx = Math.min(SCENES.length - 1, Math.max(0, current + direction));
-    if (nextIdx !== current) snapToScene(nextIdx);
-  }, [snapToScene]);
-
   // Image set — 5 dark + 5 light
   const darkImages = [
     "/hero/Dark-01.webp",
@@ -242,11 +190,7 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
       style={{ height: `calc(100vh + ${TOTAL_SCROLL_VH}vh)` }}
     >
       {/* ── Sticky viewport ── */}
-      <div
-        className="sticky top-0 h-screen w-full overflow-hidden"
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-      >
+      <div className="sticky top-0 h-screen w-full overflow-hidden">
 
         {/* ── Background images — crossfade ── */}
         <div className="absolute inset-0">
@@ -323,7 +267,7 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
         )}
 
         {/* ── Glass card ── */}
-        <div className="absolute inset-x-0 bottom-0 z-10 flex items-end justify-center px-4 pb-16 lg:inset-0 lg:items-center lg:justify-end lg:px-0 lg:pb-0 lg:pr-16 xl:pr-24">
+        <div className="absolute inset-x-0 bottom-0 z-10 flex items-end justify-center px-4 pb-6 lg:inset-0 lg:items-center lg:justify-end lg:px-0 lg:pb-0 lg:pr-16 xl:pr-24">
           <div
             className="w-full max-w-lg lg:max-w-md"
             style={{
@@ -348,9 +292,9 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
                   {/* Glass card — adapts to light/dark via CSS */}
                   <div
                     className={cn(
-                      "relative overflow-hidden rounded-2xl border p-5 lg:rounded-3xl lg:p-9",
-                      // Dark mode glass — brighter, more visible
-                      "dark:border-white/20 dark:bg-white/10",
+                      "relative overflow-hidden rounded-3xl border p-9",
+                      // Dark mode glass
+                      "dark:border-white/10 dark:bg-black/40",
                       // Light mode glass
                       "border-white/60 bg-white/55",
                     )}
@@ -358,24 +302,24 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
                       backdropFilter: "blur(24px) saturate(1.4)",
                       WebkitBackdropFilter: "blur(24px) saturate(1.4)",
                       boxShadow: isDark
-                        ? "0 8px 40px oklch(0 0 0 / 0.45), inset 0 1px 0 oklch(1 0 0 / 0.22), inset 0 -1px 0 oklch(0 0 0 / 0.10), 0 0 0 1px oklch(1 0 0 / 0.06)"
+                        ? "0 8px 40px oklch(0 0 0 / 0.5), inset 0 1px 0 oklch(1 0 0 / 0.08)"
                         : "0 8px 40px oklch(0 0 0 / 0.12), inset 0 1px 0 oklch(1 0 0 / 0.9)",
                     }}
                   >
                     {/* Scene number */}
-                    <div className="mb-2.5 flex items-center justify-between lg:mb-4">
-                      <div className="flex items-center gap-2">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
                         <div
-                          className="grid h-9 w-9 place-items-center rounded-lg lg:h-12 lg:w-12 lg:rounded-xl"
+                          className="grid h-12 w-12 place-items-center rounded-xl"
                           style={{
                             background: "linear-gradient(135deg, oklch(0.85 0.18 52), oklch(0.72 0.22 45))",
                             boxShadow: "0 2px 8px oklch(0.72 0.22 45 / 0.4)",
                           }}
                         >
-                          <Icon className="h-4 w-4 lg:h-5 lg:w-5 text-black" strokeWidth={2} />
+                          <Icon className="h-5 w-5 text-black" strokeWidth={2} />
                         </div>
                         <span
-                          className="text-xs font-semibold uppercase tracking-[0.14em] lg:text-sm"
+                          className="text-sm font-semibold uppercase tracking-[0.14em]"
                           style={{ color: isDark ? "oklch(0.85 0.18 52)" : "oklch(0.45 0.18 52)" }}
                         >
                           {scene.label}
@@ -391,24 +335,24 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
 
                     {/* Card title */}
                     <p
-                      className="text-xs font-bold uppercase tracking-[0.12em] mb-2.5 lg:text-sm lg:mb-4"
+                      className="text-sm font-bold uppercase tracking-[0.12em] mb-4"
                       style={{ color: isDark ? "oklch(0.85 0.18 52)" : "oklch(0.45 0.18 52)" }}
                     >
                       {scene.cardTitle}
                     </p>
 
                     {/* Bullet points */}
-                    <ul className="flex flex-col gap-2 lg:gap-3">
+                    <ul className="flex flex-col gap-3">
                       {scene.cardPoints.map((point) => (
                         <li
                           key={point}
-                          className="flex items-start gap-2 text-sm leading-snug lg:gap-3 lg:text-base"
+                          className="flex items-start gap-3 text-base leading-snug"
                           style={{
                             color: isDark ? "oklch(0.82 0.015 280)" : "oklch(0.25 0.02 270)",
                           }}
                         >
                           <span
-                            className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full lg:mt-2 lg:h-2 lg:w-2"
+                            className="mt-2 h-2 w-2 shrink-0 rounded-full"
                             style={{ background: isDark ? "oklch(0.85 0.18 52)" : "oklch(0.45 0.18 52)" }}
                           />
                           {point}
@@ -417,7 +361,7 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
                     </ul>
 
                     {/* Progress bar — fills across the scene */}
-                    <div className="mt-4 h-0.5 w-full overflow-hidden rounded-full bg-white/10 lg:mt-7">
+                    <div className="mt-7 h-0.5 w-full overflow-hidden rounded-full bg-white/10">
                       <div
                         className="h-full rounded-full transition-none"
                         style={{
@@ -432,15 +376,15 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
             })}
 
             {/* Spacer so the absolute children have a reference height */}
-            <div className="pointer-events-none invisible rounded-2xl border p-5 lg:rounded-3xl lg:p-7">
+            <div className="pointer-events-none invisible rounded-3xl border p-7">
               <div className="h-9 w-9" />
-              <div className="mt-2.5 h-3 w-24" />
-              <ul className="mt-2.5 flex flex-col gap-2">
+              <div className="mt-3 h-3 w-24" />
+              <ul className="mt-3 flex flex-col gap-2">
                 {SCENES[0].cardPoints.map((p) => (
-                  <li key={p} className="flex items-start gap-2 text-sm">{p}</li>
+                  <li key={p} className="flex items-start gap-2.5 text-sm">{p}</li>
                 ))}
               </ul>
-              <div className="mt-4 h-0.5 w-full" />
+              <div className="mt-5 h-0.5 w-full" />
             </div>
           </div>
         </div>
@@ -735,40 +679,11 @@ function LandingFooter() {
 
   return (
     <>
-      <footer
-        className="relative overflow-hidden mx-3 mb-3 rounded-2xl"
-        style={{
-          background: "oklch(1 0 0 / 0.04)",
-          backdropFilter: "blur(20px) saturate(1.5)",
-          WebkitBackdropFilter: "blur(20px) saturate(1.5)",
-          border: "1px solid oklch(1 0 0 / 0.12)",
-          boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.10)",
-        }}
-      >
-        {/* Subtle aurora wash — mirrors the hero palette */}
-        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-          <div
-            className="absolute -inset-[60%] animate-aurora-a opacity-40"
-            style={{ background: "radial-gradient(50% 55% at 10% 50%, oklch(0.85 0.2 200 / 0.12), transparent 70%)" }}
-          />
-          <div
-            className="absolute -inset-[60%] animate-aurora-b opacity-30"
-            style={{ background: "radial-gradient(40% 50% at 88% 50%, oklch(0.66 0.26 305 / 0.10), transparent 70%)" }}
-          />
-        </div>
-
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-8 text-xs"
-          style={{ color: "oklch(0.68 0.01 280)" }}
-        >
+      <footer className="border-t border-border">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-8 text-xs text-muted-foreground">
           <div>
             © 2026 NivaSpark · Powered by{" "}
-            <a
-              href="https://www.nivatier.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: "oklch(0.85 0.18 52)" }}
-              className="hover:underline"
-            >
+            <a href="https://www.nivatier.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
               Nivatier
             </a>
           </div>
@@ -777,14 +692,12 @@ function LandingFooter() {
               <button
                 key={key}
                 onClick={() => setOpenModal(key)}
-                className="transition-colors capitalize hover:underline"
-                style={{ color: "oklch(0.68 0.01 280)" }}
-                onMouseEnter={e => (e.currentTarget.style.color = "oklch(0.92 0.01 280)")}
-                onMouseLeave={e => (e.currentTarget.style.color = "oklch(0.68 0.01 280)")}
+                className="hover:text-foreground transition-colors capitalize"
               >
                 {key === "acceptable_use" ? "Acceptable Use" : key.charAt(0).toUpperCase() + key.slice(1)}
               </button>
-            ))}</div>
+            ))}
+          </div>
         </div>
       </footer>
 
@@ -892,36 +805,8 @@ function StudioCarousel() {
             {[...STUDIO_CARDS, ...STUDIO_CARDS, ...STUDIO_CARDS].map((p, idx) => (
               <article
                 key={idx}
-                className="group relative shrink-0 overflow-hidden rounded-2xl p-5 transition-all duration-300 hover:-translate-y-1"
-                style={{
-                  width: `${CARD_WIDTH}px`,
-                  background: "oklch(1 0 0 / 0.05)",
-                  backdropFilter: "blur(16px) saturate(1.4)",
-                  WebkitBackdropFilter: "blur(16px) saturate(1.4)",
-                  border: "1px solid oklch(1 0 0 / 0.11)",
-                  boxShadow: [
-                    "inset 0 1px 0 oklch(1 0 0 / 0.14)",
-                    "inset 0 -1px 0 oklch(0 0 0 / 0.08)",
-                    "0 8px 32px -8px oklch(0 0 0 / 0.35)",
-                  ].join(", "),
-                }}
-                onMouseEnter={e => {
-                  (e.currentTarget as HTMLElement).style.border = "1px solid oklch(0.85 0.18 52 / 0.45)";
-                  (e.currentTarget as HTMLElement).style.boxShadow = [
-                    "inset 0 1px 0 oklch(1 0 0 / 0.18)",
-                    "inset 0 -1px 0 oklch(0 0 0 / 0.08)",
-                    "0 16px 48px -8px oklch(0 0 0 / 0.45)",
-                    "0 0 0 1px oklch(0.85 0.18 52 / 0.15)",
-                  ].join(", ");
-                }}
-                onMouseLeave={e => {
-                  (e.currentTarget as HTMLElement).style.border = "1px solid oklch(1 0 0 / 0.11)";
-                  (e.currentTarget as HTMLElement).style.boxShadow = [
-                    "inset 0 1px 0 oklch(1 0 0 / 0.14)",
-                    "inset 0 -1px 0 oklch(0 0 0 / 0.08)",
-                    "0 8px 32px -8px oklch(0 0 0 / 0.35)",
-                  ].join(", ");
-                }}
+                className="group relative shrink-0 overflow-hidden rounded-2xl border border-border/70 bg-card/40 p-5 transition-all duration-300 hover:border-primary/60 hover:shadow-lg hover:-translate-y-1"
+                style={{ width: `${CARD_WIDTH}px` }}
               >
                 <span className="inline-flex rounded-full border border-primary/40 bg-background/50 px-2.5 py-1 text-[10px] font-medium uppercase tracking-widest text-primary">
                   {p.tag}
@@ -994,29 +879,7 @@ function FeaturedVideo() {
 
   return (
     <>
-      <div
-        className="group relative overflow-hidden rounded-2xl"
-        style={{
-          background: "oklch(1 0 0 / 0.05)",
-          backdropFilter: "blur(20px) saturate(1.5)",
-          WebkitBackdropFilter: "blur(20px) saturate(1.5)",
-          border: "1px solid oklch(1 0 0 / 0.12)",
-          boxShadow: [
-            "0 0 0 1px oklch(0.85 0.18 52 / 0.12)",
-            "inset 0 1px 0 oklch(1 0 0 / 0.16)",
-            "inset 0 -1px 0 oklch(0 0 0 / 0.08)",
-            "0 24px 60px -12px oklch(0 0 0 / 0.50)",
-          ].join(", "),
-        }}
-      >
-        {/* Aurora colour wash behind glass */}
-        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden rounded-2xl">
-          <div className="absolute -inset-[40%] animate-aurora-a opacity-60"
-            style={{ background: "radial-gradient(50% 60% at 10% 40%, oklch(0.85 0.2 200 / 0.18), transparent 70%)" }} />
-          <div className="absolute -inset-[40%] animate-aurora-b opacity-50"
-            style={{ background: "radial-gradient(40% 50% at 85% 60%, oklch(0.66 0.26 305 / 0.15), transparent 70%)" }} />
-        </div>
-
+      <div className="group relative overflow-hidden rounded-2xl border border-border bg-card/40">
         <div className="flex flex-col md:flex-row">
           {/* Vimeo embed preview — pointer-events-none; click anywhere opens modal */}
           <div
@@ -1041,10 +904,7 @@ function FeaturedVideo() {
           </div>
 
           {/* Text */}
-          <div
-            className="flex flex-col justify-center p-6 md:w-2/5 md:p-10"
-            style={{ borderLeft: "1px solid oklch(1 0 0 / 0.08)" }}
-          >
+          <div className="flex flex-col justify-center p-6 md:w-2/5 md:p-10">
             <span className="inline-flex w-fit rounded-full border border-primary/40 bg-background/50 px-2.5 py-1 text-[10px] font-medium uppercase tracking-widest text-primary">
               Overview
             </span>

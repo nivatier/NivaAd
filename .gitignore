@@ -6,3 +6,4 @@ Git-key.txt
 .venv/
 node_modules/
 .DS_Store
+backend/celerybeat-schedule

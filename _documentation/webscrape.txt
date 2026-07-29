@@ -1,0 +1,166 @@
+# ========================= IMPORTS =========================
+import nest_asyncio
+nest_asyncio.apply()  # Notebook safe
+
+import asyncio
+import os
+import time
+import json
+from urllib.parse import urljoin, urlparse
+from bs4 import BeautifulSoup
+import faiss
+import numpy as np
+from dotenv import load_dotenv
+from tqdm import tqdm
+
+from playwright.async_api import async_playwright
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings.openai import OpenAIEmbeddings
+
+# ========================= CONFIG =========================
+load_dotenv()
+
+WEBSITE_URL = "https://nivatier.com"
+VECTOR_DB_DIR = "vector_db"
+os.makedirs(VECTOR_DB_DIR, exist_ok=True)
+
+MAX_DEPTH = 10
+MAX_PAGES = 200
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 50
+
+ALLOWED_DOMAIN = urlparse(WEBSITE_URL).netloc
+BLACKLIST = ['.pdf', '.jpg', '.png', '.jpeg', '.gif', '.zip', '.exe']
+
+TEXT_SPLITTER = RecursiveCharacterTextSplitter(
+    chunk_size=CHUNK_SIZE,
+    chunk_overlap=CHUNK_OVERLAP,
+    length_function=len
+)
+
+EMBEDDER = OpenAIEmbeddings()
+USER_AGENT = "Mozilla/5.0 (compatible; JS-RAG-Scraper/1.0)"
+
+# ========================= GLOBALS =========================
+visited_urls = set()
+scraped_pages = {}
+total_pages_scraped = 0
+
+# ========================= HELPERS =========================
+def clean_text(text):
+    return " ".join(text.split())
+
+def extract_links(base_url, html):
+    soup = BeautifulSoup(html, "html.parser")
+    links = set()
+
+    for tag in soup.find_all("a", href=True):
+        href = tag["href"].strip()
+        url = urljoin(base_url, href)
+
+        if urlparse(url).netloc != ALLOWED_DOMAIN:
+            continue
+        if any(skip in url for skip in ["#", "mailto:", "javascript:"]):
+            continue
+
+        links.add(url)
+    return links
+
+def chunk_page_text(text, url):
+    chunks = TEXT_SPLITTER.split_text(text)
+    return [{
+        "text": c,
+        "source": url,
+        "chunk_num": i,
+        "total_chunks": len(chunks)
+    } for i, c in enumerate(chunks)]
+
+# ========================= SCRAPER =========================
+async def scrape_page(page, url):
+    try:
+        await page.goto(url, wait_until="networkidle", timeout=30000)
+        html = await page.content()
+
+        soup = BeautifulSoup(html, "html.parser")
+        text = clean_text(soup.get_text())
+        links = extract_links(url, html)
+        return text, links
+    except Exception as e:
+        print(f"❌ Error scraping {url}: {e}")
+        return "", set()
+
+# ========================= CRAWLER =========================
+async def crawl(url, browser, depth=0):
+    global total_pages_scraped
+
+    if total_pages_scraped >= MAX_PAGES:
+        return
+    if url in visited_urls or depth > MAX_DEPTH:
+        return
+
+    visited_urls.add(url)
+    total_pages_scraped += 1
+
+    print(f"🕷 [{total_pages_scraped}/{MAX_PAGES}] Depth={depth} | {url}")
+
+    page = await browser.new_page()
+    text, links = await scrape_page(page, url)
+    await page.close()
+
+    if text:
+        scraped_pages[url] = chunk_page_text(text, url)
+
+    for link in links:
+        if total_pages_scraped >= MAX_PAGES:
+            break
+        await crawl(link, browser, depth + 1)
+
+# ========================= FAISS =========================
+def create_faiss_index(scraped_chunks):
+    all_texts = [c["text"] for chunks in scraped_chunks.values() for c in chunks]
+    all_chunks_flat = [c for chunks in scraped_chunks.values() for c in chunks]
+
+    print("\n🧠 Generating embeddings for FAISS...")
+    embeddings = EMBEDDER.embed_documents(all_texts)
+    embeddings = np.array(embeddings).astype("float32")
+    dim = embeddings.shape[1]
+
+    index = faiss.IndexFlatL2(dim)
+    index.add(embeddings)
+
+    timestamp = int(time.time())
+    domain = ALLOWED_DOMAIN
+    db_file = os.path.join(VECTOR_DB_DIR, f"{domain}_vector_db_{timestamp}")
+
+    faiss.write_index(index, f"{db_file}.index")
+
+    # Save metadata
+    metadata = {
+        "website": WEBSITE_URL,
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "total_chunks": len(all_chunks_flat),
+        "chunks": all_chunks_flat
+    }
+
+    with open(f"{db_file}_metadata.json", "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+    print(f"✅ FAISS index saved: {db_file}.index")
+    print(f"✅ Metadata saved: {db_file}_metadata.json")
+
+# ========================= MAIN =========================
+async def main():
+    print(f"\n🚀 Starting JS-rendered scrape of {WEBSITE_URL}")
+    print(f"MAX_DEPTH={MAX_DEPTH}, MAX_PAGES={MAX_PAGES}")
+    print(f"CHUNK_SIZE={CHUNK_SIZE}, CHUNK_OVERLAP={CHUNK_OVERLAP}\n")
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        await crawl(WEBSITE_URL, browser)
+        await browser.close()
+
+    print(f"\n🎉 Scraping complete! Total pages: {total_pages_scraped}")
+    create_faiss_index(scraped_pages)
+
+# ========================= RUN =========================
+await main()
