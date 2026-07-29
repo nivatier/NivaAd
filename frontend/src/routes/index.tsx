@@ -163,6 +163,45 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
   const activeIdx = Math.min(Math.floor(rawScene), sceneCount - 1);
   const sceneProgress = rawScene - Math.floor(rawScene); // 0–1 within scene
 
+  // ── Mobile swipe-to-snap ──────────────────────────────────────────────────
+  // Any swipe up/down (threshold: 30px) inside the hero snaps to the next
+  // or previous scene boundary, regardless of swipe length.
+  const touchStartY = useRef<number | null>(null);
+  const isSnapping = useRef(false);
+  // Keep activeIdx in a ref so touch callbacks always see the latest value
+  // without needing to be in their dependency array.
+  const activeIdxRef = useRef(activeIdx);
+  activeIdxRef.current = activeIdx;
+
+  const snapToScene = useCallback((targetIdx: number) => {
+    const el = sectionRef.current;
+    if (!el) return;
+    const sectionTop = el.getBoundingClientRect().top + window.scrollY;
+    const scrollable = el.offsetHeight - window.innerHeight;
+    // Each scene occupies an equal fraction of the scrollable range
+    const fraction = targetIdx / SCENES.length;
+    const targetScroll = sectionTop + scrollable * fraction;
+    isSnapping.current = true;
+    window.scrollTo({ top: targetScroll, behavior: "smooth" });
+    // Release snap-lock after animation (~600 ms)
+    setTimeout(() => { isSnapping.current = false; }, 650);
+  }, []);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    touchStartY.current = e.touches[0].clientY;
+  }, []);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (touchStartY.current === null || isSnapping.current) return;
+    const delta = touchStartY.current - e.changedTouches[0].clientY;
+    touchStartY.current = null;
+    if (Math.abs(delta) < 30) return; // ignore accidental grazes
+    const direction = delta > 0 ? 1 : -1; // positive = swipe up = next scene
+    const current = activeIdxRef.current;
+    const nextIdx = Math.min(SCENES.length - 1, Math.max(0, current + direction));
+    if (nextIdx !== current) snapToScene(nextIdx);
+  }, [snapToScene]);
+
   // Image set — 5 dark + 5 light
   const darkImages = [
     "/hero/Dark-01.webp",
@@ -190,7 +229,11 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
       style={{ height: `calc(100vh + ${TOTAL_SCROLL_VH}vh)` }}
     >
       {/* ── Sticky viewport ── */}
-      <div className="sticky top-0 h-screen w-full overflow-hidden">
+      <div
+        className="sticky top-0 h-screen w-full overflow-hidden"
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
 
         {/* ── Background images — crossfade ── */}
         <div className="absolute inset-0">
@@ -267,7 +310,7 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
         )}
 
         {/* ── Glass card ── */}
-        <div className="absolute inset-x-0 bottom-0 z-10 flex items-end justify-center px-4 pb-6 lg:inset-0 lg:items-center lg:justify-end lg:px-0 lg:pb-0 lg:pr-16 xl:pr-24">
+        <div className="absolute inset-x-0 bottom-0 z-10 flex items-end justify-center px-4 pb-3 lg:inset-0 lg:items-center lg:justify-end lg:px-0 lg:pb-0 lg:pr-16 xl:pr-24">
           <div
             className="w-full max-w-lg lg:max-w-md"
             style={{
@@ -292,7 +335,7 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
                   {/* Glass card — adapts to light/dark via CSS */}
                   <div
                     className={cn(
-                      "relative overflow-hidden rounded-3xl border p-9",
+                      "relative overflow-hidden rounded-2xl border p-5 lg:rounded-3xl lg:p-9",
                       // Dark mode glass — brighter, more visible
                       "dark:border-white/20 dark:bg-white/10",
                       // Light mode glass
@@ -307,19 +350,19 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
                     }}
                   >
                     {/* Scene number */}
-                    <div className="mb-4 flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
+                    <div className="mb-2.5 flex items-center justify-between lg:mb-4">
+                      <div className="flex items-center gap-2">
                         <div
-                          className="grid h-12 w-12 place-items-center rounded-xl"
+                          className="grid h-9 w-9 place-items-center rounded-lg lg:h-12 lg:w-12 lg:rounded-xl"
                           style={{
                             background: "linear-gradient(135deg, oklch(0.85 0.18 52), oklch(0.72 0.22 45))",
                             boxShadow: "0 2px 8px oklch(0.72 0.22 45 / 0.4)",
                           }}
                         >
-                          <Icon className="h-5 w-5 text-black" strokeWidth={2} />
+                          <Icon className="h-4 w-4 lg:h-5 lg:w-5 text-black" strokeWidth={2} />
                         </div>
                         <span
-                          className="text-sm font-semibold uppercase tracking-[0.14em]"
+                          className="text-xs font-semibold uppercase tracking-[0.14em] lg:text-sm"
                           style={{ color: isDark ? "oklch(0.85 0.18 52)" : "oklch(0.45 0.18 52)" }}
                         >
                           {scene.label}
@@ -335,24 +378,24 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
 
                     {/* Card title */}
                     <p
-                      className="text-sm font-bold uppercase tracking-[0.12em] mb-4"
+                      className="text-xs font-bold uppercase tracking-[0.12em] mb-2.5 lg:text-sm lg:mb-4"
                       style={{ color: isDark ? "oklch(0.85 0.18 52)" : "oklch(0.45 0.18 52)" }}
                     >
                       {scene.cardTitle}
                     </p>
 
                     {/* Bullet points */}
-                    <ul className="flex flex-col gap-3">
+                    <ul className="flex flex-col gap-2 lg:gap-3">
                       {scene.cardPoints.map((point) => (
                         <li
                           key={point}
-                          className="flex items-start gap-3 text-base leading-snug"
+                          className="flex items-start gap-2 text-sm leading-snug lg:gap-3 lg:text-base"
                           style={{
                             color: isDark ? "oklch(0.82 0.015 280)" : "oklch(0.25 0.02 270)",
                           }}
                         >
                           <span
-                            className="mt-2 h-2 w-2 shrink-0 rounded-full"
+                            className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full lg:mt-2 lg:h-2 lg:w-2"
                             style={{ background: isDark ? "oklch(0.85 0.18 52)" : "oklch(0.45 0.18 52)" }}
                           />
                           {point}
@@ -361,7 +404,7 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
                     </ul>
 
                     {/* Progress bar — fills across the scene */}
-                    <div className="mt-7 h-0.5 w-full overflow-hidden rounded-full bg-white/10">
+                    <div className="mt-4 h-0.5 w-full overflow-hidden rounded-full bg-white/10 lg:mt-7">
                       <div
                         className="h-full rounded-full transition-none"
                         style={{
@@ -376,15 +419,15 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
             })}
 
             {/* Spacer so the absolute children have a reference height */}
-            <div className="pointer-events-none invisible rounded-3xl border p-7">
+            <div className="pointer-events-none invisible rounded-2xl border p-5 lg:rounded-3xl lg:p-7">
               <div className="h-9 w-9" />
-              <div className="mt-3 h-3 w-24" />
-              <ul className="mt-3 flex flex-col gap-2">
+              <div className="mt-2.5 h-3 w-24" />
+              <ul className="mt-2.5 flex flex-col gap-2">
                 {SCENES[0].cardPoints.map((p) => (
-                  <li key={p} className="flex items-start gap-2.5 text-sm">{p}</li>
+                  <li key={p} className="flex items-start gap-2 text-sm">{p}</li>
                 ))}
               </ul>
-              <div className="mt-5 h-0.5 w-full" />
+              <div className="mt-4 h-0.5 w-full" />
             </div>
           </div>
         </div>
