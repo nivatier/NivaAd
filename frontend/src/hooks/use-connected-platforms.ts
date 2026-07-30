@@ -51,9 +51,12 @@ export function useConnectedPlatforms(): ConnectedPlatformsResult {
   const [platforms, setPlatforms] = useState<Platform[]>(FALLBACK_PLATFORMS);
   const [connected, setConnected] = useState<Set<string>>(new Set());
   const [loading, setLoading]     = useState(true);
-  const [testMode, setTestModeState] = useState(
-    () => localStorage.getItem(TEST_MODE_KEY) === "true"
-  );
+  const [testMode, setTestModeState] = useState(false);  // SSR-safe: populated in useEffect below
+
+  // Read test-mode preference from localStorage after mount only — never during SSR
+  useEffect(() => {
+    setTestModeState(localStorage.getItem(TEST_MODE_KEY) === "true");
+  }, []);
 
   useEffect(() => {
     Promise.all([

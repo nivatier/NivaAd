@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 import httpx
 import redis as redis_lib
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, func, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified

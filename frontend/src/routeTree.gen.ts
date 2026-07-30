@@ -38,6 +38,7 @@ import { Route as AppProductsRouteImport } from './routes/app.products'
 import { Route as AppMyAdsRouteImport } from './routes/app.my-ads'
 import { Route as AppModerationRouteImport } from './routes/app.moderation'
 import { Route as AppConnectionsRouteImport } from './routes/app.connections'
+import { Route as AppCampaigns_Imagethemeworking_versionRouteImport } from './routes/app.campaigns_Imagethemeworking_version'
 import { Route as AppCampaignsRouteImport } from './routes/app.campaigns'
 import { Route as AppCalendarRouteImport } from './routes/app.calendar'
 import { Route as AppBrandKitRouteImport } from './routes/app.brand-kit'
@@ -190,6 +191,12 @@ const AppConnectionsRoute = AppConnectionsRouteImport.update({
   path: '/app/connections',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppCampaigns_Imagethemeworking_versionRoute =
+  AppCampaigns_Imagethemeworking_versionRouteImport.update({
+    id: '/app/campaigns_Imagethemeworking_version',
+    path: '/app/campaigns_Imagethemeworking_version',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AppCampaignsRoute = AppCampaignsRouteImport.update({
   id: '/app/campaigns',
   path: '/app/campaigns',
@@ -235,6 +242,7 @@ export interface FileRoutesByFullPath {
   '/app/brand-kit': typeof AppBrandKitRoute
   '/app/calendar': typeof AppCalendarRoute
   '/app/campaigns': typeof AppCampaignsRoute
+  '/app/campaigns_Imagethemeworking_version': typeof AppCampaigns_Imagethemeworking_versionRoute
   '/app/connections': typeof AppConnectionsRoute
   '/app/moderation': typeof AppModerationRoute
   '/app/my-ads': typeof AppMyAdsRoute
@@ -272,6 +280,7 @@ export interface FileRoutesByTo {
   '/app/brand-kit': typeof AppBrandKitRoute
   '/app/calendar': typeof AppCalendarRoute
   '/app/campaigns': typeof AppCampaignsRoute
+  '/app/campaigns_Imagethemeworking_version': typeof AppCampaigns_Imagethemeworking_versionRoute
   '/app/connections': typeof AppConnectionsRoute
   '/app/moderation': typeof AppModerationRoute
   '/app/my-ads': typeof AppMyAdsRoute
@@ -310,6 +319,7 @@ export interface FileRoutesById {
   '/app/brand-kit': typeof AppBrandKitRoute
   '/app/calendar': typeof AppCalendarRoute
   '/app/campaigns': typeof AppCampaignsRoute
+  '/app/campaigns_Imagethemeworking_version': typeof AppCampaigns_Imagethemeworking_versionRoute
   '/app/connections': typeof AppConnectionsRoute
   '/app/moderation': typeof AppModerationRoute
   '/app/my-ads': typeof AppMyAdsRoute
@@ -349,6 +359,7 @@ export interface FileRouteTypes {
     | '/app/brand-kit'
     | '/app/calendar'
     | '/app/campaigns'
+    | '/app/campaigns_Imagethemeworking_version'
     | '/app/connections'
     | '/app/moderation'
     | '/app/my-ads'
@@ -386,6 +397,7 @@ export interface FileRouteTypes {
     | '/app/brand-kit'
     | '/app/calendar'
     | '/app/campaigns'
+    | '/app/campaigns_Imagethemeworking_version'
     | '/app/connections'
     | '/app/moderation'
     | '/app/my-ads'
@@ -423,6 +435,7 @@ export interface FileRouteTypes {
     | '/app/brand-kit'
     | '/app/calendar'
     | '/app/campaigns'
+    | '/app/campaigns_Imagethemeworking_version'
     | '/app/connections'
     | '/app/moderation'
     | '/app/my-ads'
@@ -461,6 +474,7 @@ export interface RootRouteChildren {
   AppBrandKitRoute: typeof AppBrandKitRoute
   AppCalendarRoute: typeof AppCalendarRoute
   AppCampaignsRoute: typeof AppCampaignsRoute
+  AppCampaigns_Imagethemeworking_versionRoute: typeof AppCampaigns_Imagethemeworking_versionRoute
   AppConnectionsRoute: typeof AppConnectionsRoute
   AppModerationRoute: typeof AppModerationRoute
   AppMyAdsRoute: typeof AppMyAdsRoute
@@ -690,6 +704,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppConnectionsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/campaigns_Imagethemeworking_version': {
+      id: '/app/campaigns_Imagethemeworking_version'
+      path: '/app/campaigns_Imagethemeworking_version'
+      fullPath: '/app/campaigns_Imagethemeworking_version'
+      preLoaderRoute: typeof AppCampaigns_Imagethemeworking_versionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/app/campaigns': {
       id: '/app/campaigns'
       path: '/app/campaigns'
@@ -749,6 +770,8 @@ const rootRouteChildren: RootRouteChildren = {
   AppBrandKitRoute: AppBrandKitRoute,
   AppCalendarRoute: AppCalendarRoute,
   AppCampaignsRoute: AppCampaignsRoute,
+  AppCampaigns_Imagethemeworking_versionRoute:
+    AppCampaigns_Imagethemeworking_versionRoute,
   AppConnectionsRoute: AppConnectionsRoute,
   AppModerationRoute: AppModerationRoute,
   AppMyAdsRoute: AppMyAdsRoute,

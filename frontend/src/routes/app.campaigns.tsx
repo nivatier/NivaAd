@@ -10,7 +10,7 @@ import { RepostModal } from "@/components/repost-modal";
 import { detectedTimeZone, zonedWallTimeToUtcParts, formatInTimeZone } from "@/lib/timezone";
 import { MAX_VIDEO_SHOTS } from "@/lib/constants";
 import { api, type AdOut, type AvailableModel } from "@/lib/api";
-import { ImageThemeGrid, mapImageTheme, type ImageTheme, type ImageThemeField } from "@/components/theme-gallery-grid";
+import { ImageThemeGrid, VideoThemeGrid, mapImageTheme, type ImageTheme, type ImageThemeField, type VideoTheme } from "@/components/theme-gallery-grid";
 import { NovaHint } from "@/components/nova-hint";
 import { useAuth } from "@/hooks/use-auth";
 import { useRequireCapability } from "@/hooks/use-require-capability";
@@ -106,16 +106,18 @@ type PhaseFormState = {
   selectedTextStyle: string | null;
   selectedTextCategory: string | null;
   imageTextOverlay: string | null;
-  showThemeModal: boolean;
   wantVideo: boolean; videoModelId: string | null; videoResolution: string | null;
   videoAspectRatio: string | null;
   videoFrameImage: string | null; videoEndFrameImage: string | null;
   videoShots: VideoShot[];
   videoMode: "single_reference" | "first_last_frame";
   videoAudio: boolean; videoCameraStyleIds: string[]; videoNegativePrompt: string;
+  showVideoNegativePrompt: boolean;
   videoBackgroundMusicId: string; videoReferencePrompt: string; showVideoReferencePrompt: boolean;
   videoStartShotId: string | null; videoEndShotId: string | null;
   refineVideoPrompt: boolean; refineVideoFrame: boolean;
+  videoRefMode: "custom" | "theme";
+  selectedVideoThemeId: string | null;
 };
 
 function PhaseScheduleInput({ label, state, setState, availableImageModels, availableVideoModels, availablePlatforms, connectedPlatformIds, testMode, cameraStylePresets, musicPresets, brandVideoShots, imageThemes, textTheme }: {
@@ -128,6 +130,10 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
   brandVideoShots: { id: string; kind: string; status: string; label: string; prompt: string; duration: number }[];
   imageThemes: ImageTheme[];
   textTheme: { styleTags: string[]; categoryTags: string[]; stylePrompts: Record<string, string>; categoryPrompts: Record<string, string> };
+  videoThemes: VideoTheme[];
+  videoReferencePromptDefault: string;
+  onOpenImageTheme: () => void;
+  onOpenVideoTheme: () => void;
 }) {
   async function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -310,12 +316,12 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
                     <div className="flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 p-1.5 mb-1.5">
                       <img src={theme.thumbnail} alt={theme.label} className="h-8 w-8 rounded object-cover shrink-0" />
                       <div className="min-w-0 flex-1 text-[10px] font-semibold text-foreground truncate">{theme.label}</div>
-                      <button type="button" onClick={() => setState({ ...state, showThemeModal: true })}
+                      <button type="button" onClick={() => onOpenImageTheme()}
                         className="shrink-0 rounded-full border border-primary/50 px-2 py-0.5 text-[10px] text-primary">Change</button>
                     </div>
                   );
                 })() : (
-                  <button type="button" onClick={() => setState({ ...state, showThemeModal: true })}
+                  <button type="button" onClick={() => onOpenImageTheme()}
                     className="w-full mb-1.5 rounded border border-dashed border-primary/50 px-2 py-2 text-[10px] text-primary hover:bg-primary/5 flex items-center justify-center gap-1">
                     🖼 Browse image themes
                   </button>
@@ -370,22 +376,6 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
             <input value={state.imagePromptOverride} onChange={(e) => setState({ ...state, imagePromptOverride: e.target.value })}
               placeholder="Override the AI's image prompt entirely…"
               className="w-full rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none" />
-          </div>
-        </div>
-      )}
-      {/* Image theme picker modal */}
-      {state.showThemeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setState({ ...state, showThemeModal: false })}>
-          <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-2xl border border-border bg-background p-5" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-sm font-semibold text-foreground">Choose an image theme</div>
-              <button type="button" onClick={() => setState({ ...state, showThemeModal: false })} className="text-muted-foreground hover:text-foreground text-lg">✕</button>
-            </div>
-            <ImageThemeGrid themes={imageThemes} selectedId={state.selectedImageTheme}
-              onSelect={(t) => {
-                const scene = t.basePrompt;
-                setState({ ...state, selectedImageTheme: t.id, themeFieldValues: {}, themePositions: {}, imageTextOverlay: null, sceneText: scene, showThemeModal: false });
-              }} />
           </div>
         </div>
       )}
@@ -515,10 +505,12 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
                 {!state.showVideoReferencePrompt && state.videoReferencePrompt.trim() && (
                   <p className="text-[11px] text-muted-foreground line-clamp-1 italic">{state.videoReferencePrompt}</p>
                 )}
+                {!state.showVideoReferencePrompt && (state.videoReferencePrompt.trim() || videoReferencePromptDefault) && (
+                  <p className="text-[11px] text-muted-foreground line-clamp-1 italic">{state.videoReferencePrompt || videoReferencePromptDefault}</p>
+                )}
                 {state.showVideoReferencePrompt && (
-                  <textarea rows={2} value={state.videoReferencePrompt}
+                  <textarea rows={2} value={state.videoReferencePrompt || videoReferencePromptDefault}
                     onChange={(e) => setState({ ...state, videoReferencePrompt: e.target.value })}
-                    placeholder="Describe how to preserve the reference image style…"
                     className="w-full rounded-lg border border-input bg-input/40 p-1.5 text-[11px] text-foreground focus:border-primary focus:outline-none resize-y" />
                 )}
               </div>
@@ -586,146 +578,220 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
             </div>
           )}
 
-          {/* Negative prompt */}
-          <div>
-            <div className="text-[10px] font-semibold text-muted-foreground mb-1">🚫 Negative prompt <span className="font-normal">(optional)</span></div>
-            <input value={state.videoNegativePrompt} onChange={(e) => setState({ ...state, videoNegativePrompt: e.target.value })}
-              placeholder="e.g. no warped geometry, no flickering, no artifacts"
-              className="w-full rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none" />
-          </div>
-
-          {/* Shots */}
+          {/* Video Theme / Custom shots toggle */}
           <div className="rounded-lg border border-border/60 bg-background/40 p-2">
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[10px] font-semibold text-muted-foreground">Shots</span>
-              <div className="flex items-center gap-1.5">
-                <button type="button" disabled={state.videoShots.length <= 1}
-                  onClick={() => setState({ ...state, videoShots: state.videoShots.slice(0, -1) })}
-                  className="grid h-5 w-5 place-items-center rounded-full border border-border text-[11px] disabled:opacity-40">−</button>
-                <span className="w-4 text-center text-[11px] font-semibold text-foreground">{state.videoShots.length}</span>
-                <button type="button" disabled={state.videoShots.length >= MAX_VIDEO_SHOTS}
-                  onClick={() => setState({ ...state, videoShots: [...state.videoShots, { prompt: "", duration: 6 }] })}
-                  className="grid h-5 w-5 place-items-center rounded-full border border-border text-[11px] disabled:opacity-40">＋</button>
-              </div>
-            </div>
-            <div className="space-y-2">
-              {state.videoShots.map((shot, i) => (
-                <div key={i} className="rounded-lg border border-border/60 bg-card/40 p-2 space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-4 shrink-0 text-[10px] text-muted-foreground">#{i + 1}</span>
-                    <input placeholder={state.videoShots.length > 1 ? `Shot ${i + 1} — angle, action` : "Describe this shot (optional)"}
-                      value={shot.prompt}
-                      onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, prompt: e.target.value } : x) })}
-                      className="w-full rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none" />
-                    <input type="number" value={shot.duration}
-                      disabled={!!(selectedVideoModel?.duration_options && state.videoShots.length === 1)}
-                      onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, duration: Number(e.target.value) || 0 } : x) })}
-                      className="w-12 shrink-0 rounded-lg border border-input bg-input/40 px-1.5 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none disabled:opacity-50" />
-                    <span className="shrink-0 text-[10px] text-muted-foreground">s</span>
-                  </div>
-                  {/* Per-shot extras */}
-                  <div className="flex flex-wrap gap-1.5 pl-5">
-                    {!shot.showOverlays ? (
-                      <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, showOverlays: true, textOverlays: x.textOverlays || [] } : x) })}
-                        className="flex items-center gap-0.5 rounded-full border border-dashed border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary/50 hover:text-primary">
-                        <span>＋</span> Text overlay</button>
-                    ) : <span className="text-[10px] font-medium text-primary">💬 Overlays</span>}
-                    {!shot.showVoiceover ? (
-                      <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, showVoiceover: true } : x) })}
-                        className="flex items-center gap-0.5 rounded-full border border-dashed border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-secondary/50 hover:text-secondary">
-                        <span>＋</span> Voice-over</button>
-                    ) : <span className="text-[10px] font-medium text-secondary">🎙 Voice-over</span>}
-                  </div>
-                  {/* Text overlays */}
-                  {shot.showOverlays && (
-                    <div className="pl-5 space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-muted-foreground">Text overlays</span>
-                        <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, textOverlays: [...(x.textOverlays || []), { text: "", startTime: 0, endTime: null, position: "bottom-center", fontStyle: "sans", fontSize: "medium", textColor: "#FFFFFF", overlayStyle: "fade" }] } : x) })}
-                          className="rounded-full border border-primary/50 px-1.5 py-0.5 text-[10px] text-primary">＋ Add</button>
-                      </div>
-                      {(shot.textOverlays || []).map((ov, oi) => (
-                        <div key={oi} className="rounded-lg border border-border/60 bg-background/50 p-1.5 space-y-1.5">
-                          <div className="flex items-center gap-1.5">
-                            <input placeholder={`"The wait is almost over."`} value={ov.text}
-                              onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, text: e.target.value } : o) } : x) })}
-                              className="flex-1 rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none" />
-                            <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).filter((_, oi2) => oi2 !== oi) } : x) })}
-                              className="shrink-0 rounded-full border border-destructive/40 px-1.5 py-0.5 text-[10px] text-destructive">✕</button>
-                          </div>
-                          <div className="grid grid-cols-4 gap-1">
-                            <div><label className="text-[9px] text-muted-foreground">Start s</label>
-                              <input type="number" min="0" step="0.5" value={ov.startTime}
-                                onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, startTime: Number(e.target.value) || 0 } : o) } : x) })}
-                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground" /></div>
-                            <div><label className="text-[9px] text-muted-foreground">End s</label>
-                              <input type="number" min="0" step="0.5" value={ov.endTime ?? ""} placeholder="end"
-                                onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, endTime: e.target.value === "" ? null : Number(e.target.value) } : o) } : x) })}
-                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground" /></div>
-                            <div><label className="text-[9px] text-muted-foreground">Position</label>
-                              <select value={ov.position} onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, position: e.target.value } : o) } : x) })}
-                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
-                                {POSITION_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}</select></div>
-                            <div><label className="text-[9px] text-muted-foreground">Style</label>
-                              <select value={ov.overlayStyle} onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, overlayStyle: e.target.value } : o) } : x) })}
-                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
-                                <option value="fade">Fade</option><option value="solid">Solid</option><option value="slide_up">Slide up</option></select></div>
-                          </div>
-                          <div className="grid grid-cols-3 gap-1">
-                            <div><label className="text-[9px] text-muted-foreground">Font</label>
-                              <select value={ov.fontStyle} onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, fontStyle: e.target.value } : o) } : x) })}
-                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
-                                <option value="sans">Sans</option><option value="sans_bold">Bold</option><option value="serif">Serif</option></select></div>
-                            <div><label className="text-[9px] text-muted-foreground">Size</label>
-                              <select value={ov.fontSize} onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, fontSize: e.target.value } : o) } : x) })}
-                                className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
-                                <option value="small">Sm</option><option value="medium">Md</option><option value="large">Lg</option></select></div>
-                            <div><label className="text-[9px] text-muted-foreground">Color</label>
-                              <div className="flex items-center gap-1">
-                                <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(ov.textColor) ? ov.textColor : "#FFFFFF"}
-                                  onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, textColor: e.target.value } : o) } : x) })}
-                                  className="h-6 w-7 rounded border border-border bg-transparent shrink-0" />
-                                <input value={ov.textColor}
-                                  onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, textColor: e.target.value } : o) } : x) })}
-                                  className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[10px] text-foreground" /></div></div>
-                          </div>
-                          {(shot.textOverlays || []).length > 0 && (
-                            <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, showOverlays: false } : x) })}
-                              className="text-[10px] text-muted-foreground hover:text-foreground">↑ Hide</button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {/* Voiceover */}
-                  {shot.showVoiceover && (
-                    <div className="pl-5 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[10px] font-semibold text-secondary">🎙 Voice-over</label>
-                        <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, showVoiceover: false, voiceoverText: "" } : x) })}
-                          className="text-[10px] text-muted-foreground hover:text-destructive">✕</button>
-                      </div>
-                      <textarea rows={1} value={shot.voiceoverText || ""}
-                        onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, voiceoverText: e.target.value } : x) })}
-                        placeholder="Narration for this shot…"
-                        className="w-full rounded-lg border border-secondary/30 bg-secondary/5 p-1.5 text-[11px] text-foreground focus:border-secondary/60 focus:outline-none resize-y" />
-                    </div>
-                  )}
-                </div>
+            <div className="flex gap-1.5 mb-2">
+              {(["custom", "theme"] as const).map((m) => (
+                <button key={m} type="button" onClick={() => setState({ ...state, videoRefMode: m, selectedVideoThemeId: null })}
+                  className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${state.videoRefMode === m ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
+                  {m === "custom" ? "✏️ Custom shots" : "🎬 Video Theme"}
+                </button>
               ))}
             </div>
-            <div className="mt-1 text-[10px] text-muted-foreground">
-              Total: {videoTotalDuration}s
-              {selectedVideoModel && (videoTotalDuration < (selectedVideoModel as any).min_duration || videoTotalDuration > (selectedVideoModel as any).max_duration) && (
-                <span className="text-destructive"> — needs {(selectedVideoModel as any).min_duration}-{(selectedVideoModel as any).max_duration}s</span>
-              )}
-            </div>
-          </div>
 
-          <label className="flex items-center gap-1.5 text-[10px] text-foreground">
-            <input type="checkbox" checked={state.refineVideoPrompt} onChange={(e) => setState({ ...state, refineVideoPrompt: e.target.checked })} />
-            ✨ Refine shot wording with AI before generating
-          </label>
+            {state.videoRefMode === "theme" ? (
+              <div>
+                {state.selectedVideoThemeId ? (() => {
+                  const theme = videoThemes.find((t) => t.id === state.selectedVideoThemeId)!;
+                  return (
+                    <div className="flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 p-1.5 mb-1.5">
+                      {theme.thumbnail
+                        ? <img src={theme.thumbnail} alt={theme.label} className="h-8 w-8 rounded object-cover shrink-0" />
+                        : <div className="h-8 w-8 rounded bg-primary/10 flex items-center justify-center shrink-0 text-base">🎬</div>}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[10px] font-semibold text-foreground truncate">{theme.label}</div>
+                        <div className="text-[9px] text-muted-foreground">{theme.shots.length} shots · {theme.shots.reduce((s, x) => s + x.duration, 0)}s</div>
+                      </div>
+                      <button type="button" onClick={() => onOpenVideoTheme()}
+                        className="shrink-0 rounded-full border border-primary/50 px-2 py-0.5 text-[10px] text-primary">Change</button>
+                    </div>
+                  );
+                })() : (
+                  <button type="button" onClick={() => onOpenVideoTheme()}
+                    className="w-full mb-1.5 rounded border border-dashed border-primary/50 px-2 py-2 text-[10px] text-primary hover:bg-primary/5 flex items-center justify-center gap-1">
+                    🎬 Browse video themes
+                  </button>
+                )}
+                {state.selectedVideoThemeId && (() => {
+                  const theme = videoThemes.find((t) => t.id === state.selectedVideoThemeId)!;
+                  return (
+                    <div className="space-y-1.5">
+                      <div className="text-[10px] text-muted-foreground">Shot prompts — edit if needed:</div>
+                      {state.videoShots.map((shot, i) => {
+                        const themeShot = theme.shots[i];
+                        return (
+                          <div key={i} className="rounded border border-border/60 bg-card/40 p-1.5 space-y-1">
+                            <div className="flex items-start gap-1">
+                              <span className="w-4 shrink-0 text-[9px] text-muted-foreground mt-0.5">#{i+1}</span>
+                              <div className="flex-1">
+                                {themeShot && <div className="text-[9px] text-primary font-medium mb-0.5">{themeShot.label}</div>}
+                                <textarea rows={2} value={shot.prompt}
+                                  onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, prompt: e.target.value } : x) })}
+                                  className="w-full rounded border border-input bg-input/40 px-1.5 py-1 text-[10px] text-foreground focus:border-primary focus:outline-none" />
+                              </div>
+                              <span className="shrink-0 text-[10px] text-muted-foreground mt-1">{shot.duration}s</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            ) : (
+              <div>
+                {/* Negative prompt toggle */}
+                <div className="mb-2">
+                  {state.showVideoNegativePrompt ? (
+                    <div className="rounded border border-amber-500/30 bg-amber-500/5 p-1.5">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-semibold text-amber-400">🚫 Negative prompt</span>
+                        <button type="button" onClick={() => setState({ ...state, showVideoNegativePrompt: false, videoNegativePrompt: "" })}
+                          className="text-[10px] text-muted-foreground hover:text-destructive">✕</button>
+                      </div>
+                      <input value={state.videoNegativePrompt} onChange={(e) => setState({ ...state, videoNegativePrompt: e.target.value })}
+                        placeholder="e.g. no warped geometry, no flickering"
+                        className="w-full rounded border border-amber-500/30 bg-background/40 px-1.5 py-1 text-[10px] text-foreground focus:border-amber-500/60 focus:outline-none" />
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => setState({ ...state, showVideoNegativePrompt: true })}
+                      className="flex items-center gap-0.5 rounded-full border border-dashed border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-amber-500/50 hover:text-amber-400">
+                      <span>＋</span> Negative prompt
+                    </button>
+                  )}
+                </div>
+
+                {/* Shots */}
+                <div className="rounded-lg border border-border/60 bg-background/40 p-2">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] font-semibold text-muted-foreground">Shots</span>
+                    <div className="flex items-center gap-1.5">
+                      <button type="button" disabled={state.videoShots.length <= 1}
+                        onClick={() => setState({ ...state, videoShots: state.videoShots.slice(0, -1) })}
+                        className="grid h-5 w-5 place-items-center rounded-full border border-border text-[11px] disabled:opacity-40">−</button>
+                      <span className="w-4 text-center text-[11px] font-semibold text-foreground">{state.videoShots.length}</span>
+                      <button type="button" disabled={state.videoShots.length >= MAX_VIDEO_SHOTS}
+                        onClick={() => setState({ ...state, videoShots: [...state.videoShots, { prompt: "", duration: 6 }] })}
+                        className="grid h-5 w-5 place-items-center rounded-full border border-border text-[11px] disabled:opacity-40">＋</button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {state.videoShots.map((shot, i) => (
+                      <div key={i} className="rounded-lg border border-border/60 bg-card/40 p-2 space-y-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-4 shrink-0 text-[10px] text-muted-foreground">#{i+1}</span>
+                          <input placeholder={state.videoShots.length > 1 ? `Shot ${i+1} — angle, action` : "Describe this shot (optional)"}
+                            value={shot.prompt}
+                            onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, prompt: e.target.value } : x) })}
+                            className="w-full rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none" />
+                          <input type="number" value={shot.duration}
+                            disabled={!!(selectedVideoModel?.duration_options && state.videoShots.length === 1)}
+                            onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, duration: Number(e.target.value) || 0 } : x) })}
+                            className="w-12 shrink-0 rounded-lg border border-input bg-input/40 px-1.5 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none disabled:opacity-50" />
+                          <span className="shrink-0 text-[10px] text-muted-foreground">s</span>
+                        </div>
+                        {/* Per-shot extras */}
+                        <div className="flex flex-wrap gap-1.5 pl-5">
+                          {!shot.showOverlays ? (
+                            <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, showOverlays: true, textOverlays: x.textOverlays || [] } : x) })}
+                              className="flex items-center gap-0.5 rounded-full border border-dashed border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary/50 hover:text-primary">
+                              <span>＋</span> Text overlay</button>
+                          ) : <span className="text-[10px] font-medium text-primary">💬 Overlays</span>}
+                          {!shot.showVoiceover ? (
+                            <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, showVoiceover: true } : x) })}
+                              className="flex items-center gap-0.5 rounded-full border border-dashed border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-secondary/50 hover:text-secondary">
+                              <span>＋</span> Voice-over</button>
+                          ) : <span className="text-[10px] font-medium text-secondary">🎙 Voice-over</span>}
+                        </div>
+                        {/* Text overlays */}
+                        {shot.showOverlays && (
+                          <div className="pl-5 space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-muted-foreground">Text overlays</span>
+                              <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, idx) => idx === i ? { ...x, textOverlays: [...(x.textOverlays || []), { text: "", startTime: 0, endTime: null, position: "bottom-center", fontStyle: "sans", fontSize: "medium", textColor: "#FFFFFF", overlayStyle: "fade" }] } : x) })}
+                                className="rounded-full border border-primary/50 px-1.5 py-0.5 text-[10px] text-primary">＋ Add</button>
+                            </div>
+                            {(shot.textOverlays || []).map((ov, oi) => (
+                              <div key={oi} className="rounded-lg border border-border/60 bg-background/50 p-1.5 space-y-1.5">
+                                <div className="flex items-center gap-1.5">
+                                  <input placeholder={`"The wait is almost over."`} value={ov.text}
+                                    onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, text: e.target.value } : o) } : x) })}
+                                    className="flex-1 rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none" />
+                                  <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).filter((_, oi2) => oi2 !== oi) } : x) })}
+                                    className="shrink-0 rounded-full border border-destructive/40 px-1.5 py-0.5 text-[10px] text-destructive">✕</button>
+                                </div>
+                                <div className="grid grid-cols-4 gap-1">
+                                  <div><label className="text-[9px] text-muted-foreground">Start s</label>
+                                    <input type="number" min="0" step="0.5" value={ov.startTime}
+                                      onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, startTime: Number(e.target.value) || 0 } : o) } : x) })}
+                                      className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground" /></div>
+                                  <div><label className="text-[9px] text-muted-foreground">End s</label>
+                                    <input type="number" min="0" step="0.5" value={ov.endTime ?? ""} placeholder="end"
+                                      onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, endTime: e.target.value === "" ? null : Number(e.target.value) } : o) } : x) })}
+                                      className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground" /></div>
+                                  <div><label className="text-[9px] text-muted-foreground">Position</label>
+                                    <select value={ov.position} onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, position: e.target.value } : o) } : x) })}
+                                      className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
+                                      {POSITION_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}</select></div>
+                                  <div><label className="text-[9px] text-muted-foreground">Style</label>
+                                    <select value={ov.overlayStyle} onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, overlayStyle: e.target.value } : o) } : x) })}
+                                      className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
+                                      <option value="fade">Fade</option><option value="solid">Solid</option><option value="slide_up">Slide up</option></select></div>
+                                </div>
+                                <div className="grid grid-cols-3 gap-1">
+                                  <div><label className="text-[9px] text-muted-foreground">Font</label>
+                                    <select value={ov.fontStyle} onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, fontStyle: e.target.value } : o) } : x) })}
+                                      className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
+                                      <option value="sans">Sans</option><option value="sans_bold">Bold</option><option value="serif">Serif</option></select></div>
+                                  <div><label className="text-[9px] text-muted-foreground">Size</label>
+                                    <select value={ov.fontSize} onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, fontSize: e.target.value } : o) } : x) })}
+                                      className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[11px] text-foreground">
+                                      <option value="small">Sm</option><option value="medium">Md</option><option value="large">Lg</option></select></div>
+                                  <div><label className="text-[9px] text-muted-foreground">Color</label>
+                                    <div className="flex items-center gap-1">
+                                      <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(ov.textColor) ? ov.textColor : "#FFFFFF"}
+                                        onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, textColor: e.target.value } : o) } : x) })}
+                                        className="h-6 w-7 rounded border border-border bg-transparent shrink-0" />
+                                      <input value={ov.textColor}
+                                        onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, textOverlays: (x.textOverlays || []).map((o, oi2) => oi2 === oi ? { ...o, textColor: e.target.value } : o) } : x) })}
+                                        className="w-full rounded border border-input bg-input/40 px-1 py-0.5 text-[10px] text-foreground" /></div></div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {/* Voiceover */}
+                        {shot.showVoiceover && (
+                          <div className="pl-5 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[10px] font-semibold text-secondary">🎙 Voice-over</label>
+                              <button type="button" onClick={() => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, showVoiceover: false, voiceoverText: "" } : x) })}
+                                className="text-[10px] text-muted-foreground hover:text-destructive">✕</button>
+                            </div>
+                            <textarea rows={1} value={shot.voiceoverText || ""}
+                              onChange={(e) => setState({ ...state, videoShots: state.videoShots.map((x, xi) => xi === i ? { ...x, voiceoverText: e.target.value } : x) })}
+                              placeholder="Narration for this shot…"
+                              className="w-full rounded-lg border border-secondary/30 bg-secondary/5 p-1.5 text-[11px] text-foreground focus:border-secondary/60 focus:outline-none resize-y" />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-1 text-[10px] text-muted-foreground">
+                    Total: {videoTotalDuration}s
+                    {selectedVideoModel && (videoTotalDuration < (selectedVideoModel as any).min_duration || videoTotalDuration > (selectedVideoModel as any).max_duration) && (
+                      <span className="text-destructive"> — needs {(selectedVideoModel as any).min_duration}-{(selectedVideoModel as any).max_duration}s</span>
+                    )}
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-1.5 text-[10px] text-foreground">
+                  <input type="checkbox" checked={state.refineVideoPrompt} onChange={(e) => setState({ ...state, refineVideoPrompt: e.target.checked })} />
+                  ✨ Refine shot wording with AI before generating
+                </label>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -739,14 +805,16 @@ function newPhaseState(days: number): PhaseFormState {
     wantImage: false, productImage: null, sceneText: "", useBrandKit: false, imageModelId: null, imagePromptOverride: "",
     imageAspectRatio: null, refMode: "text" as const, selectedImageTheme: null,
     themeFieldValues: {}, themePositions: {}, selectedTextStyle: null, selectedTextCategory: null,
-    imageTextOverlay: null, showThemeModal: false,
+    imageTextOverlay: null,
     wantVideo: false, videoModelId: null, videoResolution: null, videoAspectRatio: null,
     videoFrameImage: null, videoEndFrameImage: null,
     videoShots: [{ prompt: "", duration: 6 }],
     videoMode: "single_reference" as const,
-    videoAudio: false, videoCameraStyleIds: [], videoNegativePrompt: "", videoBackgroundMusicId: "none",
+    videoAudio: false, videoCameraStyleIds: [], videoNegativePrompt: "", showVideoNegativePrompt: false,
+    videoBackgroundMusicId: "none",
     videoReferencePrompt: "", showVideoReferencePrompt: false, videoStartShotId: null, videoEndShotId: null,
     refineVideoPrompt: false, refineVideoFrame: false,
+    videoRefMode: "custom" as const, selectedVideoThemeId: null,
   };
 }
 
@@ -794,6 +862,12 @@ function Campaigns() {
   const [brandVideoShots, setBrandVideoShots] = useState<{ id: string; kind: string; status: string; label: string; prompt: string; duration: number }[]>([]);
   const [imageThemes, setImageThemes] = useState<ImageTheme[]>([]);
   const [textTheme, setTextTheme] = useState<{ styleTags: string[]; categoryTags: string[]; stylePrompts: Record<string, string>; categoryPrompts: Record<string, string> }>({ styleTags: [], categoryTags: [], stylePrompts: {}, categoryPrompts: {} });
+  const [videoThemes, setVideoThemes] = useState<VideoTheme[]>([]);
+  const [videoReferencePromptDefault, setVideoReferencePromptDefault] = useState("");
+  // Theme modals — same pattern as Create Ad: flat booleans, no callbacks
+  const [showImageThemeModal, setShowImageThemeModal] = useState(false);
+  const [showVideoThemeModal, setShowVideoThemeModal] = useState(false);
+  const [activeThemePhase, setActiveThemePhase] = useState<"teaser"|"launch"|"followup">("teaser");
 
   useEffect(() => {
     api("/ads/camera-style-presets").then((r: any[]) => setCameraStylePresets(r)).catch(() => {});
@@ -806,6 +880,8 @@ function Campaigns() {
     api("/ads/text-theme").then((r) => {
       setTextTheme({ styleTags: r.style_tags || [], categoryTags: r.category_tags || [], stylePrompts: r.style_prompts || {}, categoryPrompts: r.category_prompts || {} });
     }).catch(() => {});
+    api("/ads/video-themes").then((themes: VideoTheme[]) => setVideoThemes(themes)).catch(() => {});
+    api("/ads/video-reference-prompt-default").then((r: { prompt: string }) => setVideoReferencePromptDefault(r.prompt)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -930,9 +1006,9 @@ function Campaigns() {
 
 
         <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <PhaseScheduleInput label="Teaser" state={teaser} setState={setTeaser} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} imageThemes={imageThemes} textTheme={textTheme} />
-          <PhaseScheduleInput label="Launch" state={launch} setState={setLaunch} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} imageThemes={imageThemes} textTheme={textTheme} />
-          <PhaseScheduleInput label="Follow-up" state={followup} setState={setFollowup} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} imageThemes={imageThemes} textTheme={textTheme} />
+          <PhaseScheduleInput label="Teaser" state={teaser} setState={setTeaser} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} imageThemes={imageThemes} textTheme={textTheme} videoThemes={videoThemes} videoReferencePromptDefault={videoReferencePromptDefault} onOpenImageTheme={() => { setActiveThemePhase("teaser"); setShowImageThemeModal(true); }} onOpenVideoTheme={() => { setActiveThemePhase("teaser"); setShowVideoThemeModal(true); }} />
+          <PhaseScheduleInput label="Launch" state={launch} setState={setLaunch} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} imageThemes={imageThemes} textTheme={textTheme} videoThemes={videoThemes} videoReferencePromptDefault={videoReferencePromptDefault} onOpenImageTheme={() => { setActiveThemePhase("launch"); setShowImageThemeModal(true); }} onOpenVideoTheme={() => { setActiveThemePhase("launch"); setShowVideoThemeModal(true); }} />
+          <PhaseScheduleInput label="Follow-up" state={followup} setState={setFollowup} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} imageThemes={imageThemes} textTheme={textTheme} videoThemes={videoThemes} videoReferencePromptDefault={videoReferencePromptDefault} onOpenImageTheme={() => { setActiveThemePhase("followup"); setShowImageThemeModal(true); }} onOpenVideoTheme={() => { setActiveThemePhase("followup"); setShowVideoThemeModal(true); }} />
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">💡 Each phase's image is independent — e.g. skip the image for the Teaser, add your own photo for the Launch.</p>
 
@@ -1048,6 +1124,49 @@ function Campaigns() {
           onClose={() => setPreviewAd(null)}
           onUpdated={() => { load(); openPreview(previewAd.id); }}
         />
+      )}
+      {showImageThemeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowImageThemeModal(false)}>
+          <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-2xl border border-border bg-background p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-sm font-semibold text-foreground">Choose an image theme</div>
+              <button type="button" onClick={() => setShowImageThemeModal(false)} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+            </div>
+            <ImageThemeGrid
+              themes={imageThemes}
+              selectedId={activeThemePhase === "teaser" ? teaser.selectedImageTheme : activeThemePhase === "launch" ? launch.selectedImageTheme : followup.selectedImageTheme}
+              onSelect={(t) => {
+                const updates = { selectedImageTheme: t.id, themeFieldValues: {} as Record<string,string>, themePositions: {} as Record<string,string>, imageTextOverlay: null as null, sceneText: t.basePrompt };
+                if (activeThemePhase === "teaser") setTeaser((s) => ({ ...s, ...updates }));
+                else if (activeThemePhase === "launch") setLaunch((s) => ({ ...s, ...updates }));
+                else setFollowup((s) => ({ ...s, ...updates }));
+                setShowImageThemeModal(false);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {showVideoThemeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowVideoThemeModal(false)}>
+          <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-2xl border border-border bg-background p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-sm font-semibold text-foreground">Choose a video theme</div>
+              <button type="button" onClick={() => setShowVideoThemeModal(false)} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+            </div>
+            <VideoThemeGrid
+              themes={videoThemes}
+              selectedId={activeThemePhase === "teaser" ? teaser.selectedVideoThemeId : activeThemePhase === "launch" ? launch.selectedVideoThemeId : followup.selectedVideoThemeId}
+              onSelect={(t) => {
+                const shots = t.shots.map((sh) => ({ prompt: sh.prompt_template, duration: sh.duration }));
+                if (activeThemePhase === "teaser") setTeaser((s) => ({ ...s, selectedVideoThemeId: t.id, videoShots: shots }));
+                else if (activeThemePhase === "launch") setLaunch((s) => ({ ...s, selectedVideoThemeId: t.id, videoShots: shots }));
+                else setFollowup((s) => ({ ...s, selectedVideoThemeId: t.id, videoShots: shots }));
+                setShowVideoThemeModal(false);
+              }}
+            />
+          </div>
+        </div>
       )}
     </AppShell>
   );
