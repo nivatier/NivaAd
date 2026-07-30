@@ -1521,30 +1521,122 @@ def generate_quick_start_recommendations(self, job_id: str):
         return "done"
 
 
-def _create_agent_ad_sync(db, company_id, product_name: str, description: str, platforms: list[str], agent_source: str, agent_event_id=None, product_id=None) -> "Ad":
-    """Builds and generates one ad directly from the Celery/sync world —
-    used for BOTH recurring-event ads (no HTTP request in progress to
-    hang this off) and can be reused wherever agent-triggered generation
-    needs to happen outside a request. Deliberately simple compared to
-    the full Create Ad flow: text + image only, platform's default
-    models, no theme reference, no carousel, no video — Agent Niva's
-    job is fast, reasonable ads from minimal input, not the full
-    creative toolkit. Runs generate_ad's logic inline (direct call, not
-    a separate enqueued task) since this already runs inside a worker."""
+def _create_agent_ad_sync(db, company_id, product_name: str, description: str, platforms: list[str], agent_source: str, agent_event_id=None, product_id=None, event: "AgentEvent | None" = None) -> "Ad":
+    """Builds and generates one ad directly from the Celery/sync world.
+
+    When called for a recurring event (agent_source == "event"), switches
+    to a branded GREETING prompt path instead of a product-ad path:
+      - Image: thematic scene built around the occasion + brand colours,
+               with clean space for the logo (no AI-rendered text).
+               If a reference_image_url is set on the event it is passed
+               as image_reference_image_url so the existing reference-
+               image pipeline uses it as a visual anchor.
+      - Text:  a warm/professional/fun/luxury occasion greeting on behalf
+               of the company — no sales pitch, signs off with the
+               company name.
+      - Logo:  always composited via the existing composite_logo pipeline
+               (brand_logo_url + brand_logo_placement + brand_logo_opacity
+               from BrandKit). No logo → image still generates, just
+               without the overlay.
+    """
     text_model, image_model = _resolve_default_text_and_image_models(db)
     cost = (text_model.get("credits") or 0) + (image_model.get("credits") or 0)
 
     product = db.get(Product, product_id) if product_id else None
-    ad = Ad(
-        company_id=company_id, created_by=None, product_id=product_id,
-        brief={
-            "product_name": product_name, "description": description,
-            "audience": "", "offer": "", "goal": "Drive sales", "tone": "Professional",
-            "env": None, "image_scene": description, "product_image_url": product.image_url if product else None,
+
+    # ── Brand kit — always read; used for greeting and regular ads ────
+    brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == company_id))
+    brand_logo_url       = brand_kit.logo_url       if brand_kit else None
+    brand_logo_placement = brand_kit.logo_placement  if brand_kit else "bottom-right"
+    brand_logo_opacity   = float(brand_kit.logo_opacity) if brand_kit and brand_kit.logo_opacity is not None else 1.0
+    primary_color        = brand_kit.primary_color  if brand_kit else "#7c3aed"
+    tagline              = brand_kit.tagline        if brand_kit else ""
+    company_name         = product_name  # product_name is passed as ev.name for events, but we want the company name for greetings
+
+    if agent_source == "event" and event is not None:
+        # ── Greeting / occasion post ───────────────────────────────────
+        wish_tone    = event.wish_tone    or "warm"
+        visual_style = event.visual_style or "festive"
+        event_name   = event.name
+
+        TONE_COPY = {
+            "warm":         "warm, genuine, and heartfelt",
+            "professional": "professional, sincere, and polished",
+            "fun":          "fun, upbeat, and playful",
+            "luxury":       "sophisticated, elegant, and exclusive",
+        }
+        STYLE_IMAGE = {
+            "festive":  "warm golden bokeh, festive decorations, soft glowing lights, rich seasonal colours",
+            "minimal":  "clean white or neutral background, simple elegant composition, plenty of negative space",
+            "bold":     "vibrant high-contrast colours, dynamic graphic shapes, energetic composition",
+            "elegant":  "soft muted palette, graceful flowing shapes, refined luxurious atmosphere",
+        }
+
+        tone_desc  = TONE_COPY.get(wish_tone, TONE_COPY["warm"])
+        style_desc = STYLE_IMAGE.get(visual_style, STYLE_IMAGE["festive"])
+
+        # Fetch the company name from the company table for the greeting sign-off
+        from app.models import Company
+        company_row = db.get(Company, company_id)
+        company_name = company_row.name if company_row else event_name
+
+        image_scene = (
+            f"{visual_style.capitalize()} {event_name} greeting scene. "
+            f"{style_desc}. "
+            f"Colour palette anchored to {primary_color}. "
+            f"Prominent clean area for company logo placement. "
+            f"Absolutely NO text, words, or letters rendered anywhere in the image. "
+            f"High quality, photorealistic, social media ready."
+        )
+
+        text_prompt_override = (
+            f"You are a brand communications writer. Write a {tone_desc} {event_name} greeting post "
+            f"on behalf of {company_name}. "
+            f"2-3 sentences max. Genuine and human — no sales pitch, no promotions, no product mentions. "
+            + (f'Weave in the tagline naturally if it fits: "{tagline}". ' if tagline else "")
+            + (f"Additional context from the company: {event.guidance}. " if event.guidance else "")
+            + f"Sign off warmly with the company name ({company_name}). "
+            f"Write one version per platform listed, adapted to each platform's style. "
+            f"Respond ONLY with raw JSON, no markdown fences: {_shape(platforms or ['default'])}"
+        )
+
+        # Reference image — from event upload or linked product
+        ref_image_url = event.reference_image_url or (product.image_url if product else None)
+
+        brief = {
+            "product_name": event_name,
+            "description": f"{event_name} occasion greeting",
+            "audience": "everyone", "offer": "", "goal": "Brand awareness",
+            "tone": wish_tone.capitalize(),
+            "env": None, "image_scene": image_scene,
+            "image_reference_image_url": ref_image_url,
+            "text_prompt_override": text_prompt_override,
+            "brand_logo_url": brand_logo_url,
+            "brand_logo_placement": brand_logo_placement,
+            "brand_logo_opacity": brand_logo_opacity,
+            "tagline": tagline,
             "text_model": text_model["model"], "text_model_credits": text_model.get("credits"),
             "image_model": image_model["model"], "image_model_credits": image_model.get("credits"),
-        },
-        platforms=platforms, outputs={"text": True, "image": True, "video": False, "format": "single", "variations": 1},
+        }
+    else:
+        # ── Regular agent ad (Quick Start, recommendations, etc.) ─────
+        brief = {
+            "product_name": product_name, "description": description,
+            "audience": "", "offer": "", "goal": "Drive sales", "tone": "Professional",
+            "env": None, "image_scene": description,
+            "product_image_url": product.image_url if product else None,
+            "brand_logo_url": brand_logo_url,
+            "brand_logo_placement": brand_logo_placement,
+            "brand_logo_opacity": brand_logo_opacity,
+            "text_model": text_model["model"], "text_model_credits": text_model.get("credits"),
+            "image_model": image_model["model"], "image_model_credits": image_model.get("credits"),
+        }
+
+    ad = Ad(
+        company_id=company_id, created_by=None, product_id=product_id,
+        brief=brief,
+        platforms=platforms,
+        outputs={"text": True, "image": True, "video": False, "format": "single", "variations": 1},
         status="generating", agent_source=agent_source, agent_event_id=agent_event_id,
     )
     db.add(ad)
@@ -1555,7 +1647,7 @@ def _create_agent_ad_sync(db, company_id, product_name: str, description: str, p
     db.add(CreditLedger(company_id=company_id, delta=-cost, reason="generation", ref_id=str(ad.id)))
     db.commit()
 
-    generate_ad(str(job.id))  # direct call, not .delay() — already running inside a worker process
+    generate_ad(str(job.id))  # direct call, not .delay() — already inside a worker
     return ad
 
 
@@ -1654,7 +1746,10 @@ def check_agent_events(self):
                     logger.warning("[agent-events] event=%s Trigger 2: no draft found, skipping", ev.id)
                     continue
 
-                scheduled_at = datetime.combine(event_date, datetime.min.time().replace(hour=10))
+                scheduled_at = datetime.combine(event_date, datetime.min.time().replace(
+                    hour=ev.post_hour if ev.post_hour is not None else 10,
+                    minute=ev.post_minute if ev.post_minute is not None else 0,
+                ))
 
                 if mode == "draft_only":
                     db.add(Notification(
@@ -1719,9 +1814,10 @@ def check_agent_events(self):
                     ad = _create_agent_ad_sync(
                         db, ev.company_id,
                         product_name=ev.name,
-                        description=ev.guidance or f"An ad for {ev.name}",
+                        description=ev.guidance or f"A {ev.name} greeting post",
                         platforms=ev.platforms or ["facebook", "instagram"],
                         agent_source="event", agent_event_id=ev.id, product_id=ev.product_id,
+                        event=ev,
                     )
                     ad.status = "draft"
                     ev.draft_run_year = year

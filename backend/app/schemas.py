@@ -1328,6 +1328,12 @@ class AgentEventIn(BaseModel):
     product_id: uuid.UUID | None = None
     enabled: bool = True
     approval_mode: str | None = Field(default=None, pattern="^(draft_only|schedule_review|auto_post)$")
+    post_hour: int = Field(default=10, ge=0, le=23)
+    post_minute: int = Field(default=0, ge=0, le=59)
+    wish_tone: str = Field(default="warm", pattern="^(warm|professional|fun|luxury)$")
+    visual_style: str = Field(default="festive", pattern="^(festive|minimal|bold|elegant)$")
+    reference_image_url: str | None = None   # already-stored R2 URL (from product auto-pick or prior upload)
+    reference_image: str | None = None       # base64 data URL for a fresh upload — router uploads to R2 then stores the URL
 
 
 class AgentEventOut(BaseModel):
@@ -1341,6 +1347,11 @@ class AgentEventOut(BaseModel):
     product_id: str | None = None
     enabled: bool
     approval_mode: str
+    post_hour: int
+    post_minute: int
+    wish_tone: str
+    visual_style: str
+    reference_image_url: str | None = None
     skipped_years: list[int]
     last_run_year: int | None = None
     next_run_date: str | None = None  # computed

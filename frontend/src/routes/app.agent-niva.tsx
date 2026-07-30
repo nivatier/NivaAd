@@ -16,7 +16,10 @@ type ScrapeJob = { id: string; url: string; count: number; status: string; error
 type Recommendation = { id: string; source_url: string; status: string; title: string; description: string; audience: string; platforms: string[]; created_ad_id: string | null; created_at: string };
 type AgentEvent = {
   id: string; name: string; month: number; day: number; lead_days: number; guidance: string; platforms: string[];
-  product_id: string | null; enabled: boolean; approval_mode: string; skipped_years: number[]; last_run_year: number | null; next_run_date: string | null;
+  product_id: string | null; enabled: boolean; approval_mode: string;
+  post_hour: number; post_minute: number;
+  wish_tone: string; visual_style: string; reference_image_url: string | null;
+  skipped_years: number[]; last_run_year: number | null; next_run_date: string | null;
 };
 
 const MONTHS_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -77,12 +80,103 @@ function PlatformChips({ selected, onToggle, platforms = PLATFORMS, connectedPla
   );
 }
 
+// ── Time zone helpers ──────────────────────────────────────────────────
+function utcToLocal(utcHour: number, utcMinute: number) {
+  const d = new Date(); d.setUTCHours(utcHour, utcMinute, 0, 0);
+  return { hour: d.getHours(), minute: d.getMinutes() };
+}
+function localToUtc(localHour: number, localMinute: number) {
+  const d = new Date(); d.setHours(localHour, localMinute, 0, 0);
+  return { hour: d.getUTCHours(), minute: d.getUTCMinutes() };
+}
+function fmtLocalTime(utcHour: number, utcMinute: number) {
+  const d = new Date(); d.setUTCHours(utcHour, utcMinute, 0, 0);
+  const t = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone.split("/").pop()?.replace(/_/g, " ") ?? "";
+  return tz ? `${t} (${tz})` : t;
+}
+
+// ── Event Templates ────────────────────────────────────────────────────
+type EventTemplate = {
+  name: string; month: number; day: number; wish_tone: string; visual_style: string;
+  variable_date?: boolean; category: string; emoji: string;
+};
+
+const EVENT_TEMPLATES: EventTemplate[] = [
+  // Seasonal & Holidays
+  { name: "Christmas",        month: 12, day: 25, wish_tone: "warm",         visual_style: "festive",  category: "Seasonal & Holidays", emoji: "🎄" },
+  { name: "New Year",         month: 1,  day: 1,  wish_tone: "fun",          visual_style: "bold",     category: "Seasonal & Holidays", emoji: "🎆" },
+  { name: "Halloween",        month: 10, day: 31, wish_tone: "fun",          visual_style: "bold",     category: "Seasonal & Holidays", emoji: "🎃" },
+  { name: "Thanksgiving",     month: 11, day: 28, wish_tone: "warm",         visual_style: "festive",  category: "Seasonal & Holidays", emoji: "🦃" },
+  { name: "Valentine's Day",  month: 2,  day: 14, wish_tone: "warm",         visual_style: "elegant",  category: "Seasonal & Holidays", emoji: "💝" },
+  { name: "Easter",           month: 4,  day: 20, wish_tone: "warm",         visual_style: "minimal",  category: "Seasonal & Holidays", emoji: "🐣", variable_date: true },
+  { name: "Mother's Day",     month: 5,  day: 11, wish_tone: "warm",         visual_style: "elegant",  category: "Seasonal & Holidays", emoji: "💐", variable_date: true },
+  // Islamic Occasions
+  { name: "Eid al-Fitr",      month: 3,  day: 30, wish_tone: "warm",         visual_style: "elegant",  category: "Islamic Occasions",   emoji: "🌙", variable_date: true },
+  { name: "Eid al-Adha",      month: 6,  day: 7,  wish_tone: "warm",         visual_style: "festive",  category: "Islamic Occasions",   emoji: "🕌", variable_date: true },
+  { name: "Ramadan",          month: 3,  day: 1,  wish_tone: "professional", visual_style: "elegant",  category: "Islamic Occasions",   emoji: "☪️", variable_date: true },
+  // Regional
+  { name: "UAE National Day", month: 12, day: 2,  wish_tone: "professional", visual_style: "bold",     category: "Regional",            emoji: "🇦🇪" },
+  { name: "Diwali",           month: 10, day: 20, wish_tone: "warm",         visual_style: "festive",  category: "Regional",            emoji: "🪔", variable_date: true },
+  { name: "Chinese New Year", month: 1,  day: 29, wish_tone: "warm",         visual_style: "bold",     category: "Regional",            emoji: "🧧", variable_date: true },
+  { name: "Holi",             month: 3,  day: 14, wish_tone: "fun",          visual_style: "bold",     category: "Regional",            emoji: "🎨", variable_date: true },
+  // Business
+  { name: "End of Year",      month: 12, day: 31, wish_tone: "professional", visual_style: "minimal",  category: "Business",            emoji: "📅" },
+  { name: "Back to Season",   month: 9,  day: 1,  wish_tone: "professional", visual_style: "bold",     category: "Business",            emoji: "🚀" },
+];
+
+const TEMPLATE_CATEGORIES = [...new Set(EVENT_TEMPLATES.map(t => t.category))];
+
+function EventTemplatesPanel({ onPick }: { onPick: (t: EventTemplate) => void }) {
+  return (
+    <div className="flex flex-col h-full">
+      <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-widest mb-3 px-1">Event templates</div>
+      <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+        {TEMPLATE_CATEGORIES.map(cat => (
+          <div key={cat}>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1.5 px-1">{cat}</div>
+            <div className="space-y-1">
+              {EVENT_TEMPLATES.filter(t => t.category === cat).map(t => (
+                <button key={t.name} type="button" onClick={() => onPick(t)}
+                  className="w-full text-left rounded-xl border border-white/8 bg-white/3 px-3 py-2 hover:border-primary/40 hover:bg-primary/8 transition-all group">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base leading-none">{t.emoji}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors truncate">{t.name}</div>
+                      <div className="text-[10px] text-muted-foreground">{MONTHS[t.month - 1]} {t.day}{t.variable_date ? " ·" : ""}{t.variable_date ? " ⚠ date varies" : ""}</div>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Event Modal ────────────────────────────────────────────────────────
 
-function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
+const WISH_TONES = [
+  { value: "warm",         label: "Warm & Friendly",   desc: "Genuine, heartfelt, human" },
+  { value: "professional", label: "Professional",       desc: "Polished, sincere, brand-forward" },
+  { value: "fun",          label: "Fun & Playful",      desc: "Upbeat, light, energetic" },
+  { value: "luxury",       label: "Luxurious",          desc: "Sophisticated, elegant, exclusive" },
+];
+
+const VISUAL_STYLES = [
+  { value: "festive",  label: "Festive",        desc: "Warm glow, bokeh, seasonal colours" },
+  { value: "minimal",  label: "Minimal & Clean", desc: "Neutral palette, lots of negative space" },
+  { value: "bold",     label: "Bold & Vibrant",  desc: "High contrast, dynamic, energetic" },
+  { value: "elegant",  label: "Elegant",         desc: "Muted tones, graceful, refined" },
+];
+
+function EventModal({ editing, products, defaultApproval, brandLogoUrl, onSave, onClose }: {
   editing: AgentEvent | null;
   products: ProductOut[];
   defaultApproval: string;
+  brandLogoUrl: string | null;
   onSave: (ev: AgentEvent) => void;
   onClose: () => void;
 }) {
@@ -91,23 +185,86 @@ function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
   const [month, setMonth] = useState(editing?.month ?? (TODAY.getMonth() + 1));
   const [day, setDay] = useState(editing?.day ?? 1);
   const [leadDays, setLeadDays] = useState(editing?.lead_days ?? 7);
+  const initLocal = editing ? utcToLocal(editing.post_hour, editing.post_minute) : utcToLocal(10, 0);
+  const [postHour, setPostHour] = useState(initLocal.hour);
+  const [postMinute, setPostMinute] = useState(initLocal.minute);
+  const [wishTone, setWishTone] = useState(editing?.wish_tone ?? "warm");
+  const [visualStyle, setVisualStyle] = useState(editing?.visual_style ?? "festive");
   const [guidance, setGuidance] = useState(editing?.guidance ?? "");
   const [platforms, setPlatforms] = useState<string[]>(editing?.platforms ?? ["facebook", "instagram"]);
   const [productId, setProductId] = useState(editing?.product_id ?? "");
   const [approvalMode, setApprovalMode] = useState(editing?.approval_mode ?? defaultApproval);
+  // Reference image — either from product auto-pick, existing stored URL, or fresh upload
+  const [refImageUrl, setRefImageUrl] = useState<string | null>(editing?.reference_image_url ?? null);
+  const [refImagePreview, setRefImagePreview] = useState<string | null>(editing?.reference_image_url ?? null);
+  const [refImageBase64, setRefImageBase64] = useState<string | null>(null); // fresh upload, sent as base64
+  const refInputRef = useRef<HTMLInputElement>(null);
+
   const { platforms: availablePlatforms, connected: connectedPlatformIds, testMode } = useConnectedPlatforms();
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
+  // When product changes, auto-pick its image as reference if no custom upload
+  const linkedProduct = products.find(p => p.id === productId);
+  useEffect(() => {
+    if (!refImageBase64 && linkedProduct?.image_url) {
+      setRefImageUrl(linkedProduct.image_url);
+      setRefImagePreview(linkedProduct.image_url);
+    } else if (!refImageBase64 && !linkedProduct) {
+      // Only clear if it was auto-set (not a custom upload)
+      if (refImageUrl === editing?.reference_image_url || refImageUrl === linkedProduct?.image_url) {
+        setRefImageUrl(null);
+        setRefImagePreview(null);
+      }
+    }
+  }, [productId]);
+
+  async function handleRefImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setRefImageBase64(dataUrl);
+      setRefImagePreview(dataUrl);
+      setRefImageUrl(null); // will be uploaded on save
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function clearRefImage() {
+    setRefImageBase64(null);
+    setRefImagePreview(null);
+    setRefImageUrl(null);
+    if (refInputRef.current) refInputRef.current.value = "";
+  }
+
+  function applyTemplate(t: EventTemplate) {
+    setName(t.name);
+    setMonth(t.month);
+    setDay(t.day);
+    setWishTone(t.wish_tone);
+    setVisualStyle(t.visual_style);
+  }
+
   function togglePlatform(id: string) {
-    setPlatforms((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
+    setPlatforms(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
   }
 
   async function save() {
     if (!name.trim() || platforms.length === 0) return;
     setSaving(true); setErr("");
     try {
-      const body = { name: name.trim(), month, day, lead_days: leadDays, guidance, platforms, product_id: productId || null, enabled: editing?.enabled ?? true, approval_mode: approvalMode };
+      const utc = localToUtc(postHour, postMinute);
+      const body: Record<string, any> = {
+        name: name.trim(), month, day, lead_days: leadDays, guidance,
+        platforms, product_id: productId || null,
+        enabled: editing?.enabled ?? true, approval_mode: approvalMode,
+        post_hour: utc.hour, post_minute: utc.minute,
+        wish_tone: wishTone, visual_style: visualStyle,
+        reference_image_url: refImageBase64 ? null : refImageUrl,
+        reference_image: refImageBase64 ?? undefined,
+      };
       const result = editing
         ? await api(`/agent/events/${editing.id}`, { method: "PUT", body })
         : await api("/agent/events", { method: "POST", body });
@@ -119,20 +276,23 @@ function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
   function generateNow() {
     const eventDate = new Date(THIS_YEAR, month - 1, day);
     sessionStorage.setItem("nivaad_prefill_product", JSON.stringify({
-      name, description: guidance || `${name} ad`,
-      scheduled_date: eventDate.toISOString().split("T")[0],
-      platforms,
+      name, description: guidance || `${name} greeting`,
+      scheduled_date: eventDate.toISOString().split("T")[0], platforms,
     }));
     onClose();
     navigate({ to: "/app" });
   }
 
+  const utcForDisplay = localToUtc(postHour, postMinute);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="absolute inset-0 bg-background/60 backdrop-blur-md" />
-      <div className="relative w-full max-w-lg rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.08] to-white/[0.03] shadow-[0_0_0_1px_rgba(255,255,255,0.06),0_32px_64px_-16px_rgba(0,0,0,0.6)] backdrop-blur-xl overflow-hidden">
-        {/* glass header */}
-        <div className="border-b border-white/[0.07] px-6 py-4 flex items-center justify-between">
+      {/* Wide modal: form left + templates right */}
+      <div className="relative w-full max-w-4xl rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.08] to-white/[0.03] shadow-[0_0_0_1px_rgba(255,255,255,0.06),0_32px_64px_-16px_rgba(0,0,0,0.6)] backdrop-blur-xl overflow-hidden flex flex-col max-h-[90vh]">
+
+        {/* Header */}
+        <div className="border-b border-white/[0.07] px-6 py-4 flex items-center justify-between shrink-0">
           <div>
             <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-primary/70">Recurring Event</div>
             <div className="mt-0.5 text-base font-bold text-foreground">{editing ? "Edit event" : "New recurring event"}</div>
@@ -140,80 +300,179 @@ function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
           <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-full border border-white/10 text-muted-foreground hover:text-foreground transition">✕</button>
         </div>
 
-        <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
-          {/* Name */}
-          <div>
-            <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Event name</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Christmas, Black Friday, Summer Sale"
-              className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition" />
-          </div>
+        {/* Body — two columns */}
+        <div className="flex flex-1 min-h-0">
 
-          {/* Date + Lead Days */}
-          <div className="grid grid-cols-3 gap-3">
+          {/* ── Left: form ── */}
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4 border-r border-white/[0.07]">
+
+            {/* No-logo warning */}
+            {!brandLogoUrl && (
+              <div className="rounded-xl border border-amber-400/30 bg-amber-400/8 px-4 py-3 flex items-start gap-2.5">
+                <span className="text-amber-400 text-base leading-none mt-0.5 shrink-0">⚠</span>
+                <div>
+                  <div className="text-xs font-semibold text-amber-300">No logo set</div>
+                  <div className="text-[11px] text-muted-foreground mt-0.5">Add your logo in <button onClick={() => { onClose(); navigate({ to: "/app/brand-kit" }); }} className="text-primary underline-offset-2 hover:underline">Brand Kit</button> — it will be composited onto your greeting image automatically.</div>
+                </div>
+              </div>
+            )}
+
+            {/* Event name */}
             <div>
-              <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Month</label>
-              <select value={month} onChange={(e) => setMonth(Number(e.target.value))}
+              <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Event name</label>
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Christmas, Eid al-Fitr, UAE National Day"
+                className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition" />
+            </div>
+
+            {/* Date + Lead days */}
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Month</label>
+                <select value={month} onChange={e => setMonth(Number(e.target.value))}
+                  className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
+                  {MONTHS_FULL.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Day</label>
+                <input type="number" min={1} max={31} value={day} onChange={e => setDay(Number(e.target.value))}
+                  className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition" />
+              </div>
+              <div>
+                <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Lead days</label>
+                <input type="number" min={0} max={60} value={leadDays} onChange={e => setLeadDays(Number(e.target.value))}
+                  className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition" />
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground -mt-2">Ad generates {leadDays} day{leadDays !== 1 ? "s" : ""} before {MONTHS[month - 1]} {day}.</p>
+
+            {/* Posting time */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Posting hour (local)</label>
+                <select value={postHour} onChange={e => setPostHour(Number(e.target.value))}
+                  className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
+                  {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Posting minute</label>
+                <select value={postMinute} onChange={e => setPostMinute(Number(e.target.value))}
+                  className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
+                  {[0, 15, 30, 45].map(m => <option key={m} value={m}>{String(m).padStart(2, "0")}</option>)}
+                </select>
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground -mt-2">
+              Posts at {fmtLocalTime(utcForDisplay.hour, utcForDisplay.minute)} · {String(utcForDisplay.hour).padStart(2,"0")}:{String(utcForDisplay.minute).padStart(2,"0")} UTC
+            </p>
+
+            {/* Wish tone */}
+            <div>
+              <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Greeting tone</label>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {WISH_TONES.map(t => (
+                  <button key={t.value} type="button" onClick={() => setWishTone(t.value)}
+                    className={`rounded-xl border px-3 py-2.5 text-left transition-all ${wishTone === t.value ? "border-primary/50 bg-primary/10" : "border-white/8 bg-white/3 hover:border-white/15"}`}>
+                    <div className={`text-xs font-semibold ${wishTone === t.value ? "text-primary" : "text-foreground"}`}>{t.label}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">{t.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Visual style */}
+            <div>
+              <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Image style</label>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {VISUAL_STYLES.map(s => (
+                  <button key={s.value} type="button" onClick={() => setVisualStyle(s.value)}
+                    className={`rounded-xl border px-3 py-2.5 text-left transition-all ${visualStyle === s.value ? "border-primary/50 bg-primary/10" : "border-white/8 bg-white/3 hover:border-white/15"}`}>
+                    <div className={`text-xs font-semibold ${visualStyle === s.value ? "text-primary" : "text-foreground"}`}>{s.label}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">{s.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Reference image */}
+            <div>
+              <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Reference image <span className="normal-case font-normal">(optional)</span></label>
+              <p className="text-[10px] text-muted-foreground mt-0.5 mb-2">Your product or scene shown alongside the logo. Auto-set from linked product, or upload your own.</p>
+              {refImagePreview ? (
+                <div className="flex items-center gap-3">
+                  <img src={refImagePreview} alt="Reference" className="h-16 w-16 rounded-xl object-cover border border-border shrink-0" />
+                  <div className="flex flex-col gap-1.5">
+                    <button type="button" onClick={() => refInputRef.current?.click()}
+                      className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] text-muted-foreground hover:text-foreground transition">
+                      Replace image
+                    </button>
+                    <button type="button" onClick={clearRefImage}
+                      className="rounded-full border border-destructive/30 px-3 py-1.5 text-[11px] text-destructive hover:bg-destructive/10 transition">
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" onClick={() => refInputRef.current?.click()}
+                  className="w-full rounded-xl border border-dashed border-border bg-input/40 py-4 text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground transition">
+                  📷 Click to upload a photo
+                </button>
+              )}
+              <input ref={refInputRef} type="file" accept="image/*" className="hidden" onChange={handleRefImageUpload} />
+            </div>
+
+            {/* Additional context */}
+            <div>
+              <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Additional context <span className="normal-case font-normal">(optional)</span></label>
+              <textarea value={guidance} onChange={e => setGuidance(e.target.value)} rows={2}
+                placeholder="e.g. Mention our charity drive, include discount code XMAS20, reference our 10th anniversary…"
+                className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none transition resize-none" />
+            </div>
+
+            {/* Approval mode */}
+            <div>
+              <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">After the greeting generates</label>
+              <div className="mt-2 grid gap-2">
+                {Object.entries(APPROVAL_LABELS).map(([key, val]) => (
+                  <button key={key} type="button" onClick={() => setApprovalMode(key)}
+                    className={`rounded-xl border px-4 py-3 text-left transition-all ${approvalMode === key ? "border-primary/50 bg-primary/10 shadow-[0_0_14px_-4px_oklch(0.78_0.12_85/0.3)]" : "border-white/8 bg-white/3 hover:border-white/15"}`}>
+                    <div className={`text-xs font-semibold ${approvalMode === key ? "text-primary" : "text-foreground"}`}>{val.label}</div>
+                    <div className="mt-0.5 text-[11px] text-muted-foreground leading-relaxed">{val.description}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Product link */}
+            <div>
+              <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Link a product <span className="normal-case font-normal">(optional — auto-sets reference image)</span></label>
+              <select value={productId} onChange={e => setProductId(e.target.value)}
                 className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
-                {MONTHS_FULL.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                <option value="">None</option>
+                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
+
+            {/* Platforms */}
             <div>
-              <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Day</label>
-              <input type="number" min={1} max={31} value={day} onChange={(e) => setDay(Number(e.target.value))}
-                className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition" />
+              <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Platforms</label>
+              <div className="mt-2"><PlatformChips selected={platforms} onToggle={togglePlatform} platforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} /></div>
             </div>
-            <div>
-              <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Lead days</label>
-              <input type="number" min={0} max={60} value={leadDays} onChange={(e) => setLeadDays(Number(e.target.value))}
-                className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition" />
-            </div>
-          </div>
-          <p className="text-[11px] text-muted-foreground -mt-2">Ad generates {leadDays} day{leadDays !== 1 ? "s" : ""} before {MONTHS[month - 1]} {day}.</p>
 
-          {/* Guidance */}
-          <div>
-            <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Ad brief <span className="normal-case font-normal">(optional)</span></label>
-            <textarea value={guidance} onChange={(e) => setGuidance(e.target.value)} rows={2} placeholder="e.g. 20% off everything, festive theme, highlight gift bundles"
-              className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none transition resize-none" />
+            {err && <div className="text-xs text-destructive">{err}</div>}
           </div>
 
-          {/* Approval mode */}
-          <div>
-            <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">What happens after the ad generates</label>
-            <div className="mt-2 grid gap-2">
-              {Object.entries(APPROVAL_LABELS).map(([key, val]) => (
-                <button key={key} type="button" onClick={() => setApprovalMode(key)}
-                  className={`rounded-xl border px-4 py-3 text-left transition-all ${approvalMode === key ? "border-primary/50 bg-primary/10 shadow-[0_0_14px_-4px_oklch(0.78_0.12_85/0.3)]" : "border-white/8 bg-white/3 hover:border-white/15"}`}>
-                  <div className={`text-xs font-semibold ${approvalMode === key ? "text-primary" : "text-foreground"}`}>{val.label}</div>
-                  <div className="mt-0.5 text-[11px] text-muted-foreground leading-relaxed">{val.description}</div>
-                </button>
-              ))}
-            </div>
+          {/* ── Right: templates ── */}
+          <div className="w-64 shrink-0 overflow-y-auto px-4 py-5">
+            <EventTemplatesPanel onPick={applyTemplate} />
           </div>
-
-          {/* Product */}
-          <div>
-            <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Link a product <span className="normal-case font-normal">(optional)</span></label>
-            <select value={productId} onChange={(e) => setProductId(e.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
-              <option value="">None</option>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </div>
-
-          {/* Platforms */}
-          <div>
-            <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Platforms</label>
-            <div className="mt-2"><PlatformChips selected={platforms} onToggle={togglePlatform} platforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} /></div>
-          </div>
-
-          {err && <div className="text-xs text-destructive">{err}</div>}
         </div>
 
-        {/* Footer actions */}
-        <div className="border-t border-white/[0.07] px-6 py-4 flex items-center justify-between gap-3">
+        {/* Footer */}
+        <div className="border-t border-white/[0.07] px-6 py-4 flex items-center justify-between gap-3 shrink-0">
           <button onClick={generateNow} className="rounded-full border border-white/10 px-4 py-2 text-xs text-muted-foreground hover:text-foreground hover:border-white/20 transition">
-            Generate ad now →
+            Generate greeting now →
           </button>
           <div className="flex items-center gap-2">
             <button onClick={onClose} className="rounded-full border border-white/10 px-4 py-2 text-xs text-muted-foreground hover:text-foreground transition">Cancel</button>
@@ -223,9 +482,9 @@ function EventModal({ editing, products, defaultApproval, onSave, onClose }: {
                 { label: "At least one platform", met: platforms.length > 0 },
               ]} />
               <button onClick={save} disabled={!name.trim() || platforms.length === 0 || saving}
-              className="rounded-full bg-gold-gradient px-5 py-2 text-xs font-semibold text-background disabled:opacity-50 shadow-[var(--shadow-gold)] transition">
-              {saving ? "Saving…" : editing ? "Save changes" : "Create event"}
-            </button>
+                className="rounded-full bg-gold-gradient px-5 py-2 text-xs font-semibold text-background disabled:opacity-50 shadow-[var(--shadow-gold)] transition">
+                {saving ? "Saving…" : editing ? "Save changes" : "Create event"}
+              </button>
             </div>
           </div>
         </div>
@@ -281,9 +540,30 @@ function EventDetailPanel({ ev, products, defaultApproval, onEdit, onToggleEnabl
             <div className="mt-0.5 text-[11px] text-muted-foreground">{APPROVAL_LABELS[ev.approval_mode]?.description}</div>
           </div>
 
+          {/* Tone + Style badges */}
+          <div className="flex flex-wrap gap-2">
+            {ev.wish_tone && (
+              <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-[10px] font-medium text-primary capitalize">
+                🎨 {ev.wish_tone} tone
+              </span>
+            )}
+            {ev.visual_style && (
+              <span className="rounded-full border border-border bg-input/60 px-2.5 py-1 text-[10px] font-medium text-muted-foreground capitalize">
+                🖼 {ev.visual_style} style
+              </span>
+            )}
+          </div>
+
+          {ev.reference_image_url && (
+            <div className="rounded-xl border border-white/8 bg-white/4 px-4 py-3">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Reference image</div>
+              <img src={ev.reference_image_url} alt="Reference" className="h-20 w-20 rounded-lg object-cover border border-border" />
+            </div>
+          )}
+
           {ev.guidance && (
             <div className="rounded-xl border border-white/8 bg-white/4 px-4 py-3">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Ad brief</div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Additional context</div>
               <div className="mt-1 text-xs text-foreground">{ev.guidance}</div>
             </div>
           )}
@@ -322,8 +602,8 @@ function EventDetailPanel({ ev, products, defaultApproval, onEdit, onToggleEnabl
   );
 }
 
-function MonthGrid({ events, products, defaultApproval, onEventSaved, onEventDeleted }: {
-  events: AgentEvent[]; products: ProductOut[]; defaultApproval: string;
+function MonthGrid({ events, products, defaultApproval, brandLogoUrl, onEventSaved, onEventDeleted }: {
+  events: AgentEvent[]; products: ProductOut[]; defaultApproval: string; brandLogoUrl: string | null;
   onEventSaved: (ev: AgentEvent) => void; onEventDeleted: (events: AgentEvent[]) => void;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -431,6 +711,7 @@ function MonthGrid({ events, products, defaultApproval, onEventSaved, onEventDel
           editing={showModalFor === "new" ? null : showModalFor}
           products={products}
           defaultApproval={defaultApproval}
+          brandLogoUrl={brandLogoUrl}
           onSave={(ev) => { onEventSaved(ev); setShowModalFor(null); }}
           onClose={() => setShowModalFor(null)}
         />
@@ -445,6 +726,7 @@ function EventsTab() {
   const [events, setEvents] = useState<AgentEvent[] | null>(null);
   const [products, setProducts] = useState<ProductOut[]>([]);
   const [defaultApproval, setDefaultApproval] = useState("draft_only");
+  const [brandLogoUrl, setBrandLogoUrl] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [err, setErr] = useState("");
 
@@ -459,6 +741,7 @@ function EventsTab() {
   useEffect(() => {
     load();
     api("/products").then(setProducts).catch(() => {});
+    api("/brand-kit").then((kit: any) => setBrandLogoUrl(kit?.logo_url ?? null)).catch(() => {});
   }, []);
 
   function handleEventSaved(updated: AgentEvent) {
@@ -479,7 +762,7 @@ function EventsTab() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="max-w-xl">
           <p className="text-xs text-muted-foreground">
-            Define occasions Agent Niva should automatically create ads for — every year, it generates the ad the number of lead days you choose before the date. Set what happens after generation per event below.
+            Define recurring occasions for Agent Niva to post branded greetings — Christmas, Eid, National Days and more. Every year, your logo is composited onto a themed image with a warm message, posted to the platforms you choose.
           </p>
         </div>
         <button onClick={() => setShowModal(true)}
@@ -507,6 +790,7 @@ function EventsTab() {
           events={events}
           products={products}
           defaultApproval={defaultApproval}
+          brandLogoUrl={brandLogoUrl}
           onEventSaved={handleEventSaved}
           onEventDeleted={handleEventDeleted}
         />
@@ -517,6 +801,7 @@ function EventsTab() {
           editing={null}
           products={products}
           defaultApproval={defaultApproval}
+          brandLogoUrl={brandLogoUrl}
           onSave={(ev) => { handleEventSaved(ev); setShowModal(false); }}
           onClose={() => setShowModal(false)}
         />

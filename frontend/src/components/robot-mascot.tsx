@@ -5,7 +5,7 @@ import { fetchAndCacheAudio, pruneAudioCache } from "@/lib/audio-cache";
 /** Docked ("asleep"/idle-awake resting) position — near the top-right of
  * the header. Expressed as px from the top-right corner of the viewport
  * so it stays put across pages without a ref into a specific DOM node. */
-const DOCK = { top: 30, right: 300 };
+const DOCK = { top: 30, right: 360 };
 const ROBOT_SIZE = 120;      // desktop
 const ROBOT_SIZE_SM = 68;    // tablet / small desktop
 const ROBOT_SIZE_XS = 52;    // mobile
@@ -543,7 +543,7 @@ export function RobotMascot() {
         data-robot-ui
         className={`fixed z-[201] transition-[top,left] ${instant ? "duration-0" : "duration-700"} ease-in-out`}
         style={{
-          top:  (pos ? pos.top : dockTop) - 36,
+          top:  (pos ? pos.top : dockTop) - 24,
           left: (pos ? pos.left : dockLeft(currentSize)) + currentSize / 2 - 12,
         }}
       >

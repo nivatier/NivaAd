@@ -38,6 +38,25 @@ async def checkout(payload: dict, user: User = Depends(get_current_user)):
     return {"url": session.url}
 
 
+@router.get("/topup-info")
+async def topup_info(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Returns the per-credit USD price from Developer > Settings (DB).
+    Used by the Buy Credits modal — never hardcoded on the frontend."""
+    from app.config import settings as _settings
+    from app.models import get_config_row
+    credit_value_usd = _settings.CREDIT_VALUE_USD  # .env fallback
+    try:
+        row = await get_config_row(db, "platform")
+        if row and row.config:
+            # _save_platform_cfg stores as config["platform"]["credit_value_usd"]
+            v = row.config.get("platform", {}).get("credit_value_usd")
+            if v is not None:
+                credit_value_usd = float(v)
+    except Exception:
+        pass
+    return {"credit_value_usd": credit_value_usd}
+
+
 @router.post("/topup")
 async def topup(payload: dict, user: User = Depends(get_current_user)):
     credits = int(payload.get("credits") or 10)

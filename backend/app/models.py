@@ -406,6 +406,11 @@ class AgentEvent(Base):
     product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id"), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     approval_mode: Mapped[str] = mapped_column(String(30), default="draft_only")  # "draft_only" | "schedule_review" | "auto_post"
+    post_hour: Mapped[int] = mapped_column(Integer, default=10)    # 0-23 UTC — when the ScheduledPost fires on event day
+    post_minute: Mapped[int] = mapped_column(Integer, default=0)   # 0-59
+    wish_tone: Mapped[str] = mapped_column(String(20), default="warm")        # "warm" | "professional" | "fun" | "luxury"
+    visual_style: Mapped[str] = mapped_column(String(20), default="festive")  # "festive" | "minimal" | "bold" | "elegant"
+    reference_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)  # optional product/scene photo — auto-set from linked product.image_url or user-uploaded under event-refs/
     skipped_years: Mapped[list] = mapped_column(JSON, default=list)
     draft_run_year: Mapped[int | None] = mapped_column(Integer, nullable=True)  # year the draft was created (Trigger 1)
     last_run_year: Mapped[int | None] = mapped_column(Integer, nullable=True)   # year the post was generated (Trigger 2) — kept for back-compat

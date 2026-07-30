@@ -39,6 +39,11 @@ def _event_out(ev: AgentEvent) -> AgentEventOut:
         id=str(ev.id), name=ev.name, month=ev.month, day=ev.day, lead_days=ev.lead_days,
         guidance=ev.guidance, platforms=ev.platforms or [], product_id=str(ev.product_id) if ev.product_id else None,
         enabled=ev.enabled, approval_mode=ev.approval_mode or "draft_only",
+        post_hour=ev.post_hour if ev.post_hour is not None else 10,
+        post_minute=ev.post_minute if ev.post_minute is not None else 0,
+        wish_tone=ev.wish_tone or "warm",
+        visual_style=ev.visual_style or "festive",
+        reference_image_url=ev.reference_image_url,
         skipped_years=ev.skipped_years or [], last_run_year=ev.last_run_year,
         next_run_date=_next_run_date(ev),
     )
@@ -163,16 +168,39 @@ async def list_events(user: User = Depends(get_current_user), db: AsyncSession =
     return [_event_out(e) for e in rows]
 
 
+@router.post("/events/upload-reference")
+async def upload_event_reference_image(
+    data: dict,
+    user: User = Depends(require_capability("create_ads")),
+):
+    """Accepts a base64 data URL, uploads it to R2 under event-refs/, returns the public URL.
+    Called by the frontend when the user picks a custom reference photo in the event modal."""
+    from app.services.storage import upload_data_url
+    image_data = data.get("image")
+    if not image_data or not image_data.startswith("data:"):
+        raise HTTPException(422, "image must be a base64 data URL")
+    url = upload_data_url(image_data, prefix="event-refs")
+    return {"url": url}
+
+
 @router.post("/events", response_model=AgentEventOut)
 async def create_event(data: AgentEventIn, user: User = Depends(require_capability("create_ads")), db: AsyncSession = Depends(get_db)):
     try:
         date(2024, data.month, data.day)  # 2024 is a leap year — allows Feb 29 — just validating month/day is a real calendar date
     except ValueError:
         raise HTTPException(422, f"{data.month}/{data.day} isn't a valid date.")
+    # If a fresh base64 image was uploaded, store it now
+    from app.services.storage import upload_data_url
+    ref_url = data.reference_image_url
+    if data.reference_image:
+        ref_url = upload_data_url(data.reference_image, prefix="event-refs")
     ev = AgentEvent(
         company_id=user.company_id, name=data.name, month=data.month, day=data.day, lead_days=data.lead_days,
         guidance=data.guidance, platforms=data.platforms, product_id=data.product_id, enabled=data.enabled,
         approval_mode=data.approval_mode or "draft_only",
+        post_hour=data.post_hour, post_minute=data.post_minute,
+        wish_tone=data.wish_tone, visual_style=data.visual_style,
+        reference_image_url=ref_url,
     )
     db.add(ev)
     await db.commit()
@@ -188,8 +216,15 @@ async def update_event(event_id: str, data: AgentEventIn, user: User = Depends(r
         date(2024, data.month, data.day)
     except ValueError:
         raise HTTPException(422, f"{data.month}/{data.day} isn't a valid date.")
+    from app.services.storage import upload_data_url
+    ref_url = data.reference_image_url
+    if data.reference_image:
+        ref_url = upload_data_url(data.reference_image, prefix="event-refs")
     ev.name, ev.month, ev.day, ev.lead_days = data.name, data.month, data.day, data.lead_days
     ev.guidance, ev.platforms, ev.product_id, ev.enabled = data.guidance, data.platforms, data.product_id, data.enabled
+    ev.post_hour, ev.post_minute = data.post_hour, data.post_minute
+    ev.wish_tone, ev.visual_style = data.wish_tone, data.visual_style
+    ev.reference_image_url = ref_url
     if data.approval_mode:
         ev.approval_mode = data.approval_mode
     await db.commit()
