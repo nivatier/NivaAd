@@ -251,7 +251,7 @@ function DeveloperLogs() {
                       <tr key={row.id}
                         className={`border-b border-border/40 ${i % 2 === 0 ? "" : "bg-muted/10"} ${row.level === "ERROR" || row.level === "CRITICAL" ? "bg-destructive/5" : ""}`}>
                         <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap font-mono">
-                          {new Date(row.created_at).toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                          {new Date(row.created_at + "Z").toLocaleString("en", { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                         </td>
                         <td className="px-3 py-1.5 whitespace-nowrap">
                           <span className="rounded-full bg-muted/40 px-1.5 py-0.5 text-[10px] text-foreground">{row.service}</span>
