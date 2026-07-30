@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models import AuditLog, CreditLedger, EmailSuppression, Subscription
+
 from app.services import billing as billing_svc
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -23,6 +24,65 @@ async def _already_processed(db: AsyncSession, event_id: str) -> bool:
         .order_by(AuditLog.created_at.desc()).limit(500)
     )).all()
     return any((r.detail or {}).get("event_id") == event_id for r in rows)
+
+
+async def _verify_sns_signature(payload: bytes, headers: dict) -> bool:
+    """Verify that an SNS notification genuinely came from AWS.
+
+    SNS signs every message with a certificate whose URL lives at
+    SigningCertURL in the payload.  We download the cert (always from an
+    aws-verified domain), reconstruct the canonical string, and verify
+    the Signature field.  This prevents third parties from injecting
+    fake bounce/complaint events and poisoning the suppression list.
+
+    Returns True if the signature is valid (or if cryptography is
+    unavailable — we log a warning rather than break delivery).
+    """
+    import json as _json
+    import base64
+    import re
+    import urllib.request
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.x509 import load_pem_x509_certificate
+    except ImportError:
+        logger.warning("[ses_webhook] cryptography package not installed — skipping SNS signature verification")
+        return True
+
+    try:
+        msg = _json.loads(payload)
+        cert_url = msg.get("SigningCertURL", "")
+        # Only trust certs served from official AWS SNS domains
+        if not re.match(r"https://sns\.[a-z0-9-]+\.amazonaws\.com/", cert_url):
+            logger.warning("[ses_webhook] SNS cert URL rejected (not AWS): %s", cert_url)
+            return False
+
+        # Download cert (cache would be nice but SNS certs rarely rotate)
+        with urllib.request.urlopen(cert_url, timeout=5) as resp:
+            cert_pem = resp.read()
+
+        cert = load_pem_x509_certificate(cert_pem)
+        pub_key = cert.public_key()
+
+        # Build the canonical string to verify
+        msg_type = msg.get("Type", "")
+        if msg_type == "Notification":
+            fields = ["Message", "MessageId", "Subject", "Timestamp", "TopicArn", "Type"]
+        else:  # SubscriptionConfirmation / UnsubscribeConfirmation
+            fields = ["Message", "MessageId", "SubscribeURL", "Timestamp", "Token", "TopicArn", "Type"]
+
+        canonical = ""
+        for field in fields:
+            if field in msg:
+                canonical += field + "\n" + msg[field] + "\n"
+
+        sig = base64.b64decode(msg.get("Signature", ""))
+        pub_key.verify(sig, canonical.encode("utf-8"), padding.PKCS1v15(), hashes.SHA1())  # noqa: S303 — AWS SNS uses SHA1
+        return True
+    except Exception as exc:
+        logger.warning("[ses_webhook] SNS signature verification failed: %s", exc)
+        return False
 
 
 @router.post("/stripe")
@@ -120,11 +180,15 @@ async def ses_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     SNS sends either a SubscriptionConfirmation (first time) or a
     Notification containing the SES event. We handle both.
 
+    Every notification is signature-verified before processing so a
+    third party cannot inject fake bounce events to poison the
+    suppression list.
+
     Setup in AWS:
     1. SNS → Create topic (Standard) → name: nivaspark-ses-events
     2. SES → nivatier.com identity → Notifications → Bounces → topic above
     3. SES → nivatier.com identity → Notifications → Complaints → topic above
-    4. SNS → topic → Create subscription → HTTPS → https://api.railway.app/webhooks/ses
+    4. SNS → topic → Create subscription → HTTPS → https://nivaad-production.up.railway.app/webhooks/ses
     5. SNS sends SubscriptionConfirmation — this endpoint auto-confirms it
     """
     from app.models import EmailSuppression
@@ -141,6 +205,10 @@ async def ses_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
     # ── SNS subscription confirmation ─────────────────────────────────
     if msg_type == "SubscriptionConfirmation":
+        # Verify the signature even on confirmations — an attacker could
+        # otherwise subscribe their own endpoint posing as ours.
+        if not await _verify_sns_signature(body, dict(request.headers)):
+            raise HTTPException(403, "SNS signature verification failed")
         confirm_url = payload.get("SubscribeURL")
         if confirm_url:
             async with _httpx.AsyncClient(timeout=10) as client:
@@ -150,6 +218,11 @@ async def ses_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
     # ── SNS notification ──────────────────────────────────────────────
     if msg_type == "Notification":
+        # Verify before processing any suppression action
+        if not await _verify_sns_signature(body, dict(request.headers)):
+            logger.warning("[ses_webhook] rejected notification with invalid SNS signature")
+            raise HTTPException(403, "SNS signature verification failed")
+
         try:
             message = _json.loads(payload.get("Message", "{}"))
         except Exception:
@@ -160,8 +233,10 @@ async def ses_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         if notification_type == "Bounce":
             bounce = message.get("bounce", {})
             bounce_type = bounce.get("bounceType", "")
-            # Only suppress hard bounces — soft bounces (transient) should not be permanently suppressed
+            bounce_subtype = bounce.get("bounceSubType", "")
+
             if bounce_type == "Permanent":
+                # Hard bounce — suppress permanently
                 recipients = bounce.get("bouncedRecipients", [])
                 for r in recipients:
                     email = r.get("emailAddress", "").lower().strip()
@@ -176,14 +251,31 @@ async def ses_webhook(request: Request, db: AsyncSession = Depends(get_db)):
                             reason="bounce",
                             detail={
                                 "bounce_type": bounce_type,
-                                "bounce_subtype": bounce.get("bounceSubType"),
+                                "bounce_subtype": bounce_subtype,
                                 "action": r.get("action"),
                                 "status": r.get("status"),
                                 "diagnostic": r.get("diagnosticCode"),
                             }
                         ))
-                        db.add(AuditLog(action="email.bounce_suppressed", detail={"email": email, "bounce_type": bounce_type}))
-                        logger.warning("[ses_webhook] suppressed hard bounce: %s", email)
+                        db.add(AuditLog(action="email.bounce_suppressed", detail={
+                            "email": email,
+                            "bounce_type": bounce_type,
+                            "bounce_subtype": bounce_subtype,
+                        }))
+                        logger.warning("[ses_webhook] suppressed hard bounce: %s (%s/%s)", email, bounce_type, bounce_subtype)
+            else:
+                # Soft / transient bounce — log only, do NOT suppress
+                recipients = bounce.get("bouncedRecipients", [])
+                for r in recipients:
+                    email = r.get("emailAddress", "").lower().strip()
+                    if email:
+                        db.add(AuditLog(action="email.soft_bounce", detail={
+                            "email": email,
+                            "bounce_type": bounce_type,
+                            "bounce_subtype": bounce_subtype,
+                            "diagnostic": r.get("diagnosticCode"),
+                        }))
+                        logger.info("[ses_webhook] soft bounce (not suppressed): %s (%s/%s)", email, bounce_type, bounce_subtype)
 
         elif notification_type == "Complaint":
             complaint = message.get("complaint", {})

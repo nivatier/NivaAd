@@ -2312,27 +2312,20 @@ async def infrastructure_status(_: str = Depends(require_developer), db: AsyncSe
             "credits_remaining": None,
         }
 
-    # ── SMTP (quick TCP connect, no AUTH round-trip) ─────────────────
-    smtp_start = datetime.utcnow()
+    # ── SMTP — full STARTTLS + AUTH handshake ───────────────────────
+    # A bare TCP connect fails on Railway (egress is proxied; port 587
+    # is only reachable after the TLS upgrade), so we run the same code
+    # path a real send uses.  This gives an accurate green/red result.
     try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(settings.SMTP_HOST, settings.SMTP_PORT),
-            timeout=5,
-        )
-        writer.close()
-        await writer.wait_closed()
-        smtp_ms = round((datetime.utcnow() - smtp_start).total_seconds() * 1000, 1)
-        results["smtp"] = {
-            "status": "ok",
-            "latency_ms": smtp_ms,
-            "detail": f"{settings.SMTP_HOST}:{settings.SMTP_PORT} reachable",
-        }
+        from app.services.email import smtp_health_check
+        smtp_result = await asyncio.get_event_loop().run_in_executor(None, smtp_health_check)
+        results["smtp"] = smtp_result
     except Exception as exc:
-        smtp_ms = round((datetime.utcnow() - smtp_start).total_seconds() * 1000, 1)
         results["smtp"] = {
             "status": "error",
-            "latency_ms": smtp_ms,
+            "latency_ms": None,
             "detail": str(exc),
+            "auth_mode": "unknown",
         }
 
     return {
@@ -2548,6 +2541,77 @@ async def email_health(
             for r in recent
         ],
     }
+
+
+
+@router.post("/smtp-test")
+async def smtp_test_send(
+    body: dict,
+    _: str = Depends(require_developer),
+):
+    """Send a real test email to verify SMTP credentials work end-to-end.
+    Accepts {"to": "address@example.com"}.  The send is done in a thread
+    executor so we can use the existing synchronous send_email() function
+    without blocking the event loop.
+    """
+    import asyncio as _asyncio
+    from app.services.email import send_email as _send_email, smtp_health_check
+
+    to = str(body.get("to", "")).strip().lower()
+    if not to or "@" not in to:
+        raise HTTPException(422, "Valid 'to' email address required")
+
+    # First do a quick health check so we can distinguish config errors
+    # from delivery errors in the UI
+    health = await _asyncio.get_event_loop().run_in_executor(None, smtp_health_check)
+    if health["status"] != "ok":
+        raise HTTPException(503, f"SMTP connection failed: {health['detail']}")
+
+    html = """
+    <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
+      <h2 style="color: #7c3aed;">NivaSpark SMTP Test</h2>
+      <p>This is a test message sent from the NivaSpark Developer panel to verify
+      that the SMTP configuration is working correctly.</p>
+      <p style="color: #888; font-size: 12px;">Sent via {host}:{port}</p>
+    </div>
+    """.format(host=settings.SMTP_HOST, port=settings.SMTP_PORT)
+
+    try:
+        await _asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: _send_email(to, "NivaSpark SMTP test", html, text_body="NivaSpark SMTP test — this message confirms your SMTP configuration is working.")
+        )
+    except Exception as exc:
+        raise HTTPException(500, f"Send failed: {exc}")
+
+    return {"sent": True, "to": to, "smtp_host": settings.SMTP_HOST, "smtp_port": settings.SMTP_PORT}
+
+
+@router.post("/email-suppressions")
+async def add_email_suppression(
+    body: dict,
+    _: str = Depends(require_developer),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually add an address to the suppression list — useful when you
+    know an address is bad (e.g. a test address, or a customer who asked
+    to be removed) without waiting for a bounce/complaint notification."""
+    from app.models import EmailSuppression
+    email = str(body.get("email", "")).strip().lower()
+    reason = str(body.get("reason", "bounce")).strip()
+    if not email or "@" not in email:
+        raise HTTPException(422, "Valid email required")
+    if reason not in ("bounce", "complaint"):
+        raise HTTPException(422, "reason must be 'bounce' or 'complaint'")
+
+    existing = await db.scalar(select(EmailSuppression).where(EmailSuppression.email == email))
+    if existing:
+        raise HTTPException(409, f"{email} is already suppressed")
+
+    db.add(EmailSuppression(email=email, reason=reason, detail={"added_by": "developer_manual"}))
+    db.add(AuditLog(action="email.manually_suppressed", detail={"email": email, "reason": reason}))
+    await db.commit()
+    return {"added": True, "email": email, "reason": reason}
 
 
 # ── Railway billing & usage ────────────────────────────────────────────────────

@@ -31,6 +31,48 @@ def is_suppressed(to: str) -> bool:
         return False
 
 
+def smtp_health_check() -> dict:
+    """Perform a real STARTTLS + AUTH handshake against the configured SMTP
+    server — the same path a real send follows — without actually sending
+    a message.  Returns a dict with keys: status ("ok"/"error"), detail
+    (human string), auth_mode ("tls+auth" | "open"), and latency_ms.
+
+    Why not a plain TCP connect?
+    Railway containers cannot reach external port 587 via a bare TCP open
+    because the egress is proxied; the connection only succeeds once the
+    TLS handshake (STARTTLS) completes.  A raw asyncio.open_connection()
+    always times out, giving a false "error" on the infrastructure page
+    even though email delivery works fine.  This function exercises the
+    real code path so the health card reflects reality.
+    """
+    import time
+    start = time.monotonic()
+    auth_mode = "tls+auth" if (settings.SMTP_USER and settings.SMTP_PASSWORD) else "open"
+    try:
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
+            server.ehlo()
+            if settings.SMTP_USER and settings.SMTP_PASSWORD:
+                server.starttls()
+                server.ehlo()
+                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            # If we reach here the credentials are valid; don't send anything
+        latency_ms = round((time.monotonic() - start) * 1000, 1)
+        return {
+            "status": "ok",
+            "latency_ms": latency_ms,
+            "detail": f"{settings.SMTP_HOST}:{settings.SMTP_PORT} reachable — auth: {auth_mode}",
+            "auth_mode": auth_mode,
+        }
+    except Exception as exc:
+        latency_ms = round((time.monotonic() - start) * 1000, 1)
+        return {
+            "status": "error",
+            "latency_ms": latency_ms,
+            "detail": str(exc),
+            "auth_mode": auth_mode,
+        }
+
+
 def send_email(to: str, subject: str, html_body: str, text_body: str | None = None) -> None:
     # Skip suppressed addresses — hard bounces and spam complaints
     if is_suppressed(to):

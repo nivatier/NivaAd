@@ -4,10 +4,10 @@ import { DeveloperShell } from "@/components/developer-shell";
 import { useRequireDeveloperAuth, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
 import { devApi } from "@/lib/dev-api";
 
-export const Route = createFileRoute("/developer/infrastructure")(({
+export const Route = createFileRoute("/developer/infrastructure")({
   component: DeveloperInfrastructure,
   head: () => ({ meta: [{ title: "Infrastructure — NivaSpark" }] }),
-}));
+});
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -23,6 +23,8 @@ type ServiceStatus = {
   queue_depth?: number | null;
   // openrouter-specific
   credits_remaining?: number | null;
+  // smtp-specific
+  auth_mode?: string | null;
 };
 
 type InfraStatus = {
@@ -61,7 +63,7 @@ const SERVICE_META: Record<string, { label: string; icon: string; description: s
   redis:      { label: "Redis",       icon: "⚡",  description: "Task broker + result backend for Celery" },
   storage:    { label: "S3 / R2",     icon: "🪣",  description: "Object storage for generated media" },
   openrouter: { label: "OpenRouter",  icon: "🤖",  description: "AI gateway for image, video, and text generation" },
-  smtp:       { label: "SMTP",        icon: "📧",  description: "Transactional email (invites, notifications)" },
+  smtp:       { label: "SMTP",        icon: "📧",  description: "Transactional email — AWS SES Tokyo (STARTTLS + auth)" },
 };
 
 function StatusBadge({ status }: { status: "ok" | "error" | "checking" }) {
@@ -89,6 +91,58 @@ function LatencyPill({ ms }: { ms: number | null }) {
   if (ms === null) return null;
   const color = ms < 100 ? "text-green-600 dark:text-green-400" : ms < 500 ? "text-yellow-600 dark:text-yellow-400" : "text-destructive";
   return <span className={`text-[11px] font-mono ${color}`}>{ms}ms</span>;
+}
+
+// ── SMTP Test Widget (inline in the SMTP card) ────────────────────────────────
+
+function SmtpTestWidget() {
+  const [to, setTo] = useState("");
+  const [state, setState] = useState<"idle" | "sending" | "ok" | "error">("idle");
+  const [msg, setMsg] = useState("");
+
+  async function send() {
+    const addr = to.trim().toLowerCase();
+    if (!addr || !addr.includes("@")) { setMsg("Enter a valid email address"); setState("error"); return; }
+    setState("sending");
+    setMsg("");
+    try {
+      await devApi("/developer/smtp-test", { method: "POST", body: JSON.stringify({ to: addr }) });
+      setMsg(`Test email sent to ${addr} — check the inbox.`);
+      setState("ok");
+    } catch (e: any) {
+      setMsg(e.message || "Send failed");
+      setState("error");
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Send test email</div>
+      <div className="flex items-center gap-2">
+        <input
+          type="email"
+          placeholder="you@example.com"
+          value={to}
+          onChange={e => setTo(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && send()}
+          disabled={state === "sending"}
+          className="flex-1 rounded-lg border border-border bg-input/40 px-2.5 py-1 text-[11px] text-foreground focus:border-ring focus:outline-none disabled:opacity-50"
+        />
+        <button
+          onClick={send}
+          disabled={state === "sending"}
+          className="rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition shrink-0"
+        >
+          {state === "sending" ? "Sending…" : "Send"}
+        </button>
+      </div>
+      {msg && (
+        <div className={`mt-1.5 text-[11px] ${state === "ok" ? "text-green-600 dark:text-green-400" : "text-destructive"}`}>
+          {state === "ok" ? "✓ " : "✗ "}{msg}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ServiceCard({ id, svc }: { id: string; svc: ServiceStatus }) {
@@ -162,6 +216,18 @@ function ServiceCard({ id, svc }: { id: string; svc: ServiceStatus }) {
             ${svc.credits_remaining.toFixed(2)}
           </span>
         </div>
+      )}
+
+      {/* SMTP — auth mode badge + test widget */}
+      {id === "smtp" && svc.status !== "checking" && (
+        <>
+          {svc.auth_mode && (
+            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
+              🔐 {svc.auth_mode === "tls+auth" ? "STARTTLS + credentials" : "Open relay (no auth)"}
+            </div>
+          )}
+          {svc.status === "ok" && <SmtpTestWidget />}
+        </>
       )}
     </div>
   );

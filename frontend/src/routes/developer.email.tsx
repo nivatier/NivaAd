@@ -35,11 +35,12 @@ type EmailHealth = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
+function StatCard({ label, value, color, sub }: { label: string; value: number; color: string; sub?: string }) {
   return (
     <div className="rounded-xl border border-border bg-card/60 p-5">
       <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={`mt-1 text-3xl font-bold ${color}`}>{value}</div>
+      {sub && <div className="text-[10px] text-muted-foreground mt-1">{sub}</div>}
     </div>
   );
 }
@@ -58,10 +59,63 @@ function ReasonBadge({ reason }: { reason: string }) {
 }
 
 function ActionBadge({ action }: { action: string }) {
-  if (action === "email.bounce_suppressed") return <span className="text-orange-500 text-[11px] font-medium">Bounce suppressed</span>;
+  if (action === "email.bounce_suppressed") return <span className="text-orange-500 text-[11px] font-medium">Hard bounce suppressed</span>;
+  if (action === "email.soft_bounce") return <span className="text-yellow-600 dark:text-yellow-400 text-[11px] font-medium">Soft bounce (logged)</span>;
   if (action === "email.complaint_suppressed") return <span className="text-destructive text-[11px] font-medium">Complaint suppressed</span>;
   if (action === "email.suppression_removed") return <span className="text-green-500 text-[11px] font-medium">Suppression removed</span>;
+  if (action === "email.manually_suppressed") return <span className="text-muted-foreground text-[11px] font-medium">Manually suppressed</span>;
   return <span className="text-muted-foreground text-[11px]">{action}</span>;
+}
+
+// ── AWS SES rates info panel ──────────────────────────────────────────────────
+
+function SesRatesPanel({ bounces, complaints, total }: { bounces: number; complaints: number; total: number }) {
+  // AWS SES guidelines: bounce < 5% (warning at 2%), complaint < 0.1% (warning at 0.08%)
+  // We can't compute true rates without knowing total sends, so we show the raw counts
+  // with colour-coded thresholds and link to the SES console for real rates.
+  return (
+    <div className="rounded-xl border border-border bg-card/60 p-5">
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div>
+          <h3 className="font-semibold text-sm text-foreground">AWS SES Sending Reputation</h3>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            AWS requires bounce rate &lt;5% and complaint rate &lt;0.1%. Check real-time rates in the SES console.
+          </p>
+        </div>
+        <a
+          href="https://ap-northeast-1.console.aws.amazon.com/ses/home?region=ap-northeast-1#/account"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground hover:border-ring hover:text-foreground transition"
+        >
+          SES Console ↗
+        </a>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className={`rounded-lg p-3 border ${bounces === 0 ? "border-green-500/20 bg-green-500/5" : bounces < 10 ? "border-yellow-500/20 bg-yellow-500/5" : "border-destructive/20 bg-destructive/5"}`}>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Hard bounces suppressed</div>
+          <div className={`text-2xl font-bold mt-1 ${bounces === 0 ? "text-green-600 dark:text-green-400" : bounces < 10 ? "text-yellow-600 dark:text-yellow-400" : "text-destructive"}`}>
+            {bounces}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">AWS threshold: &lt;5% of total sends</div>
+        </div>
+        <div className={`rounded-lg p-3 border ${complaints === 0 ? "border-green-500/20 bg-green-500/5" : "border-destructive/20 bg-destructive/5"}`}>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Spam complaints suppressed</div>
+          <div className={`text-2xl font-bold mt-1 ${complaints === 0 ? "text-green-600 dark:text-green-400" : "text-destructive"}`}>
+            {complaints}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">AWS threshold: &lt;0.1% of total sends</div>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-lg bg-muted/60 px-3 py-2 text-[11px] text-muted-foreground">
+        💡 These counts reflect permanent suppressions only. View real-time bounce/complaint <em>rates</em> (as a % of all sends)
+        in the SES console under <strong>Account dashboard → Sending statistics</strong>. NivaSpark auto-suppresses
+        every hard bounce and spam complaint the moment AWS notifies us via SNS.
+      </div>
+    </div>
+  );
 }
 
 // ── Setup Guide ───────────────────────────────────────────────────────────────
@@ -72,9 +126,9 @@ function SetupGuide() {
     <div className="rounded-xl border border-border bg-card/60 p-5">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-semibold text-sm text-foreground">AWS SNS Setup</h3>
+          <h3 className="font-semibold text-sm text-foreground">AWS SNS → Bounce/Complaint Pipeline</h3>
           <p className="text-[11px] text-muted-foreground mt-0.5">
-            Connect AWS SES to this endpoint to automatically track bounces and complaints.
+            Connect AWS SES to this endpoint to automatically suppress hard bounces and complaints.
           </p>
         </div>
         <button
@@ -101,7 +155,7 @@ function SetupGuide() {
             <code className="block bg-muted px-2 py-1 rounded text-[11px] break-all">
               https://nivaad-production.up.railway.app/webhooks/ses
             </code>
-            <div className="text-muted-foreground">AWS will call this URL to confirm — the endpoint auto-confirms it.</div>
+            <div className="text-muted-foreground">AWS will call this URL to confirm — the endpoint auto-confirms it and verifies the SNS signature.</div>
           </div>
 
           <div className="rounded-lg bg-muted/60 p-3 space-y-2">
@@ -111,13 +165,97 @@ function SetupGuide() {
             <div>Complaint notifications → Edit → select <code className="bg-muted px-1 rounded">nivaspark-ses-events</code></div>
           </div>
 
+          <div className="rounded-lg bg-muted/60 p-3 space-y-2">
+            <div className="font-semibold text-foreground">Step 4 — Verify it's working</div>
+            <div>Use the <a href="https://ap-northeast-1.console.aws.amazon.com/ses/home?region=ap-northeast-1#/simulator" target="_blank" rel="noopener noreferrer" className="underline">SES mailbox simulator</a> to send a test bounce:</div>
+            <div>Send to <code className="bg-muted px-1 rounded">bounce@simulator.amazonses.com</code> — the address should appear in the suppression list within seconds.</div>
+          </div>
+
           <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-3">
-            <div className="font-semibold text-green-600 dark:text-green-400">That's it</div>
+            <div className="font-semibold text-green-600 dark:text-green-400">How it works</div>
             <div className="text-muted-foreground mt-1">
-              From this point, every hard bounce and spam complaint automatically adds the address to the suppression list below. NivaSpark will never email a suppressed address again.
+              Every <strong>hard bounce</strong> (Permanent) is permanently added to the suppression list.
+              <strong> Soft bounces</strong> (Transient — mailbox full, temporary failure) are logged in the audit trail but <em>not</em> suppressed, because the address is still valid.
+              Every <strong>spam complaint</strong> is permanently suppressed.
+              All SNS messages are signature-verified before any action is taken.
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Manual Add Suppression ────────────────────────────────────────────────────
+
+function ManualSuppress({ onAdded }: { onAdded: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [reason, setReason] = useState<"bounce" | "complaint">("bounce");
+  const [state, setState] = useState<"idle" | "saving" | "ok" | "error">("idle");
+  const [msg, setMsg] = useState("");
+
+  async function add() {
+    const addr = email.trim().toLowerCase();
+    if (!addr || !addr.includes("@")) { setMsg("Enter a valid email"); setState("error"); return; }
+    setState("saving");
+    setMsg("");
+    try {
+      await devApi("/developer/email-suppressions", { method: "POST", body: JSON.stringify({ email: addr, reason }) });
+      setEmail("");
+      setState("ok");
+      setMsg(`${addr} suppressed.`);
+      onAdded();
+      setTimeout(() => { setState("idle"); setMsg(""); setOpen(false); }, 1800);
+    } catch (e: any) {
+      setState("error");
+      setMsg(e.message || "Could not add suppression");
+    }
+  }
+
+  if (!open) return (
+    <button
+      onClick={() => setOpen(true)}
+      className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground hover:border-ring hover:text-foreground transition"
+    >
+      + Add manually
+    </button>
+  );
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <input
+        type="email"
+        placeholder="address@example.com"
+        value={email}
+        onChange={e => setEmail(e.target.value)}
+        onKeyDown={e => e.key === "Enter" && add()}
+        autoFocus
+        className="rounded-lg border border-border bg-input/40 px-2.5 py-1 text-[11px] text-foreground focus:border-ring focus:outline-none w-52"
+      />
+      <select
+        value={reason}
+        onChange={e => setReason(e.target.value as "bounce" | "complaint")}
+        className="rounded-lg border border-border bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-ring focus:outline-none"
+      >
+        <option value="bounce">Hard bounce</option>
+        <option value="complaint">Complaint</option>
+      </select>
+      <button
+        onClick={add}
+        disabled={state === "saving"}
+        className="rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition"
+      >
+        {state === "saving" ? "Saving…" : "Add"}
+      </button>
+      <button
+        onClick={() => { setOpen(false); setEmail(""); setState("idle"); setMsg(""); }}
+        className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground hover:border-ring transition"
+      >
+        Cancel
+      </button>
+      {msg && (
+        <span className={`text-[11px] ${state === "ok" ? "text-green-500" : "text-destructive"}`}>{msg}</span>
       )}
     </div>
   );
@@ -131,6 +269,7 @@ function SuppressionTable({ handleAuthError }: { handleAuthError: (e: any) => bo
   const [err, setErr] = useState("");
   const [removing, setRemoving] = useState<number | null>(null);
   const [search, setSearch] = useState("");
+  const [filterReason, setFilterReason] = useState<"all" | "bounce" | "complaint">("all");
 
   function load() {
     setLoading(true);
@@ -154,24 +293,36 @@ function SuppressionTable({ handleAuthError }: { handleAuthError: (e: any) => bo
     setRemoving(null);
   }
 
-  const filtered = data?.suppressions.filter(s =>
-    s.email.toLowerCase().includes(search.toLowerCase())
-  ) ?? [];
+  const filtered = (data?.suppressions ?? []).filter(s => {
+    const matchSearch = s.email.toLowerCase().includes(search.toLowerCase());
+    const matchReason = filterReason === "all" || s.reason === filterReason;
+    return matchSearch && matchReason;
+  });
 
   return (
     <div className="rounded-xl border border-border bg-card/60 p-5">
-      <div className="flex items-center justify-between gap-3 mb-4">
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         <h3 className="font-semibold text-sm text-foreground">
           Suppressed Addresses
           {data && <span className="ml-2 text-[11px] font-normal text-muted-foreground">({data.total} total)</span>}
         </h3>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <ManualSuppress onAdded={load} />
+          <select
+            value={filterReason}
+            onChange={e => setFilterReason(e.target.value as any)}
+            className="rounded-lg border border-border bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-ring focus:outline-none"
+          >
+            <option value="all">All reasons</option>
+            <option value="bounce">Hard bounces</option>
+            <option value="complaint">Complaints</option>
+          </select>
           <input
             type="text"
             placeholder="Search email..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="rounded-lg border border-border bg-input/40 px-3 py-1.5 text-[11px] text-foreground focus:border-ring focus:outline-none w-48"
+            className="rounded-lg border border-border bg-input/40 px-3 py-1.5 text-[11px] text-foreground focus:border-ring focus:outline-none w-44"
           />
           <button
             onClick={load}
@@ -210,8 +361,8 @@ function SuppressionTable({ handleAuthError }: { handleAuthError: (e: any) => bo
                   <td className="px-3 py-2"><ReasonBadge reason={s.reason} /></td>
                   <td className="px-3 py-2 text-muted-foreground max-w-xs truncate">
                     {s.reason === "bounce"
-                      ? `${s.detail?.bounce_type || ""} ${s.detail?.bounce_subtype || ""}`.trim() || "—"
-                      : s.detail?.feedback_type || "—"
+                      ? `${s.detail?.bounce_type || ""} ${s.detail?.bounce_subtype || ""}`.trim() || s.detail?.added_by || "—"
+                      : s.detail?.feedback_type || s.detail?.added_by || "—"
                     }
                   </td>
                   <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
@@ -233,9 +384,9 @@ function SuppressionTable({ handleAuthError }: { handleAuthError: (e: any) => bo
         </div>
       )}
 
-      {search && filtered.length === 0 && data && data.total > 0 && (
+      {(search || filterReason !== "all") && filtered.length === 0 && data && data.total > 0 && (
         <div className="text-center py-6 text-muted-foreground text-[11px]">
-          No results for "{search}"
+          No results for current filters
         </div>
       )}
     </div>
@@ -257,6 +408,11 @@ function RecentEvents({ events }: { events: { action: string; detail: Record<str
               <span className="font-mono text-[11px] text-foreground truncate">
                 {e.detail?.email || "—"}
               </span>
+              {e.action === "email.soft_bounce" && e.detail?.bounce_subtype && (
+                <span className="text-[10px] text-muted-foreground">
+                  ({e.detail.bounce_subtype})
+                </span>
+              )}
             </div>
             <span className="text-[10px] text-muted-foreground whitespace-nowrap">
               {new Date(e.created_at).toLocaleString()}
@@ -300,18 +456,30 @@ function DeveloperEmail() {
               label="Total suppressed"
               value={health.total_suppressed}
               color={health.total_suppressed > 0 ? "text-yellow-600 dark:text-yellow-400" : "text-foreground"}
+              sub="permanent — never re-emailed"
             />
             <StatCard
               label="Hard bounces"
               value={health.bounces}
               color={health.bounces > 0 ? "text-orange-600 dark:text-orange-400" : "text-foreground"}
+              sub="invalid / non-existent address"
             />
             <StatCard
               label="Complaints"
               value={health.complaints}
               color={health.complaints > 0 ? "text-destructive" : "text-foreground"}
+              sub="spam reports via feedback loop"
             />
           </div>
+        )}
+
+        {/* Reputation guidance */}
+        {health && (
+          <SesRatesPanel
+            bounces={health.bounces}
+            complaints={health.complaints}
+            total={health.total_suppressed}
+          />
         )}
 
         {/* AWS SNS setup guide */}
