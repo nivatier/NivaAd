@@ -15,27 +15,19 @@ type ServiceStatus = {
   status: "ok" | "error" | "checking";
   latency_ms: number | null;
   detail: string;
-  // database-specific
   migration_head?: string | null;
   migration_current?: string | null;
   migrations_current?: boolean;
-  // redis-specific
   queue_depth?: number | null;
-  // openrouter-specific
   credits_remaining?: number | null;
-  // smtp-specific
   auth_mode?: string | null;
 };
 
+type ServiceKey = "database" | "redis" | "storage" | "openrouter" | "smtp";
+
 type InfraStatus = {
   checked_at: string;
-  services: {
-    database: ServiceStatus;
-    redis: ServiceStatus;
-    storage: ServiceStatus;
-    openrouter: ServiceStatus;
-    smtp: ServiceStatus;
-  };
+  services: Record<ServiceKey, ServiceStatus>;
 };
 
 type Migration = {
@@ -58,13 +50,15 @@ type MigrationHistory = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const SERVICE_META: Record<string, { label: string; icon: string; description: string }> = {
+const SERVICE_META: Record<ServiceKey, { label: string; icon: string; description: string }> = {
   database:   { label: "PostgreSQL",  icon: "🗄",  description: "Primary database — stores all app data" },
   redis:      { label: "Redis",       icon: "⚡",  description: "Task broker + result backend for Celery" },
   storage:    { label: "S3 / R2",     icon: "🪣",  description: "Object storage for generated media" },
   openrouter: { label: "OpenRouter",  icon: "🤖",  description: "AI gateway for image, video, and text generation" },
   smtp:       { label: "SMTP",        icon: "📧",  description: "Transactional email — AWS SES Tokyo (STARTTLS + auth)" },
 };
+
+const SERVICE_ORDER: ServiceKey[] = ["database", "redis", "storage", "openrouter", "smtp"];
 
 function StatusBadge({ status }: { status: "ok" | "error" | "checking" }) {
   if (status === "checking") return (
@@ -93,7 +87,7 @@ function LatencyPill({ ms }: { ms: number | null }) {
   return <span className={`text-[11px] font-mono ${color}`}>{ms}ms</span>;
 }
 
-// ── SMTP Test Widget (inline in the SMTP card) ────────────────────────────────
+// ── SMTP Test Widget ──────────────────────────────────────────────────────────
 
 function SmtpTestWidget() {
   const [to, setTo] = useState("");
@@ -103,8 +97,7 @@ function SmtpTestWidget() {
   async function send() {
     const addr = to.trim().toLowerCase();
     if (!addr || !addr.includes("@")) { setMsg("Enter a valid email address"); setState("error"); return; }
-    setState("sending");
-    setMsg("");
+    setState("sending"); setMsg("");
     try {
       await devApi("/developer/smtp-test", { method: "POST", body: JSON.stringify({ to: addr }) });
       setMsg(`Test email sent to ${addr} — check the inbox.`);
@@ -120,19 +113,14 @@ function SmtpTestWidget() {
       <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Send test email</div>
       <div className="flex items-center gap-2">
         <input
-          type="email"
-          placeholder="you@example.com"
-          value={to}
+          type="email" placeholder="you@example.com" value={to}
           onChange={e => setTo(e.target.value)}
           onKeyDown={e => e.key === "Enter" && send()}
           disabled={state === "sending"}
           className="flex-1 rounded-lg border border-border bg-input/40 px-2.5 py-1 text-[11px] text-foreground focus:border-ring focus:outline-none disabled:opacity-50"
         />
-        <button
-          onClick={send}
-          disabled={state === "sending"}
-          className="rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition shrink-0"
-        >
+        <button onClick={send} disabled={state === "sending"}
+          className="rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition shrink-0">
           {state === "sending" ? "Sending…" : "Send"}
         </button>
       </div>
@@ -145,14 +133,24 @@ function SmtpTestWidget() {
   );
 }
 
-function ServiceCard({ id, svc }: { id: string; svc: ServiceStatus }) {
-  const meta = SERVICE_META[id] ?? { label: id, icon: "⚙️", description: "" };
+// ── Service Card ──────────────────────────────────────────────────────────────
+
+function ServiceCard({
+  id, svc, onRefresh, refreshing,
+}: {
+  id: ServiceKey;
+  svc: ServiceStatus;
+  onRefresh: () => void;
+  refreshing: boolean;
+}) {
+  const meta = SERVICE_META[id];
+  const isChecking = svc.status === "checking" || refreshing;
 
   return (
     <div className={`rounded-xl border p-5 transition-colors ${
+      isChecking ? "border-border bg-card/40" :
       svc.status === "ok" ? "border-border bg-card/60" :
-      svc.status === "error" ? "border-destructive/40 bg-destructive/5" :
-      "border-border bg-card/40"
+      "border-destructive/40 bg-destructive/5"
     }`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
@@ -163,13 +161,24 @@ function ServiceCard({ id, svc }: { id: string; svc: ServiceStatus }) {
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <LatencyPill ms={svc.latency_ms} />
-          <StatusBadge status={svc.status} />
+          {!isChecking && <LatencyPill ms={svc.latency_ms} />}
+          <StatusBadge status={isChecking ? "checking" : svc.status} />
+          {/* Per-card refresh button */}
+          <button
+            onClick={onRefresh}
+            disabled={refreshing}
+            title={`Refresh ${meta.label}`}
+            className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-border text-muted-foreground hover:border-ring hover:text-foreground disabled:opacity-40 transition"
+          >
+            <svg className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
         </div>
       </div>
 
       {/* Detail line */}
-      {svc.status !== "checking" && (
+      {!isChecking && (
         <div className={`mt-3 text-[11px] font-mono rounded-md px-3 py-2 ${
           svc.status === "error" ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground"
         }`}>
@@ -177,8 +186,8 @@ function ServiceCard({ id, svc }: { id: string; svc: ServiceStatus }) {
         </div>
       )}
 
-      {/* Database-specific extras */}
-      {id === "database" && svc.status === "ok" && (
+      {/* Database extras */}
+      {id === "database" && svc.status === "ok" && !isChecking && (
         <div className="mt-3 grid grid-cols-2 gap-2">
           <div className="rounded-lg bg-muted/60 px-3 py-2">
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Applied revision</div>
@@ -199,7 +208,7 @@ function ServiceCard({ id, svc }: { id: string; svc: ServiceStatus }) {
       )}
 
       {/* Redis queue depth */}
-      {id === "redis" && svc.status === "ok" && svc.queue_depth !== undefined && svc.queue_depth !== null && (
+      {id === "redis" && svc.status === "ok" && !isChecking && svc.queue_depth !== undefined && svc.queue_depth !== null && (
         <div className="mt-3 rounded-lg bg-muted/60 px-3 py-2 inline-flex items-center gap-2">
           <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Celery queue depth</span>
           <span className={`text-[11px] font-semibold font-mono ${svc.queue_depth > 20 ? "text-yellow-600 dark:text-yellow-400" : "text-foreground"}`}>
@@ -208,8 +217,8 @@ function ServiceCard({ id, svc }: { id: string; svc: ServiceStatus }) {
         </div>
       )}
 
-      {/* OpenRouter credits remaining */}
-      {id === "openrouter" && svc.status === "ok" && svc.credits_remaining !== undefined && svc.credits_remaining !== null && (
+      {/* OpenRouter credits */}
+      {id === "openrouter" && svc.status === "ok" && !isChecking && svc.credits_remaining !== undefined && svc.credits_remaining !== null && (
         <div className="mt-3 rounded-lg bg-muted/60 px-3 py-2 inline-flex items-center gap-2">
           <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Credits remaining</span>
           <span className={`text-[11px] font-semibold font-mono ${svc.credits_remaining < 5 ? "text-destructive" : "text-primary"}`}>
@@ -219,7 +228,7 @@ function ServiceCard({ id, svc }: { id: string; svc: ServiceStatus }) {
       )}
 
       {/* SMTP — auth mode badge + test widget */}
-      {id === "smtp" && svc.status !== "checking" && (
+      {id === "smtp" && !isChecking && (
         <>
           {svc.auth_mode && (
             <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
@@ -233,7 +242,7 @@ function ServiceCard({ id, svc }: { id: string; svc: ServiceStatus }) {
   );
 }
 
-// ── Migration panel ────────────────────────────────────────────────────────────
+// ── Migration Panel ───────────────────────────────────────────────────────────
 
 function MigrationPanel({ handleAuthError }: { handleAuthError: (e: any) => boolean }) {
   const [history, setHistory] = useState<MigrationHistory | null>(null);
@@ -245,8 +254,7 @@ function MigrationPanel({ handleAuthError }: { handleAuthError: (e: any) => bool
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   function loadHistory() {
-    setLoadingHistory(true);
-    setHistoryErr("");
+    setLoadingHistory(true); setHistoryErr("");
     devApi("/developer/infrastructure/migration-history")
       .then((data) => { setHistory(data); setShowHistory(true); })
       .catch((e: any) => { if (!handleAuthError(e)) setHistoryErr(e.message || "Could not load migration history"); })
@@ -254,16 +262,12 @@ function MigrationPanel({ handleAuthError }: { handleAuthError: (e: any) => bool
   }
 
   async function runMigrations() {
-    setConfirmOpen(false);
-    setRunning(true);
-    setRunOutput(null);
+    setConfirmOpen(false); setRunning(true); setRunOutput(null);
     try {
       const result = await devApi("/developer/infrastructure/run-migrations", { method: "POST" });
       setRunOutput({ ok: true, output: result.output || "No output" });
     } catch (e: any) {
-      if (!handleAuthError(e)) {
-        setRunOutput({ ok: false, output: e.message || "Migration failed" });
-      }
+      if (!handleAuthError(e)) setRunOutput({ ok: false, output: e.message || "Migration failed" });
     } finally {
       setRunning(false);
     }
@@ -281,52 +285,32 @@ function MigrationPanel({ handleAuthError }: { handleAuthError: (e: any) => bool
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={loadHistory}
-            disabled={loadingHistory}
-            className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground hover:border-ring disabled:opacity-50 transition"
-          >
+          <button onClick={loadHistory} disabled={loadingHistory}
+            className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground hover:border-ring disabled:opacity-50 transition">
             {loadingHistory ? "Loading…" : "↻ Check status"}
           </button>
-          <button
-            onClick={() => setConfirmOpen(true)}
-            disabled={running}
-            className="rounded-full bg-primary px-4 py-1.5 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition"
-          >
+          <button onClick={() => setConfirmOpen(true)} disabled={running}
+            className="rounded-full bg-primary px-4 py-1.5 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition">
             {running ? "Running…" : "▶ Run migrations"}
           </button>
         </div>
       </div>
 
-      {/* Summary badges */}
       {history && (
         <div className="mt-4 flex flex-wrap gap-2">
-          <span className="rounded-full bg-muted px-3 py-1 text-[11px] font-medium text-foreground">
-            {history.total} total
-          </span>
-          <span className="rounded-full bg-green-500/10 px-3 py-1 text-[11px] font-semibold text-green-600 dark:text-green-400">
-            ✓ {history.applied} applied
-          </span>
+          <span className="rounded-full bg-muted px-3 py-1 text-[11px] font-medium text-foreground">{history.total} total</span>
+          <span className="rounded-full bg-green-500/10 px-3 py-1 text-[11px] font-semibold text-green-600 dark:text-green-400">✓ {history.applied} applied</span>
           {history.pending > 0 ? (
-            <span className="rounded-full bg-yellow-500/10 px-3 py-1 text-[11px] font-semibold text-yellow-700 dark:text-yellow-400">
-              ⏳ {history.pending} pending
-            </span>
+            <span className="rounded-full bg-yellow-500/10 px-3 py-1 text-[11px] font-semibold text-yellow-700 dark:text-yellow-400">⏳ {history.pending} pending</span>
           ) : (
-            <span className="rounded-full bg-green-500/10 px-3 py-1 text-[11px] font-semibold text-green-600 dark:text-green-400">
-              ✓ Up to date
-            </span>
+            <span className="rounded-full bg-green-500/10 px-3 py-1 text-[11px] font-semibold text-green-600 dark:text-green-400">✓ Up to date</span>
           )}
-          <span className="rounded-full bg-muted px-3 py-1 text-[11px] font-mono text-muted-foreground">
-            HEAD: {history.current_revision || "none"}
-          </span>
+          <span className="rounded-full bg-muted px-3 py-1 text-[11px] font-mono text-muted-foreground">HEAD: {history.current_revision || "none"}</span>
         </div>
       )}
 
-      {historyErr && (
-        <div className="mt-3 text-[11px] text-destructive">{historyErr}</div>
-      )}
+      {historyErr && <div className="mt-3 text-[11px] text-destructive">{historyErr}</div>}
 
-      {/* Migration table */}
       {showHistory && history && history.migrations.length > 0 && (
         <div className="mt-4 rounded-lg border border-border overflow-hidden">
           <div className="overflow-x-auto">
@@ -346,15 +330,11 @@ function MigrationPanel({ handleAuthError }: { handleAuthError: (e: any) => bool
                     <td className="px-3 py-2 font-mono text-muted-foreground">{history.total - i}</td>
                     <td className="px-3 py-2 font-mono text-foreground">{m.revision.slice(0, 8)}</td>
                     <td className="px-3 py-2 text-foreground max-w-xs truncate" title={m.description}>{m.description}</td>
-                    <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
-                      {m.create_date ? m.create_date.slice(0, 10) : "—"}
-                    </td>
+                    <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{m.create_date ? m.create_date.slice(0, 10) : "—"}</td>
                     <td className="px-3 py-2">
-                      {m.applied ? (
-                        <span className="text-green-600 dark:text-green-400 font-semibold">✓ Applied</span>
-                      ) : (
-                        <span className="text-yellow-600 dark:text-yellow-400 font-semibold">⏳ Pending</span>
-                      )}
+                      {m.applied
+                        ? <span className="text-green-600 dark:text-green-400 font-semibold">✓ Applied</span>
+                        : <span className="text-yellow-600 dark:text-yellow-400 font-semibold">⏳ Pending</span>}
                     </td>
                   </tr>
                 ))}
@@ -364,43 +344,27 @@ function MigrationPanel({ handleAuthError }: { handleAuthError: (e: any) => bool
         </div>
       )}
 
-      {/* Run output */}
       {runOutput && (
         <div className={`mt-4 rounded-lg border px-4 py-3 ${runOutput.ok ? "border-green-500/30 bg-green-500/5" : "border-destructive/30 bg-destructive/5"}`}>
           <div className={`text-[11px] font-semibold mb-2 ${runOutput.ok ? "text-green-600 dark:text-green-400" : "text-destructive"}`}>
             {runOutput.ok ? "✓ Migrations completed successfully" : "✗ Migration failed"}
           </div>
-          <pre className="text-[11px] font-mono text-foreground/80 whitespace-pre-wrap break-all overflow-x-auto max-h-64">
-            {runOutput.output}
-          </pre>
+          <pre className="text-[11px] font-mono text-foreground/80 whitespace-pre-wrap break-all overflow-x-auto max-h-64">{runOutput.output}</pre>
         </div>
       )}
 
-      {/* Confirm dialog */}
       {confirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="rounded-xl border border-border bg-card p-6 shadow-2xl max-w-sm w-full">
             <h4 className="font-semibold text-foreground">Run database migrations?</h4>
             <p className="mt-2 text-sm text-muted-foreground">
               This will execute <code className="font-mono bg-muted px-1 rounded">alembic upgrade head</code> against the live database.
-              {pendingCount !== null && pendingCount > 0 && (
-                <> <strong>{pendingCount} migration{pendingCount > 1 ? "s" : ""}</strong> will be applied.</>
-              )}
-              {" "}Schema changes cannot be automatically reversed. Make sure you have a backup if this is a production database.
+              {pendingCount !== null && pendingCount > 0 && <> <strong>{pendingCount} migration{pendingCount > 1 ? "s" : ""}</strong> will be applied.</>}
+              {" "}Schema changes cannot be automatically reversed.
             </p>
             <div className="mt-5 flex gap-3 justify-end">
-              <button
-                onClick={() => setConfirmOpen(false)}
-                className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={runMigrations}
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition"
-              >
-                Yes, run migrations
-              </button>
+              <button onClick={() => setConfirmOpen(false)} className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition">Cancel</button>
+              <button onClick={runMigrations} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition">Yes, run migrations</button>
             </div>
           </div>
         </div>
@@ -411,34 +375,66 @@ function MigrationPanel({ handleAuthError }: { handleAuthError: (e: any) => bool
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+const CHECKING_SVC: ServiceStatus = { status: "checking", latency_ms: null, detail: "" };
+
 function DeveloperInfrastructure() {
   useRequireDeveloperAuth();
   const handleAuthError = useDevAuthErrorHandler();
 
-  const [status, setStatus] = useState<InfraStatus | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Per-service status — keyed by service id
+  const [services, setServices] = useState<Partial<Record<ServiceKey, ServiceStatus>>>({});
+  // Per-service refresh loading — keyed by service id
+  const [refreshing, setRefreshing] = useState<Partial<Record<ServiceKey, boolean>>>({});
+  const [initialLoading, setInitialLoading] = useState(true);
   const [err, setErr] = useState("");
   const [lastChecked, setLastChecked] = useState<string | null>(null);
 
-  const checkAll = useCallback(() => {
-    setLoading(true);
-    setErr("");
-    devApi("/developer/infrastructure/status")
-      .then((data: InfraStatus) => {
-        setStatus(data);
-        setLastChecked(new Date().toLocaleTimeString());
-      })
-      .catch((e: any) => { if (!handleAuthError(e)) setErr(e.message || "Health check failed"); })
-      .finally(() => setLoading(false));
+  // Merge a partial result into the services map
+  function mergeServices(partial: Partial<Record<ServiceKey, ServiceStatus>>) {
+    setServices((prev) => ({ ...prev, ...partial }));
+  }
+
+  // Refresh a single service
+  const refreshService = useCallback(async (key: ServiceKey) => {
+    setRefreshing((prev) => ({ ...prev, [key]: true }));
+    try {
+      const data = await devApi(`/developer/infrastructure/status?service=${key}`);
+      mergeServices(data.services as Partial<Record<ServiceKey, ServiceStatus>>);
+      setLastChecked(new Date().toLocaleTimeString());
+    } catch (e: any) {
+      if (!handleAuthError(e)) {
+        // Mark the service as error so the card shows the failure
+        mergeServices({ [key]: { status: "error", latency_ms: null, detail: e.message || "Check failed" } });
+      }
+    } finally {
+      setRefreshing((prev) => ({ ...prev, [key]: false }));
+    }
   }, [handleAuthError]);
 
-  // Run once on mount — no polling, just an on-open snapshot.
-  // The "↻ Refresh" button lets you re-check manually after that.
-  useEffect(() => { checkAll(); }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+  // Refresh all services
+  const checkAll = useCallback(async () => {
+    setErr("");
+    // Show all cards as checking immediately
+    const checking: Partial<Record<ServiceKey, ServiceStatus>> = {};
+    SERVICE_ORDER.forEach((k) => { checking[k] = CHECKING_SVC; });
+    setServices(checking);
+    setInitialLoading(true);
+    try {
+      const data = await devApi("/developer/infrastructure/status");
+      mergeServices(data.services as Partial<Record<ServiceKey, ServiceStatus>>);
+      setLastChecked(new Date().toLocaleTimeString());
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Health check failed");
+    } finally {
+      setInitialLoading(false);
+    }
+  }, [handleAuthError]);
 
-  const serviceOrder = ["database", "redis", "storage", "openrouter", "smtp"] as const;
-  const allOk = status && serviceOrder.every((k) => status.services[k]?.status === "ok");
-  const anyError = status && serviceOrder.some((k) => status.services[k]?.status === "error");
+  useEffect(() => { checkAll(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const allOk = SERVICE_ORDER.every((k) => services[k]?.status === "ok");
+  const anyError = SERVICE_ORDER.some((k) => services[k]?.status === "error");
+  const hasAnyResult = SERVICE_ORDER.some((k) => services[k]);
 
   return (
     <DeveloperShell title="Infrastructure">
@@ -449,98 +445,68 @@ function DeveloperInfrastructure() {
           <div>
             <h2 className="text-lg font-semibold text-foreground">Infrastructure Status</h2>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Checked once when you open this page. Press Refresh to get the latest status.
+              Click ↻ on any card to re-check just that service. Refresh All re-checks everything.
             </p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            {lastChecked && !loading && (
+            {lastChecked && (
               <span className="text-[11px] text-muted-foreground">Last checked {lastChecked}</span>
             )}
             <button
               onClick={checkAll}
-              disabled={loading}
+              disabled={initialLoading}
               className="rounded-full border border-border px-4 py-1.5 text-[11px] font-medium text-muted-foreground hover:border-ring hover:text-foreground disabled:opacity-50 transition"
             >
-              {loading ? "Checking…" : "↻ Refresh"}
+              {initialLoading ? "Checking…" : "↻ Refresh all"}
             </button>
           </div>
         </div>
 
-        {/* First-load skeleton — cards in muted "checking" state */}
-        {loading && !status && (
-          <div className="grid gap-4 sm:grid-cols-2">
-            {serviceOrder.map((key) => (
-              <ServiceCard
-                key={key}
-                id={key}
-                svc={{ status: "checking", latency_ms: null, detail: "" }}
-              />
-            ))}
-          </div>
-        )}
-
         {err && (
           <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive flex items-center justify-between gap-4">
             <span>{err}</span>
-            <button onClick={checkAll} className="shrink-0 text-[11px] underline underline-offset-2 hover:no-underline">
-              Try again
-            </button>
+            <button onClick={checkAll} className="shrink-0 text-[11px] underline underline-offset-2 hover:no-underline">Try again</button>
           </div>
         )}
 
-        {/* Results */}
-        {status && (
-          <>
-            {/* Overall banner */}
-            <div className={`rounded-xl border px-4 py-3 flex items-center gap-3 ${
-              allOk
-                ? "border-green-500/30 bg-green-500/5"
+        {/* Overall banner — only when we have results */}
+        {hasAnyResult && !initialLoading && (
+          <div className={`rounded-xl border px-4 py-3 flex items-center gap-3 ${
+            allOk ? "border-green-500/30 bg-green-500/5" :
+            anyError ? "border-destructive/30 bg-destructive/5" :
+            "border-yellow-500/30 bg-yellow-500/5"
+          }`}>
+            <span className="text-lg">{allOk ? "✅" : anyError ? "🔴" : "⚠️"}</span>
+            <div className="text-sm font-medium text-foreground">
+              {allOk
+                ? "All systems operational"
                 : anyError
-                ? "border-destructive/30 bg-destructive/5"
-                : "border-yellow-500/30 bg-yellow-500/5"
-            }`}>
-              <span className="text-lg">
-                {loading ? "🔄" : allOk ? "✅" : anyError ? "🔴" : "⚠️"}
-              </span>
-              <div className="text-sm font-medium text-foreground">
-                {loading
-                  ? "Re-checking all services…"
-                  : allOk
-                  ? "All systems operational"
-                  : anyError
-                  ? `${serviceOrder.filter((k) => status.services[k]?.status === "error").length} service(s) reporting errors`
-                  : "Some services could not be reached"}
-              </div>
-              <div className="ml-auto text-[11px] text-muted-foreground font-mono">
-                {status.checked_at.replace("T", " ").slice(0, 19)} UTC
-              </div>
+                ? `${SERVICE_ORDER.filter((k) => services[k]?.status === "error").length} service(s) reporting errors`
+                : "Some services could not be reached"}
             </div>
-
-            {/* Service cards grid — stale results stay visible during re-check */}
-            <div className="grid gap-4 sm:grid-cols-2">
-              {serviceOrder.map((key) => (
-                <ServiceCard
-                  key={key}
-                  id={key}
-                  svc={loading
-                    ? { ...status.services[key], status: "checking" }
-                    : status.services[key]
-                  }
-                />
-              ))}
-            </div>
-          </>
+          </div>
         )}
 
-        {/* Divider */}
+        {/* Service cards grid */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          {SERVICE_ORDER.map((key) => (
+            <ServiceCard
+              key={key}
+              id={key}
+              svc={services[key] ?? CHECKING_SVC}
+              onRefresh={() => refreshService(key)}
+              refreshing={!!refreshing[key]}
+            />
+          ))}
+        </div>
+
         <div className="border-t border-border" />
 
         {/* Database migrations */}
         <div>
           <h2 className="text-lg font-semibold text-foreground mb-1">Database Setup</h2>
           <p className="text-sm text-muted-foreground mb-4">
-            Apply all pending schema migrations to the connected database. Use this after first deployment
-            or after upgrading to a new version of NivaSpark.
+            Apply all pending schema migrations to the connected database.
           </p>
           <MigrationPanel handleAuthError={handleAuthError} />
         </div>

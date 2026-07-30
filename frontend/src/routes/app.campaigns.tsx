@@ -10,6 +10,8 @@ import { RepostModal } from "@/components/repost-modal";
 import { detectedTimeZone, zonedWallTimeToUtcParts, formatInTimeZone } from "@/lib/timezone";
 import { MAX_VIDEO_SHOTS } from "@/lib/constants";
 import { api, type AdOut, type AvailableModel } from "@/lib/api";
+import { ImageThemeGrid, mapImageTheme, type ImageTheme, type ImageThemeField } from "@/components/theme-gallery-grid";
+import { NovaHint } from "@/components/nova-hint";
 import { useAuth } from "@/hooks/use-auth";
 import { useRequireCapability } from "@/hooks/use-require-capability";
 
@@ -25,6 +27,26 @@ const POSITION_OPTIONS = [
   "middle_left","middle_center","middle_right",
   "bottom_left","bottom_center","bottom_right",
 ];
+
+// Mirrors app.index.tsx — same three overlay fields, kept in sync
+const STANDARD_TEXT_FIELDS: ImageThemeField[] = [
+  { key: "headline", label: "Headline", placeholder: "e.g. MEGA SALE", defaultPosition: "top-left",
+    styleHint: "large bold advertising headline typography" },
+  { key: "badge", label: "Discount badge", placeholder: "e.g. UP TO 50% OFF", defaultPosition: "middle-right",
+    styleHint: "styled like a real promotional discount sticker/badge" },
+  { key: "body", label: "Body / about text", placeholder: "e.g. short brand or offer description", defaultPosition: "bottom-left",
+    styleHint: "smaller clean sans-serif supporting text" },
+];
+
+function buildOverlayText(
+  fields: ImageThemeField[],
+  fieldValues: Record<string, string>,
+  positions: Record<string, string>,
+): string | null {
+  const filled = fields.filter((f) => fieldValues[f.key]?.trim());
+  if (filled.length === 0) return null;
+  return filled.map((f) => `${f.label}: "${fieldValues[f.key].trim()}" (${positions[f.key] || f.defaultPosition}, ${f.styleHint})`).join(". ") + ".";
+}
 
 type PhaseInfo = { caption: string; date?: string; time?: string; platforms?: string[]; ad_id?: string | null };
 type Campaign = {
@@ -76,7 +98,17 @@ type PhaseFormState = {
   date: string; time: string; platforms: Record<string, boolean>;
   wantImage: boolean; productImage: string | null; sceneText: string; useBrandKit: boolean;
   imageModelId: string | null; imagePromptOverride: string;
+  imageAspectRatio: string | null;
+  refMode: "text" | "image";
+  selectedImageTheme: string | null;
+  themeFieldValues: Record<string, string>;
+  themePositions: Record<string, string>;
+  selectedTextStyle: string | null;
+  selectedTextCategory: string | null;
+  imageTextOverlay: string | null;
+  showThemeModal: boolean;
   wantVideo: boolean; videoModelId: string | null; videoResolution: string | null;
+  videoAspectRatio: string | null;
   videoFrameImage: string | null; videoEndFrameImage: string | null;
   videoShots: VideoShot[];
   videoMode: "single_reference" | "first_last_frame";
@@ -86,7 +118,7 @@ type PhaseFormState = {
   refineVideoPrompt: boolean; refineVideoFrame: boolean;
 };
 
-function PhaseScheduleInput({ label, state, setState, availableImageModels, availableVideoModels, availablePlatforms, connectedPlatformIds, testMode, cameraStylePresets, musicPresets, brandVideoShots }: {
+function PhaseScheduleInput({ label, state, setState, availableImageModels, availableVideoModels, availablePlatforms, connectedPlatformIds, testMode, cameraStylePresets, musicPresets, brandVideoShots, imageThemes, textTheme }: {
   label: string; state: PhaseFormState; setState: (v: PhaseFormState) => void;
   availableImageModels: AvailableModel[] | null; availableVideoModels: AvailableModel[] | null;
   availablePlatforms: Platform[];
@@ -94,6 +126,8 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
   cameraStylePresets: { id: string; label: string }[];
   musicPresets: { id: string; label: string }[];
   brandVideoShots: { id: string; kind: string; status: string; label: string; prompt: string; duration: number }[];
+  imageThemes: ImageTheme[];
+  textTheme: { styleTags: string[]; categoryTags: string[]; stylePrompts: Record<string, string>; categoryPrompts: Record<string, string> };
 }) {
   async function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -152,11 +186,15 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
 
       {state.wantImage && (
         <div className="mt-2 space-y-2 rounded-lg border border-border/60 bg-card/40 p-2.5">
+          {/* Model + aspect ratio */}
           <div>
             <div className="text-[10px] font-semibold text-muted-foreground mb-1">Image Model</div>
             <select
               value={state.imageModelId || ""}
-              onChange={(e) => setState({ ...state, imageModelId: e.target.value })}
+              onChange={(e) => {
+                const m = availableImageModels?.find((x) => x.id === e.target.value);
+                setState({ ...state, imageModelId: e.target.value, imageAspectRatio: m?.aspect_ratios?.[0] ?? null });
+              }}
               className="w-full rounded-lg border border-input bg-input/40 px-2 py-1.5 text-[11px] text-foreground focus:border-primary focus:outline-none"
             >
               {!availableImageModels && <option value="">Loading options…</option>}
@@ -164,37 +202,190 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
                 <option key={m.id} value={m.id}>{m.label} — {m.credits} credit{m.credits > 1 ? "s" : ""}</option>
               ))}
             </select>
+            {(() => {
+              const m = availableImageModels?.find((x) => x.id === state.imageModelId);
+              if (!m?.aspect_ratios?.length) return null;
+              return (
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  <span className="text-[10px] text-muted-foreground">Ratio:</span>
+                  {m.aspect_ratios.map((r: string) => (
+                    <button key={r} type="button" onClick={() => setState({ ...state, imageAspectRatio: r })}
+                      className={`rounded-full border px-2 py-0.5 text-[10px] ${state.imageAspectRatio === r ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>{r}</button>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
+
+          {/* Reference photo */}
           {state.productImage ? (
             <div className="flex items-center gap-2">
               <img src={state.productImage} alt="product" className="h-10 w-10 rounded object-cover border border-border" />
+              <span className="text-[10px] text-emerald-400 flex-1">✓ Reference photo</span>
               <button type="button" onClick={() => setState({ ...state, productImage: null })} className="text-[10px] text-destructive border border-destructive/40 rounded-full px-2 py-0.5">Remove</button>
             </div>
           ) : (
             <label className="inline-block cursor-pointer rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">
-              ⬆ Upload your own photo
+              ⬆ Upload reference photo
               <input type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
             </label>
           )}
-          <textarea
-            value={state.sceneText}
-            onChange={(e) => setState({ ...state, sceneText: e.target.value })}
-            rows={2}
-            placeholder={state.productImage ? 'Placement, e.g. "on a wooden desk, morning light"' : 'Describe the scene, e.g. "minimalist studio, soft lighting" — optional'}
-            className="w-full rounded-lg border border-input bg-input/40 p-2 text-[11px] text-foreground resize-none focus:border-primary focus:outline-none"
-          />
+
+          {/* Theme reference mode */}
+          <div className="rounded-lg border border-border/60 bg-background/40 p-2">
+            <div className="text-[10px] font-semibold text-foreground mb-1.5">
+              {state.productImage ? "Placement & surroundings" : "Image description"} <NovaHint hintKey="field:image-describe" />
+            </div>
+            <div className="flex gap-1 mb-2">
+              {(["text", "image"] as const).map((m) => (
+                <button key={m} type="button" onClick={() => setState({ ...state, refMode: m, selectedImageTheme: null, selectedTextStyle: null, selectedTextCategory: null, imageTextOverlay: null })}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${state.refMode === m ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
+                  {m === "text" ? "✏️ Text Theme" : "🖼 Image Theme"}
+                </button>
+              ))}
+            </div>
+
+            {state.refMode === "text" ? (
+              <div className="space-y-1.5">
+                <div className="flex gap-1.5">
+                  <div className="flex-1">
+                    <label className="text-[10px] text-muted-foreground block mb-0.5">Style</label>
+                    <select value={state.selectedTextStyle ?? ""} onChange={(e) => {
+                      const s = { ...state, selectedTextStyle: e.target.value || null };
+                      const styleP = s.selectedTextStyle ? textTheme.stylePrompts[s.selectedTextStyle] || "" : "";
+                      const catP = s.selectedTextCategory ? textTheme.categoryPrompts[s.selectedTextCategory] || "" : "";
+                      const combined = [styleP, catP].filter(Boolean).join(" ");
+                      s.sceneText = combined || state.sceneText;
+                      setState(s);
+                    }} className="w-full rounded border border-input bg-input/40 px-1.5 py-1 text-[10px] text-foreground focus:border-primary focus:outline-none">
+                      <option value="">None</option>
+                      {textTheme.styleTags.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-[10px] text-muted-foreground block mb-0.5">Category</label>
+                    <select value={state.selectedTextCategory ?? ""} onChange={(e) => {
+                      const s = { ...state, selectedTextCategory: e.target.value || null };
+                      const styleP = s.selectedTextStyle ? textTheme.stylePrompts[s.selectedTextStyle] || "" : "";
+                      const catP = s.selectedTextCategory ? textTheme.categoryPrompts[s.selectedTextCategory] || "" : "";
+                      const combined = [styleP, catP].filter(Boolean).join(" ");
+                      s.sceneText = combined || state.sceneText;
+                      setState(s);
+                    }} className="w-full rounded border border-input bg-input/40 px-1.5 py-1 text-[10px] text-foreground focus:border-primary focus:outline-none">
+                      <option value="">None</option>
+                      {textTheme.categoryTags.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {/* Text overlay fields */}
+                <div className="space-y-1">
+                  {STANDARD_TEXT_FIELDS.map((f) => (
+                    <div key={f.key} className="flex gap-1.5 items-end">
+                      <div className="flex-1">
+                        <label className="text-[10px] text-muted-foreground">{f.label}</label>
+                        <input value={state.themeFieldValues[f.key] ?? ""} onChange={(e) => {
+                          const fv = { ...state.themeFieldValues, [f.key]: e.target.value };
+                          setState({ ...state, themeFieldValues: fv, imageTextOverlay: buildOverlayText(STANDARD_TEXT_FIELDS, fv, state.themePositions) });
+                        }} placeholder={f.placeholder}
+                          className="w-full rounded border border-input bg-input/40 px-1.5 py-1 text-[10px] text-foreground focus:border-primary focus:outline-none" />
+                      </div>
+                      <div className="w-28">
+                        <label className="text-[10px] text-muted-foreground">Position</label>
+                        <select value={state.themePositions[f.key] ?? f.defaultPosition} onChange={(e) => {
+                          const tp = { ...state.themePositions, [f.key]: e.target.value };
+                          setState({ ...state, themePositions: tp, imageTextOverlay: buildOverlayText(STANDARD_TEXT_FIELDS, state.themeFieldValues, tp) });
+                        }} className="w-full rounded border border-input bg-input/40 px-1 py-1 text-[10px] text-foreground focus:border-primary focus:outline-none">
+                          {POSITION_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div>
+                {state.selectedImageTheme ? (() => {
+                  const theme = imageThemes.find((t) => t.id === state.selectedImageTheme)!;
+                  return (
+                    <div className="flex items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 p-1.5 mb-1.5">
+                      <img src={theme.thumbnail} alt={theme.label} className="h-8 w-8 rounded object-cover shrink-0" />
+                      <div className="min-w-0 flex-1 text-[10px] font-semibold text-foreground truncate">{theme.label}</div>
+                      <button type="button" onClick={() => setState({ ...state, showThemeModal: true })}
+                        className="shrink-0 rounded-full border border-primary/50 px-2 py-0.5 text-[10px] text-primary">Change</button>
+                    </div>
+                  );
+                })() : (
+                  <button type="button" onClick={() => setState({ ...state, showThemeModal: true })}
+                    className="w-full mb-1.5 rounded border border-dashed border-primary/50 px-2 py-2 text-[10px] text-primary hover:bg-primary/5 flex items-center justify-center gap-1">
+                    🖼 Browse image themes
+                  </button>
+                )}
+                {state.selectedImageTheme && (() => {
+                  const theme = imageThemes.find((t) => t.id === state.selectedImageTheme)!;
+                  return theme.textFields.length > 0 ? (
+                    <div className="space-y-1">
+                      {theme.textFields.map((f) => (
+                        <div key={f.key} className="flex gap-1.5 items-end">
+                          <div className="flex-1">
+                            <label className="text-[10px] text-muted-foreground">{f.label}</label>
+                            <input value={state.themeFieldValues[f.key] ?? ""} onChange={(e) => {
+                              const fv = { ...state.themeFieldValues, [f.key]: e.target.value };
+                              setState({ ...state, themeFieldValues: fv, imageTextOverlay: buildOverlayText(theme.textFields, fv, state.themePositions) });
+                            }} placeholder={f.placeholder}
+                              className="w-full rounded border border-input bg-input/40 px-1.5 py-1 text-[10px] text-foreground focus:border-primary focus:outline-none" />
+                          </div>
+                          <div className="w-28">
+                            <label className="text-[10px] text-muted-foreground">Position</label>
+                            <select value={state.themePositions[f.key] ?? f.defaultPosition} onChange={(e) => {
+                              const tp = { ...state.themePositions, [f.key]: e.target.value };
+                              setState({ ...state, themePositions: tp, imageTextOverlay: buildOverlayText(theme.textFields, state.themeFieldValues, tp) });
+                            }} className="w-full rounded border border-input bg-input/40 px-1 py-1 text-[10px] text-foreground focus:border-primary focus:outline-none">
+                              {POSITION_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <div className="text-[10px] text-muted-foreground">No text overlay for this theme.</div>;
+                })()}
+              </div>
+            )}
+
+            <textarea value={state.sceneText} onChange={(e) => setState({ ...state, sceneText: e.target.value })} rows={2}
+              placeholder={state.productImage ? "e.g. place on a wooden desk, morning light" : "e.g. minimalist studio, soft lighting — optional"}
+              className="mt-1.5 w-full rounded-lg border border-input bg-input/40 p-2 text-[11px] text-foreground resize-none focus:border-primary focus:outline-none" />
+            {state.imageTextOverlay && (
+              <div className="mt-1 text-[10px] text-muted-foreground bg-background/60 border border-border/60 rounded p-1.5">
+                <span className="font-semibold text-foreground">Text overlay: </span>{state.imageTextOverlay}
+              </div>
+            )}
+          </div>
+
           <label className="flex items-center gap-1.5 text-[11px] text-foreground">
             <input type="checkbox" checked={state.useBrandKit} onChange={(e) => setState({ ...state, useBrandKit: e.target.checked })} />
             🎨 Include brand kit
           </label>
           <div>
             <div className="text-[10px] font-semibold text-muted-foreground mb-1">Image prompt override <span className="font-normal">(optional)</span></div>
-            <input
-              value={state.imagePromptOverride}
-              onChange={(e) => setState({ ...state, imagePromptOverride: e.target.value })}
+            <input value={state.imagePromptOverride} onChange={(e) => setState({ ...state, imagePromptOverride: e.target.value })}
               placeholder="Override the AI's image prompt entirely…"
-              className="w-full rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none"
-            />
+              className="w-full rounded-lg border border-input bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-primary focus:outline-none" />
+          </div>
+        </div>
+      )}
+      {/* Image theme picker modal */}
+      {state.showThemeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setState({ ...state, showThemeModal: false })}>
+          <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-2xl border border-border bg-background p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-sm font-semibold text-foreground">Choose an image theme</div>
+              <button type="button" onClick={() => setState({ ...state, showThemeModal: false })} className="text-muted-foreground hover:text-foreground text-lg">✕</button>
+            </div>
+            <ImageThemeGrid themes={imageThemes} selectedId={state.selectedImageTheme}
+              onSelect={(t) => {
+                const scene = t.basePrompt;
+                setState({ ...state, selectedImageTheme: t.id, themeFieldValues: {}, themePositions: {}, imageTextOverlay: null, sceneText: scene, showThemeModal: false });
+              }} />
           </div>
         </div>
       )}
@@ -228,6 +419,15 @@ function PhaseScheduleInput({ label, state, setState, availableImageModels, avai
                 {selectedVideoModel.resolutions.map((r: string) => (
                   <button key={r} type="button" onClick={() => setState({ ...state, videoResolution: r })}
                     className={`rounded-full border px-2 py-0.5 text-[10px] ${state.videoResolution === r ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>{r}</button>
+                ))}
+              </div>
+            )}
+            {selectedVideoModel?.aspect_ratios && selectedVideoModel.aspect_ratios.length > 0 && (
+              <div className="mt-1 flex flex-wrap items-center gap-1">
+                <span className="text-[10px] text-muted-foreground">Ratio:</span>
+                {(selectedVideoModel.aspect_ratios as string[]).map((r) => (
+                  <button key={r} type="button" onClick={() => setState({ ...state, videoAspectRatio: r })}
+                    className={`rounded-full border px-2 py-0.5 text-[10px] ${state.videoAspectRatio === r ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>{r}</button>
                 ))}
               </div>
             )}
@@ -537,9 +737,13 @@ function newPhaseState(days: number): PhaseFormState {
     date: defaultDate(days), time: "10:00",
     platforms: { instagram: true, facebook: true },
     wantImage: false, productImage: null, sceneText: "", useBrandKit: false, imageModelId: null, imagePromptOverride: "",
-    wantVideo: false, videoModelId: null, videoResolution: null, videoFrameImage: null, videoEndFrameImage: null,
+    imageAspectRatio: null, refMode: "text" as const, selectedImageTheme: null,
+    themeFieldValues: {}, themePositions: {}, selectedTextStyle: null, selectedTextCategory: null,
+    imageTextOverlay: null, showThemeModal: false,
+    wantVideo: false, videoModelId: null, videoResolution: null, videoAspectRatio: null,
+    videoFrameImage: null, videoEndFrameImage: null,
     videoShots: [{ prompt: "", duration: 6 }],
-    videoMode: "single_reference",
+    videoMode: "single_reference" as const,
     videoAudio: false, videoCameraStyleIds: [], videoNegativePrompt: "", videoBackgroundMusicId: "none",
     videoReferencePrompt: "", showVideoReferencePrompt: false, videoStartShotId: null, videoEndShotId: null,
     refineVideoPrompt: false, refineVideoFrame: false,
@@ -588,11 +792,20 @@ function Campaigns() {
   useEffect(() => { load(); }, [page, dateFrom, dateTo]);
 
   const [brandVideoShots, setBrandVideoShots] = useState<{ id: string; kind: string; status: string; label: string; prompt: string; duration: number }[]>([]);
+  const [imageThemes, setImageThemes] = useState<ImageTheme[]>([]);
+  const [textTheme, setTextTheme] = useState<{ styleTags: string[]; categoryTags: string[]; stylePrompts: Record<string, string>; categoryPrompts: Record<string, string> }>({ styleTags: [], categoryTags: [], stylePrompts: {}, categoryPrompts: {} });
 
   useEffect(() => {
     api("/ads/camera-style-presets").then((r: any[]) => setCameraStylePresets(r)).catch(() => {});
     api("/ads/music-presets").then((r: any[]) => setMusicPresets([{ id: "none", label: "None" }, ...r])).catch(() => {});
     api("/brand-kit/video-shots").then((shots: any[]) => setBrandVideoShots(shots)).catch(() => {});
+    api("/ads/themes").then((r) => {
+      const t = r.themes || {};
+      setImageThemes((t.image_themes || []).map(mapImageTheme));
+    }).catch(() => {});
+    api("/ads/text-theme").then((r) => {
+      setTextTheme({ styleTags: r.style_tags || [], categoryTags: r.category_tags || [], stylePrompts: r.style_prompts || {}, categoryPrompts: r.category_prompts || {} });
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -640,12 +853,16 @@ function Campaigns() {
       refine_video_prompt: s.wantVideo ? s.refineVideoPrompt : false,
       refine_video_frame: s.wantVideo ? s.refineVideoFrame : false,
       image_prompt_override: s.wantImage && s.imagePromptOverride.trim() ? s.imagePromptOverride.trim() : null,
+      image_aspect_ratio: s.wantImage ? s.imageAspectRatio : null,
+      text_overlay: s.wantImage ? s.imageTextOverlay : null,
       video_audio: s.wantVideo ? s.videoAudio : false,
       video_camera_style_ids: s.wantVideo ? s.videoCameraStyleIds : [],
       video_negative_prompt: s.wantVideo && s.videoNegativePrompt.trim() ? s.videoNegativePrompt.trim() : null,
       video_background_music_id: s.wantVideo && s.videoBackgroundMusicId !== "none" ? s.videoBackgroundMusicId : null,
       video_start_shot_id: s.wantVideo ? s.videoStartShotId : null,
       video_end_shot_id: s.wantVideo ? s.videoEndShotId : null,
+      video_reference_prompt: s.wantVideo && s.videoReferencePrompt.trim() ? s.videoReferencePrompt.trim() : null,
+      video_aspect_ratio: s.wantVideo ? s.videoAspectRatio : null,
       video_shots: s.wantVideo ? s.videoShots.map((sh) => ({
         prompt: sh.prompt,
         duration: sh.duration,
@@ -713,9 +930,9 @@ function Campaigns() {
 
 
         <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <PhaseScheduleInput label="Teaser" state={teaser} setState={setTeaser} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} />
-          <PhaseScheduleInput label="Launch" state={launch} setState={setLaunch} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} />
-          <PhaseScheduleInput label="Follow-up" state={followup} setState={setFollowup} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} />
+          <PhaseScheduleInput label="Teaser" state={teaser} setState={setTeaser} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} imageThemes={imageThemes} textTheme={textTheme} />
+          <PhaseScheduleInput label="Launch" state={launch} setState={setLaunch} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} imageThemes={imageThemes} textTheme={textTheme} />
+          <PhaseScheduleInput label="Follow-up" state={followup} setState={setFollowup} availableImageModels={availableImageModels} availableVideoModels={availableVideoModels} availablePlatforms={availablePlatforms} connectedPlatformIds={connectedPlatformIds} testMode={testMode} cameraStylePresets={cameraStylePresets} musicPresets={musicPresets} brandVideoShots={brandVideoShots} imageThemes={imageThemes} textTheme={textTheme} />
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">💡 Each phase's image is independent — e.g. skip the image for the Teaser, add your own photo for the Launch.</p>
 

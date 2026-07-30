@@ -2149,12 +2149,14 @@ async def delete_video_ratio(ratio: str, _: str = Depends(require_developer_perm
 # ── Infrastructure health & DB setup ──────────────────────────────────────────
 
 @router.get("/infrastructure/status")
-async def infrastructure_status(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
-    """Live health check for every service: DB, Redis, S3/R2, and OpenRouter.
-    Returns a status card per service so the developer panel can render
-    a colour-coded grid without multiple round-trips. Each service is
-    probed independently so one failure doesn't prevent the others from
-    reporting."""
+async def infrastructure_status(
+    _: str = Depends(require_developer),
+    db: AsyncSession = Depends(get_db),
+    service: str | None = Query(None),
+):
+    """Live health check for infrastructure services.
+    Pass ?service=smtp (or database|redis|storage|openrouter) to probe
+    only one service — powers per-card refresh in the developer panel."""
 
     results: dict[str, dict] = {}
 
@@ -2327,6 +2329,14 @@ async def infrastructure_status(_: str = Depends(require_developer), db: AsyncSe
             "detail": str(exc),
             "auth_mode": "unknown",
         }
+
+    # Filter to requested service only
+    VALID_SERVICES = {"database", "redis", "storage", "openrouter", "smtp"}
+    if service:
+        key = service.lower().strip()
+        if key not in VALID_SERVICES:
+            raise HTTPException(400, f"Unknown service '{key}'")
+        results = {k: v for k, v in results.items() if k == key}
 
     return {
         "checked_at": datetime.utcnow().isoformat() + "Z",

@@ -120,20 +120,12 @@ export function RequirementChecklist({
               Required before continuing
             </div>
             <ul className="space-y-1.5">
-              {items.map((item) => (
+              {items.filter((item) => !item.met).map((item) => (
                 <li key={item.label} className="flex items-center gap-2 text-[11px]">
-                  <span
-                    className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border text-[8px] font-bold transition-colors duration-150 ${
-                      item.met
-                        ? "border-emerald-500 bg-emerald-500/20 text-emerald-400"
-                        : "border-amber-500/60 bg-amber-500/10 text-amber-400"
-                    }`}
-                  >
-                    {item.met ? "✓" : "!"}
+                  <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border text-[8px] font-bold border-amber-500/60 bg-amber-500/10 text-amber-400">
+                    !
                   </span>
-                  <span className={item.met ? "text-emerald-400/70 line-through" : "text-white/80"}>
-                    {item.label}
-                  </span>
+                  <span className="text-white/80">{item.label}</span>
                 </li>
               ))}
             </ul>

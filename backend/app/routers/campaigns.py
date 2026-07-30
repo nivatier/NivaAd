@@ -81,6 +81,8 @@ async def _create_phase_ad(
     video_start_shot_id: str | None = None, video_end_shot_id: str | None = None,
     video_audio: bool = False, video_camera_style_ids: list[str] | None = None,
     video_negative_prompt: str | None = None, video_background_music_id: str | None = None,
+    image_aspect_ratio: str | None = None, video_aspect_ratio: str | None = None,
+    video_reference_prompt: str | None = None, text_overlay: str | None = None,
 ) -> tuple[Ad, int, uuid.UUID | None]:
     """Creates a real ad for one campaign phase. Copy is free (it's the
     phase's own caption, no extra Claude call) — cost is image and/or
@@ -196,6 +198,7 @@ async def _create_phase_ad(
             "product_name": campaign.name, "description": campaign.brief,
             "audience": "", "offer": "", "goal": "Product launch", "tone": "Professional",
             "env": env, "image_scene": image_scene, "product_image_url": product_image_url,
+            "image_aspect_ratio": image_aspect_ratio, "text_overlay": text_overlay,
             "brand_logo_url": brand_logo_url, "brand_logo_placement": brand_logo_placement,
             "image_model": image_model["model"] if image_model else None,
             "image_model_credits": image_model["credits"] if image_model else None,
@@ -206,6 +209,8 @@ async def _create_phase_ad(
             "video_shots": [s.model_dump() for s in video_shots] if video_shots else None,
             "video_frame_image_url": video_frame_image_url_resolved,
             "video_mode": video_mode if generate_video else None,
+            "video_reference_prompt": video_reference_prompt if generate_video else None,
+            "video_aspect_ratio": video_aspect_ratio if generate_video else None,
             "video_end_frame_image_url": video_end_frame_image_url_resolved,
             "refine_video_prompt": refine_video_prompt if generate_video else False,
             "refine_video_frame": refine_video_frame if generate_video else False,
@@ -315,6 +320,8 @@ async def create_campaign(data: CampaignCreateIn, user: User = Depends(require_c
             video_start_shot_id=pin.video_start_shot_id, video_end_shot_id=pin.video_end_shot_id,
             video_audio=pin.video_audio, video_camera_style_ids=pin.video_camera_style_ids,
             video_negative_prompt=pin.video_negative_prompt, video_background_music_id=pin.video_background_music_id,
+            image_aspect_ratio=pin.image_aspect_ratio, video_aspect_ratio=pin.video_aspect_ratio,
+            video_reference_prompt=pin.video_reference_prompt, text_overlay=pin.text_overlay,
         )
         if job_id:
             pending_job_ids.append(job_id)
@@ -452,6 +459,10 @@ async def generate_phase_image(
     brief["product_image_url"] = product_image_url
     brief["brand_logo_url"] = brand_logo_url
     brief["brand_logo_placement"] = brand_logo_placement
+    brief["image_aspect_ratio"] = data.image_aspect_ratio
+    brief["text_overlay"] = data.text_overlay
+    if data.image_prompt_override and data.image_prompt_override.strip():
+        brief["image_prompt_override"] = data.image_prompt_override.strip()
     ad.brief = brief
     flag_modified(ad, "brief")
     ad.status = "generating"

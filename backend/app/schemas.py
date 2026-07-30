@@ -1144,6 +1144,13 @@ class PhaseScheduleIn(BaseModel):
     video_background_music_id: str | None = None
     refine_video_prompt: bool = False
     refine_video_frame: bool = False
+    # Missing fields now added
+    image_aspect_ratio: str | None = None
+    video_aspect_ratio: str | None = None
+    video_reference_prompt: str | None = None  # preservation hint when a reference image is supplied
+    text_overlay: str | None = None  # composed image text overlay (headline/badge/body from theme)
+    image_theme_id: str | None = None  # Image Theme Reference id
+    image_theme_overlay: str | None = None  # built overlay string from theme fields
 
 
 class CampaignCreateIn(BaseModel):
@@ -1175,6 +1182,10 @@ class CampaignImageIn(BaseModel):
     image_scene: str | None = None
     product_image: str | None = None
     use_brand_logo: bool = False
+    image_model_id: str | None = None
+    image_aspect_ratio: str | None = None
+    text_overlay: str | None = None  # composed text overlay from theme fields
+    image_prompt_override: str | None = None
 
 
 class CampaignListOut(BaseModel):

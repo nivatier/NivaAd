@@ -1360,14 +1360,11 @@ function CreateAd() {
 
             {/* ===== AI IMAGE ===== */}
             {(() => {
-              const imageComplete = outputs.image && !!imageModelId;
+              const imageComplete = outputs.image && !!imageModelId && !!(imageReferenceImage || (imageReferenceImage ? envDesc : imageScene).trim());
               const imageCollapsed = openSection !== "image";
               const showGreen = imageCollapsed && imageComplete;
               return (
-            <div className={`relative rounded-xl border transition-all overflow-hidden ${showGreen ? "border-emerald-500/70 bg-emerald-500/[0.04]" : outputs.image ? "border-primary bg-primary/5" : outputs.video ? "border-border opacity-50" : "border-border"}`}>
-              {showGreen && (
-                <div className="absolute inset-0 pointer-events-none bg-emerald-500/[0.04] border-0 rounded-xl" />
-              )}
+            <div className={`relative rounded-xl border transition-all overflow-hidden ${outputs.image ? "border-primary bg-primary/5" : outputs.video ? "border-border opacity-50" : "border-border"}`}>
               <button
                 type="button"
                 onClick={() => {
