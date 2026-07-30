@@ -120,7 +120,7 @@ type PhaseFormState = {
   selectedVideoThemeId: string | null;
 };
 
-function PhaseScheduleInput({ label, state, setState, availableImageModels, availableVideoModels, availablePlatforms, connectedPlatformIds, testMode, cameraStylePresets, musicPresets, brandVideoShots, imageThemes, textTheme }: {
+function PhaseScheduleInput({ label, state, setState, availableImageModels, availableVideoModels, availablePlatforms, connectedPlatformIds, testMode, cameraStylePresets, musicPresets, brandVideoShots, imageThemes, textTheme, videoThemes, videoReferencePromptDefault, onOpenImageTheme, onOpenVideoTheme }: {
   label: string; state: PhaseFormState; setState: (v: PhaseFormState) => void;
   availableImageModels: AvailableModel[] | null; availableVideoModels: AvailableModel[] | null;
   availablePlatforms: Platform[];
