@@ -108,7 +108,7 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             tier, term_months = billing_svc.reverse_lookup(price_id)
             db.add(Subscription(
                 company_id=company_id, tier=tier or "starter", term_months=term_months or 1,
-                status=stripe_sub["status"], monthly_credits=billing_svc.TIER_CREDITS.get(tier, 10),
+                status=stripe_sub["status"], monthly_credits=billing_svc.TIER_CREDITS.get(tier, 150),
                 stripe_customer_id=obj.get("customer"), stripe_subscription_id=obj.get("subscription"),
                 cancel_at_period_end=bool(stripe_sub.get("cancel_at_period_end")),
             ))

@@ -9,7 +9,7 @@ from app.services import billing as billing_svc
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
-TIER_NAMES = {"starter", "growth", "pro"}
+TIER_NAMES = {"starter", "pro"}  # growth retired 2026-08-02
 MIN_CREDITS = 1
 MAX_CREDITS = 1000  # sane upper bound on a single purchase
 

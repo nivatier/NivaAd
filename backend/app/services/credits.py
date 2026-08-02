@@ -24,46 +24,35 @@ DEFAULT_MODELS = {
     # compute_text_credits floor at 1 regardless of the model's real
     # (tiny) per-call cost — see services/pricing.py.
     "text": [
-        {"id": "txt-gemini", "label": "Gemini 2.5 Flash", "model": "google/gemini-2.5-flash", "credits": 1},
-        {"id": "txt-haiku", "label": "Claude Haiku 4.5", "model": "anthropic/claude-haiku-4.5", "credits": 1},
-        {"id": "txt-deepseek", "label": "DeepSeek V4 Flash", "model": "deepseek/deepseek-v4-flash", "credits": 1},
+        # 0.25 credits = goodwill floor at $0.10/credit with 2.5× markup.
+        # Real per-call cost is ~$0.001 — we charge a small amount so
+        # credits remain meaningful rather than making text entirely free.
+        {"id": "txt-gemini", "label": "Gemini 2.5 Flash", "model": "google/gemini-2.5-flash", "credits": 0.25},
+        {"id": "txt-haiku", "label": "Claude Haiku 4.5", "model": "anthropic/claude-haiku-4.5", "credits": 0.25},
+        {"id": "txt-deepseek", "label": "DeepSeek V4 Flash", "model": "deepseek/deepseek-v4-flash", "credits": 0.25},
     ],
     "image": [
-        # Credits DOUBLED 2026-07-15 to match the CREDIT_VALUE_USD re-peg
-        # ($0.90 -> $0.45) — preserves the same real dollar price per
-        # generation as before the re-peg (1 credit now buys half as much,
-        # so it takes twice as many credits to equal the same $ amount).
-        {"id": "img-fast", "label": "GPT Image 1 Mini", "model": "openai/gpt-image-1-mini", "credits": 2},
-        {"id": "img-balanced", "label": "Gemini 2.5 Flash Image", "model": "google/gemini-2.5-flash-image", "credits": 4},
-        # FIXED 2026-07-12: black-forest-labs/flux-1.1-pro 404'd with
-        # "No model found" on a real generation attempt — confirmed via
-        # OpenRouter's own announcement that the line moved to FLUX.2.
-        {"id": "img-premium", "label": "FLUX.2 Pro", "model": "black-forest-labs/flux.2-pro", "credits": 6},
+        # cost_usd = real OpenRouter cost per image generation.
+        # Dynamic pricing: charged = cost_usd × markup ÷ credit_value_usd, rounded to 0.25.
+        # At 2.5× markup, $0.10/credit:
+        #   GPT Image 1 Mini  $0.04  → $0.10 → 1.0 credit
+        #   Gemini 2.5 Flash  $0.068 → $0.17 → 1.75 credits
+        #   FLUX.2 Pro        $0.12  → $0.30 → 3.0 credits
+        {"id": "img-fast",     "label": "GPT Image 1 Mini",       "model": "openai/gpt-image-1-mini",          "credits": 1.0,  "pricing": {"cost_usd": 0.04}},
+        {"id": "img-balanced", "label": "Gemini 2.5 Flash Image", "model": "google/gemini-2.5-flash-image",    "credits": 1.75, "pricing": {"cost_usd": 0.068}},
+        {"id": "img-premium",  "label": "FLUX.2 Pro",             "model": "black-forest-labs/flux.2-pro",     "credits": 3.0,  "pricing": {"cost_usd": 0.12}},
     ],
-    # REPLACED 2026-07-12: Sora 2 Pro was dropped after real testing — a
-    # 20-second request timed out (480s), the automatic text-to-video
-    # fallback ALSO timed out (~520s more), and OpenRouter still billed
-    # ~$6 for the failed attempt. Not reliable enough to keep.
-    #
-    # Durations verified against OpenRouter's own model pages (not
-    # picked arbitrarily):
-    #   Wan 2.6        — confirmed up to 15s
-    #   Wan 2.7        — confirmed up to 15s ("3x longer than earlier Wan models")
-    #   Veo 3.1        — CAVEAT: only accepts EXACT discrete durations
-    #                    (4, 6, or 8s), unlike the others which accept a
-    #                    continuous range. Bounds set tightly (4-8s) to
-    #                    minimize mismatches, but a request for e.g. 7s
-    #                    could still fail — worth building real
-    #                    discrete-value support for this one if it
-    #                    becomes a problem.
-    #   Kling v3.0 Pro — confirmed 3-15s.
-    #
-    # Credits DOUBLED 2026-07-15, same re-peg reasoning as image above.
+    # Video credits are dynamic (per-second × duration × markup ÷ credit_value_usd).
+    # The flat "credits" value here is the REFERENCE shown in the dropdown before
+    # a specific duration is chosen — computed at min_duration as a floor estimate.
+    # Real cost is always calculated live via compute_video_credits() using the
+    # pricing block when one is set. These fallback flat values are only used
+    # when no pricing block exists (e.g. developer-added models without pricing).
     "video": [
-        {"id": "vid-wan26", "label": "Wan 2.6", "model": "alibaba/wan-2.6", "credits": 6, "min_duration": 4, "max_duration": 8},
-        {"id": "vid-wan27", "label": "Wan 2.7", "model": "alibaba/wan-2.7", "credits": 10, "min_duration": 8, "max_duration": 12},
-        {"id": "vid-veo31", "label": "Veo 3.1", "model": "google/veo-3.1", "credits": 14, "min_duration": 4, "max_duration": 8},
-        {"id": "vid-klingv3pro", "label": "Kling v3.0 Pro", "model": "kwaivgi/kling-v3.0-pro", "credits": 18, "min_duration": 10, "max_duration": 15},
+        {"id": "vid-wan26",     "label": "Wan 2.6",       "model": "alibaba/wan-2.6",        "credits": 1.0,  "min_duration": 4,  "max_duration": 8},
+        {"id": "vid-wan27",     "label": "Wan 2.7",       "model": "alibaba/wan-2.7",        "credits": 2.5,  "min_duration": 8,  "max_duration": 12},
+        {"id": "vid-veo31",     "label": "Veo 3.1",       "model": "google/veo-3.1",         "credits": 3.5,  "min_duration": 4,  "max_duration": 8},
+        {"id": "vid-klingv3pro","label": "Kling v3.0 Pro","model": "kwaivgi/kling-v3.0-pro", "credits": 4.5,  "min_duration": 10, "max_duration": 15},
     ],
 }
 
@@ -116,33 +105,52 @@ def resolve_model_sync(db: Session, kind: str, model_id: str) -> dict | None:
     return None
 
 
-async def balance(db: AsyncSession, company_id: uuid.UUID) -> int:
-    return (await db.scalar(
+async def balance(db: AsyncSession, company_id: uuid.UUID) -> float:
+    result = await db.scalar(
         select(func.coalesce(func.sum(CreditLedger.delta), 0))
         .where(CreditLedger.company_id == company_id)
-    )) or 0
+    )
+    return float(result or 0)
 
 
-def generation_cost(text_credits: int | None, image_credits: int | None, video_credits: int | None, fmt: str, variations: int, carousel_count: int = 1) -> int:
-    """Takes the ALREADY-RESOLVED per-generation credit costs for
-    whichever specific models were chosen (see resolve_model) — this
-    function is now just arithmetic, not model lookup, since that
-    happens once per request in the caller. carousel_count is only
-    meaningful when fmt == "carousel" — a carousel with N images
-    genuinely costs N real image-generation calls, so it's priced
-    per-image. Video is different: a multi-shot video is still ONE real
-    generation call (shots are combined into a single prompt with
-    timing markers, see tasks.py), so video cost is flat regardless of
-    shot count, unlike carousel. Text is flat too — one copy-generation
-    call regardless of format."""
-    cost = 0
+def _round_to_quarter(value: float) -> float:
+    """Round UP to the nearest 0.25, floor 0.25. Mirrors pricing.py's
+    version — duplicated here so credits.py has no circular import from
+    pricing.py (which itself imports from models/config)."""
+    import math
+    if value <= 0:
+        return 0.25
+    quarters = math.ceil(value * 4 - 1e-9)
+    return max(1, quarters) / 4
+
+
+def generation_cost(
+    text_credits: float | None,
+    image_credits: float | None,
+    video_credits: float | None,
+    fmt: str,
+    variations: int,
+    carousel_count: int = 1,
+) -> float:
+    """Totals the ALREADY-RESOLVED per-generation credit costs.
+
+    Variations note: choosing 3 variations does NOT multiply the cost.
+    - Text: one API call regardless — the LLM returns all 3 variants
+      in a single response (see tasks._build_prompt). Same cost as 1.
+    - Image: one image generation, shared across all variants
+      (see tasks.generate_ad — url is assigned to every variant).
+    - Video: same, one generation shared.
+
+    The only format that scales by count is carousel (N slides = N
+    image calls). Everything else is flat per generation.
+
+    Credits are floats in 0.25 steps — return value is also 0.25-stepped
+    with a floor of 0.25."""
+    cost: float = 0.0
     if text_credits is not None:
         cost += text_credits
     if image_credits is not None:
         cost += image_credits * max(1, carousel_count) if fmt == "carousel" else image_credits
     if video_credits is not None:
         cost += video_credits
-    cost = max(1, cost)
-    if variations == 3:
-        cost *= 2
-    return cost
+    return _round_to_quarter(max(0.25, cost))

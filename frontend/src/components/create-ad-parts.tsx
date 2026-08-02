@@ -29,18 +29,19 @@ export function RetentionWarning({ retentionMonths, postRetentionMonths, classNa
   );
 }
 
-export function estimateCost(outputs: { text: boolean; image: boolean; video: boolean }, format: string, variations: number, carouselCount: number = 1, textCredits: number = 1, imageCredits: number = 2, videoCredits: number = 5) {
-  // textCredits/imageCredits/videoCredits should be the ACTUALLY
-  // SELECTED model's real cost (from the dropdown) — defaults here are
-  // just a fallback for before the model list has loaded, matching the
-  // backend's own fallback in that same brief window.
+export function estimateCost(outputs: { text: boolean; image: boolean; video: boolean }, format: string, variations: number, carouselCount: number = 1, textCredits: number = 0.25, imageCredits: number = 1, videoCredits: number = 5) {
+  // Variations do NOT multiply cost:
+  // - Text: one API call returning all 3 variants in one response
+  // - Image: one generation shared across all variants
+  // - Video: one generation shared across all variants
+  // Only carousel scales (N slides = N real image calls).
   let cost = 0;
   if (outputs.text) cost += textCredits;
   if (outputs.image) cost += format === "carousel" ? imageCredits * Math.max(1, carouselCount) : imageCredits;
   if (outputs.video) cost += videoCredits;
-  cost = Math.max(1, cost);
-  if (variations === 3) cost *= 2;
-  return cost;
+  cost = Math.max(0.25, cost);
+  // Round to nearest 0.25 to match backend
+  return Math.ceil(cost * 4 - 1e-9) / 4;
 }
 
 export type PlatformResult = {
@@ -525,7 +526,7 @@ export function PromptConfirmModal({
         <div className="sticky bottom-0 bg-card/95 backdrop-blur-xl border-t border-border px-5 py-4 flex items-center gap-3">
           <button onClick={onBack} disabled={busy} className="rounded-full border border-border px-5 py-2.5 text-sm text-muted-foreground hover:border-primary/40 disabled:opacity-50">← Back to edit inputs</button>
           <button onClick={onConfirm} disabled={busy} className="ml-auto rounded-full bg-gold-gradient px-6 py-2.5 text-sm font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50">
-            {busy ? "Generating…" : `✅ Confirm & Generate (${cost} credit${cost > 1 ? "s" : ""})`}
+            {busy ? "Generating…" : `✅ Confirm & Generate (${cost} credit${cost === 1 ? "" : "s"})`}
           </button>
         </div>
       </div>

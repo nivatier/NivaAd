@@ -24,7 +24,7 @@ from app.worker import celery_app
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
-CAMPAIGN_COST = 2
+CAMPAIGN_COST = 0.25  # text-only brief generation — goodwill floor, same as any text call
 PHASES = ("teaser", "launch", "followup")
 
 
@@ -99,15 +99,14 @@ async def _create_phase_ad(
     if generate_image:
         models = await credit_svc.get_available_models(db)
         markup = await pricing_svc.get_markup_multiplier(db)
+        credit_value_usd = await pricing_svc.get_credit_value_usd(db)
         if image_model_id:
             image_model = await credit_svc.resolve_model(db, "image", image_model_id)
             if image_model is None:
                 raise HTTPException(422, f"That image option for the {phase} phase is no longer available — pick another one.")
         else:
-            # No explicit choice made — same graceful default as before
-            # this was exposed as a real per-phase picker.
             image_model = models["image"][0] if models["image"] else None
-        cost += pricing_svc.compute_image_credits(image_model, markup) if image_model else 2
+        cost += pricing_svc.compute_image_credits(image_model, markup, credit_value_usd) if image_model else 1.0
 
     video_model = None
     video_total_duration = None
@@ -146,7 +145,7 @@ async def _create_phase_ad(
         # Campaigns don't have an audio toggle in the UI yet (scoped out
         # of this round) — dynamically-priced models fall back to
         # OpenRouter's own per-model default audio behavior.
-        cost += pricing_svc.compute_video_credits(video_model, video_resolution, False, video_total_duration, markup, has_reference_image=bool(video_frame_image or video_frame_image_url))
+        cost += pricing_svc.compute_video_credits(video_model, video_resolution, False, video_total_duration, markup, credit_value_usd, has_reference_image=bool(video_frame_image or video_frame_image_url))
 
     if cost > 0:
         bal = await credit_svc.balance(db, user.company_id)

@@ -11,7 +11,7 @@ export const Route = createFileRoute("/app/settings")({
   head: () => ({ meta: [{ title: "Settings — NivaSpark" }] }),
 });
 
-const TIER_LABEL: Record<string, string> = { free: "Free", starter: "Starter", growth: "Growth", pro: "Pro" };
+const TIER_LABEL: Record<string, string> = { free: "Free", starter: "Starter", growth: "Growth (legacy)", pro: "Pro" };
 
 type AgentSettings = {
   quick_start_mode: string;
@@ -182,7 +182,7 @@ function Settings() {
         <Panel>
           <div className="mb-1 text-sm font-semibold text-foreground">💳 Plan & billing</div>
           <p className="text-xs text-muted-foreground">
-            Current plan: <span className="text-primary">{TIER_LABEL[tier]}</span> · {me?.credits ?? 0} credits available
+            Current plan: <span className="text-primary">{TIER_LABEL[tier]}</span> · {(() => { const c = me?.credits ?? 0; return Number.isInteger(c) ? c : c.toFixed(2).replace(/\.?0+$/, ""); })()} credits available
           </p>
           {isPaid && periodEnd && (
             cancelScheduled ? (

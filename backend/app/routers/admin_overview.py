@@ -54,8 +54,8 @@ async def get_overview(user: User = Depends(require_role("admin")), db: AsyncSes
 
     return AdminOverviewOut(
         tier=sub.tier if sub else "free",
-        credits_remaining=credits_remaining,
-        credits_used_this_month=abs(credits_used_this_month),
+        credits_remaining=float(credits_remaining or 0),
+        credits_used_this_month=float(abs(credits_used_this_month or 0)),
         team_members=team_members or 0,
         ads_created_total=ads_created_total or 0,
         ads_created_this_month=ads_created_this_month or 0,

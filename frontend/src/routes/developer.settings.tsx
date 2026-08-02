@@ -353,66 +353,16 @@ function ThemeAiSettingsCard() {
   );
 }
 
-type CreatedUser = {
-  company_id: string;
-  company_name: string;
-  email: string;
-  full_name: string;
-  user_id: string | null;
-  tier: string;
-  created_at: string;
-};
-
-type EditState = {
-  company_id: string;
-  company_name: string;
-  email: string;
-  full_name: string;
-  tier: string;
-};
-
-const TIER_LABELS: Record<string, string> = {
-  free: "Free",
-  starter: "Starter",
-  growth: "Growth",
-  pro: "Pro",
-};
-
 function LaunchControlCard() {
   const handleAuthError = useDevAuthErrorHandler();
   const [open, setOpen] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
-  const [users, setUsers] = useState<CreatedUser[]>([]);
-  const [companyName, setCompanyName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [tier, setTier] = useState("free");
-  const [creating, setCreating] = useState(false);
-  const [createErr, setCreateErr] = useState("");
-  const [createOk, setCreateOk] = useState("");
   const [err, setErr] = useState("");
-
-  // Edit state
-  const [editing, setEditing] = useState<EditState | null>(null);
-  const [editSaving, setEditSaving] = useState(false);
-  const [editErr, setEditErr] = useState("");
-  const [editOk, setEditOk] = useState("");
-
-  // Delete state
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  function loadUsers() {
-    devApi("/developer/created-users")
-      .then((r: CreatedUser[]) => setUsers(r))
-      .catch(() => {});
-  }
 
   useEffect(() => {
     devApi("/developer/launch-control")
       .then((r) => setOpen(r.registration_open))
       .catch((e: any) => { if (!handleAuthError(e)) setErr(e.message || "Could not load"); });
-    loadUsers();
   }, []);
 
   async function toggleOpen() {
@@ -423,56 +373,6 @@ function LaunchControlCard() {
       setOpen(r.registration_open);
     } catch (e: any) { if (!handleAuthError(e)) setErr(e.message || "Could not save"); }
     setSaving(false);
-  }
-
-  async function createUser() {
-    if (!companyName.trim()) { setCreateErr("Company name required"); return; }
-    if (!email.trim() || !email.includes("@")) { setCreateErr("Valid email required"); return; }
-    if (password.length < 8) { setCreateErr("Password must be at least 8 characters"); return; }
-    setCreating(true); setCreateErr(""); setCreateOk("");
-    try {
-      const r = await devApi("/developer/create-user", {
-        method: "POST",
-        body: { company_name: companyName.trim(), email: email.trim(), password, full_name: fullName.trim(), tier },
-      });
-      setCreateOk(`✓ Created ${r.email} (${r.company}) — ${r.credits} credits on ${r.tier} plan`);
-      setCompanyName(""); setEmail(""); setPassword(""); setFullName(""); setTier("free");
-      loadUsers();
-    } catch (e: any) { if (!handleAuthError(e)) setCreateErr(e.message || "Could not create user"); }
-    setCreating(false);
-  }
-
-  function startEdit(u: CreatedUser) {
-    setEditing({ company_id: u.company_id, company_name: u.company_name, email: u.email, full_name: u.full_name, tier: u.tier });
-    setEditErr(""); setEditOk("");
-  }
-
-  async function saveEdit() {
-    if (!editing) return;
-    if (!editing.company_name.trim()) { setEditErr("Company name required"); return; }
-    if (!editing.email.trim() || !editing.email.includes("@")) { setEditErr("Valid email required"); return; }
-    setEditSaving(true); setEditErr(""); setEditOk("");
-    try {
-      await devApi(`/developer/created-users/${editing.company_id}`, {
-        method: "PUT",
-        body: { company_name: editing.company_name.trim(), email: editing.email.trim(), full_name: editing.full_name.trim(), tier: editing.tier },
-      });
-      setEditOk("✓ Saved");
-      setTimeout(() => { setEditing(null); setEditOk(""); }, 1000);
-      loadUsers();
-    } catch (e: any) { if (!handleAuthError(e)) setEditErr(e.message || "Could not save"); }
-    setEditSaving(false);
-  }
-
-  async function deleteUser(u: CreatedUser) {
-    if (!confirm(`Permanently delete "${u.company_name}" (${u.email}) and all their data? This cannot be undone.`)) return;
-    setDeletingId(u.company_id);
-    try {
-      await devApi(`/developer/created-users/${u.company_id}`, { method: "DELETE" });
-      setUsers((prev) => prev.filter((x) => x.company_id !== u.company_id));
-      if (editing?.company_id === u.company_id) setEditing(null);
-    } catch (e: any) { if (!handleAuthError(e)) alert(e.message || "Could not delete"); }
-    setDeletingId(null);
   }
 
   return (
@@ -494,134 +394,6 @@ function LaunchControlCard() {
         </button>
       </div>
       {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
-
-      <div className="mt-5 border-t border-border/50 pt-4">
-        <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-3">Add user directly</div>
-        <p className="text-[11px] text-muted-foreground mb-3">Creates a company and admin user in the database. Works whether registration is open or closed.</p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Company name *</label>
-            <input value={companyName} onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="Acme Corp"
-              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Full name</label>
-            <input value={fullName} onChange={(e) => setFullName(e.target.value)}
-              placeholder="Jane Smith"
-              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Email *</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-              placeholder="jane@acme.com"
-              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Password * (min 8 chars)</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Plan tier</label>
-            <select value={tier} onChange={(e) => setTier(e.target.value)}
-              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
-              <option value="free">Free (3 credits)</option>
-              <option value="starter">Starter (10 credits)</option>
-              <option value="growth">Growth (30 credits)</option>
-              <option value="pro">Pro (120 credits)</option>
-            </select>
-          </div>
-        </div>
-        <div className="mt-3 flex items-center gap-3">
-          <button onClick={createUser} disabled={creating}
-            className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
-            {creating ? "Creating…" : "Create user"}
-          </button>
-          {createOk && <span className="text-xs text-emerald-400">{createOk}</span>}
-        </div>
-        {createErr && <div className="mt-1 text-xs text-destructive">{createErr}</div>}
-      </div>
-
-      {users.length > 0 && (
-        <div className="mt-5 border-t border-border/50 pt-4">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-3">Users added via developer panel</div>
-          <div className="space-y-2">
-            {users.map((u) => (
-              <div key={u.company_id} className="rounded-lg border border-border bg-background/40 overflow-hidden">
-                {/* Row */}
-                <div className="flex items-center justify-between gap-2 px-3 py-2">
-                  <div className="min-w-0">
-                    <span className="text-xs font-medium text-foreground">{u.email}</span>
-                    <span className="ml-2 text-[10px] text-muted-foreground">{u.company_name}</span>
-                    <span className="ml-2 rounded-full border border-border/60 bg-muted/30 px-1.5 py-0.5 text-[10px] text-muted-foreground">{TIER_LABELS[u.tier] ?? u.tier}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-[10px] text-muted-foreground">{new Date(u.created_at).toLocaleDateString()}</span>
-                    <button
-                      onClick={() => editing?.company_id === u.company_id ? setEditing(null) : startEdit(u)}
-                      className="rounded-md px-2 py-1 text-[10px] font-medium text-muted-foreground border border-border hover:text-foreground hover:border-primary/40 transition-colors">
-                      {editing?.company_id === u.company_id ? "Cancel" : "Edit"}
-                    </button>
-                    <button
-                      onClick={() => deleteUser(u)}
-                      disabled={deletingId === u.company_id}
-                      className="rounded-md px-2 py-1 text-[10px] font-medium text-destructive/70 border border-destructive/30 hover:text-destructive hover:border-destructive transition-colors disabled:opacity-40">
-                      {deletingId === u.company_id ? "…" : "Delete"}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Inline edit form */}
-                {editing?.company_id === u.company_id && (
-                  <div className="border-t border-border/50 bg-muted/10 px-3 py-3">
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <div>
-                        <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Company name *</label>
-                        <input value={editing.company_name} onChange={(e) => setEditing({ ...editing, company_name: e.target.value })}
-                          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Full name</label>
-                        <input value={editing.full_name} onChange={(e) => setEditing({ ...editing, full_name: e.target.value })}
-                          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Email *</label>
-                        <input type="email" value={editing.email} onChange={(e) => setEditing({ ...editing, email: e.target.value })}
-                          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-semibold text-muted-foreground block mb-1">Plan tier</label>
-                        <select value={editing.tier} onChange={(e) => setEditing({ ...editing, tier: e.target.value })}
-                          className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
-                          <option value="free">Free (3 credits)</option>
-                          <option value="starter">Starter (10 credits)</option>
-                          <option value="growth">Growth (30 credits)</option>
-                          <option value="pro">Pro (120 credits)</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div className="mt-2 flex items-center gap-2">
-                      <button onClick={saveEdit} disabled={editSaving}
-                        className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
-                        {editSaving ? "Saving…" : "Save changes"}
-                      </button>
-                      <button onClick={() => setEditing(null)}
-                        className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">
-                        Cancel
-                      </button>
-                      {editOk && <span className="text-xs text-emerald-400">{editOk}</span>}
-                    </div>
-                    {editErr && <div className="mt-1 text-xs text-destructive">{editErr}</div>}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -629,6 +401,7 @@ function LaunchControlCard() {
 function PlatformConfigCard() {
   const handleAuthError = useDevAuthErrorHandler();
   const [creditValue, setCreditValue] = useState("");
+  const [markupMultiplier, setMarkupMultiplier] = useState("");
   const [carouselMax, setCarouselMax] = useState("");
   const [priceIds, setPriceIds] = useState("");
   const [priceTopup, setPriceTopup] = useState("");
@@ -641,6 +414,7 @@ function PlatformConfigCard() {
     devApi("/developer/platform-config")
       .then((r) => {
         setCreditValue(String(r.credit_value_usd));
+        setMarkupMultiplier(String(r.markup_multiplier ?? 2.5));
         setCarouselMax(String(r.carousel_max_images));
         try {
           const parsed = typeof r.stripe_price_ids === "string" ? JSON.parse(r.stripe_price_ids) : r.stripe_price_ids;
@@ -654,8 +428,10 @@ function PlatformConfigCard() {
 
   async function save() {
     const credit = parseFloat(creditValue);
+    const markup = parseFloat(markupMultiplier);
     const carousel = parseInt(carouselMax);
     if (isNaN(credit) || credit <= 0) { setErr("Credit value must be a positive number"); return; }
+    if (isNaN(markup) || markup < 1) { setErr("Markup multiplier must be at least 1.0"); return; }
     if (isNaN(carousel) || carousel < 2 || carousel > 20) { setErr("Carousel max must be 2–20"); return; }
     try { JSON.parse(priceIds); } catch { setErr("Stripe Price IDs is not valid JSON"); return; }
     if (priceTopup && !priceTopup.startsWith("price_")) { setErr("Stripe Topup Price ID must start with price_"); return; }
@@ -666,15 +442,15 @@ function PlatformConfigCard() {
         method: "PUT",
         body: {
           credit_value_usd: credit,
+          markup_multiplier: markup,
           carousel_max_images: carousel,
           stripe_price_ids: priceIds,
           stripe_price_topup: priceTopup,
           openrouter_base_url: openrouterUrl,
-         
-         
         },
       });
       setCreditValue(String(r.credit_value_usd));
+      setMarkupMultiplier(String(r.markup_multiplier ?? 2.5));
       setCarouselMax(String(r.carousel_max_images));
       try {
         const parsed = typeof r.stripe_price_ids === "string" ? JSON.parse(r.stripe_price_ids) : r.stripe_price_ids;
@@ -682,8 +458,6 @@ function PlatformConfigCard() {
       } catch { setPriceIds(r.stripe_price_ids ?? "{}"); }
       setPriceTopup(r.stripe_price_topup ?? "");
       setOpenrouterUrl(r.openrouter_base_url ?? "");
-      setAnthropicUrl(r.anthropic_base_url ?? "");
-      setLinkedinUrl(r.linkedin_api_url ?? "");
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (e: any) {
@@ -708,7 +482,18 @@ function PlatformConfigCard() {
             <input type="number" min="0.01" step="0.01" value={creditValue} onChange={(e) => setCreditValue(e.target.value)}
               className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
           </div>
-          <p className="mt-1 text-[10px] text-muted-foreground">Must match your Stripe top-up price per unit</p>
+          <p className="mt-1 text-[10px] text-muted-foreground">Must match your Stripe top-up price per unit. Currently $0.10 = 1 credit.</p>
+        </div>
+
+        {/* Markup multiplier */}
+        <div>
+          <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Markup multiplier</label>
+          <div className="flex items-center gap-2">
+            <input type="number" min="1" max="10" step="0.1" value={markupMultiplier} onChange={(e) => setMarkupMultiplier(e.target.value)}
+              className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
+            <span className="text-xs text-muted-foreground">×</span>
+          </div>
+          <p className="mt-1 text-[10px] text-muted-foreground">Applied to raw OpenRouter cost before converting to credits. Drop for Black Friday etc. Min 1.0.</p>
         </div>
 
         {/* Carousel max */}
@@ -786,6 +571,7 @@ function PlatformConfigCard() {
 function BillingSettingsTab() {
   const handleAuthError = useDevAuthErrorHandler();
   const [creditValue, setCreditValue] = useState("");
+  const [markupMultiplier, setMarkupMultiplier] = useState("");
   const [carouselMax, setCarouselMax] = useState("");
   const [priceIds, setPriceIds] = useState("");
   const [priceTopup, setPriceTopup] = useState("");
@@ -797,6 +583,7 @@ function BillingSettingsTab() {
     devApi("/developer/platform-config")
       .then((r) => {
         setCreditValue(String(r.credit_value_usd));
+        setMarkupMultiplier(String(r.markup_multiplier ?? 2.5));
         setCarouselMax(String(r.carousel_max_images));
         try {
           const parsed = typeof r.stripe_price_ids === "string" ? JSON.parse(r.stripe_price_ids) : r.stripe_price_ids;
@@ -809,8 +596,10 @@ function BillingSettingsTab() {
 
   async function save() {
     const credit = parseFloat(creditValue);
+    const markup = parseFloat(markupMultiplier);
     const carousel = parseInt(carouselMax);
     if (isNaN(credit) || credit <= 0) { setErr("Credit value must be a positive number"); return; }
+    if (isNaN(markup) || markup < 1) { setErr("Markup multiplier must be at least 1.0"); return; }
     if (isNaN(carousel) || carousel < 2 || carousel > 20) { setErr("Carousel max must be 2–20"); return; }
     try { JSON.parse(priceIds); } catch { setErr("Stripe Price IDs is not valid JSON"); return; }
     if (priceTopup && !priceTopup.startsWith("price_")) { setErr("Topup price ID must start with price_"); return; }
@@ -818,7 +607,7 @@ function BillingSettingsTab() {
     try {
       await devApi("/developer/platform-config", {
         method: "PUT",
-        body: { credit_value_usd: credit, carousel_max_images: carousel, stripe_price_ids: priceIds, stripe_price_topup: priceTopup },
+        body: { credit_value_usd: credit, markup_multiplier: markup, carousel_max_images: carousel, stripe_price_ids: priceIds, stripe_price_topup: priceTopup },
       });
       setSaved(true); setTimeout(() => setSaved(false), 3000);
     } catch (e: any) { if (!handleAuthError(e)) setErr(e.message || "Could not save"); }
@@ -837,7 +626,16 @@ function BillingSettingsTab() {
               <input type="number" min="0.01" step="0.01" value={creditValue} onChange={(e) => setCreditValue(e.target.value)}
                 className="w-28 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
             </div>
-            <p className="mt-1 text-[10px] text-muted-foreground">Must match your Stripe per-credit price</p>
+            <p className="mt-1 text-[10px] text-muted-foreground">Must match your Stripe per-credit price. Currently $0.10 = 1 credit.</p>
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Markup multiplier</label>
+            <div className="flex items-center gap-2">
+              <input type="number" min="1" max="10" step="0.1" value={markupMultiplier} onChange={(e) => setMarkupMultiplier(e.target.value)}
+                className="w-28 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
+              <span className="text-xs text-muted-foreground">×</span>
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">Applied to raw OpenRouter cost before converting to credits. Drop for promotions (e.g. Black Friday). Min 1.0.</p>
           </div>
           <div>
             <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Carousel max images</label>
@@ -964,6 +762,7 @@ function UsersTab() {
     </div>
   );
 }
+
 
 // ── Retention tab ─────────────────────────────────────────────────────────────
 function LogRetentionCard() {
@@ -1257,6 +1056,8 @@ function LegalLinksCard() {
     </div>
   );
 }
+
+
 
 const SETTINGS_TABS = [
   { key: "launch",    label: "🚀 Launch" },

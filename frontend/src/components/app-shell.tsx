@@ -2,7 +2,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   BarChart3, Bell, Bot, CalendarDays, Crown, GalleryHorizontal, Images, Link2, Megaphone, Package, Palette,
-  Settings as SettingsIcon, ShieldCheck, Sparkles, type LucideIcon,
+  Settings as SettingsIcon, ShieldCheck, Sparkles, User, type LucideIcon,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { BuyCreditsModal } from "@/components/buy-credits-modal";
@@ -32,7 +32,7 @@ export const NAV: { section: string; items: { to: string; label: string; icon: L
     items: [
       { to: "/app/my-ads", label: "My Ads", icon: Images, capability: "view_my_ads", hintKey: "nav:my-ads" },
       { to: "/app/products", label: "Products", icon: Package, hintKey: "nav:products" },
-      { to: "/app/themes-gallery", label: "Themes Gallery", icon: GalleryHorizontal, hintKey: "nav:themes-gallery" },
+      { to: "/app/themes-gallery", label: "Themes", icon: GalleryHorizontal, hintKey: "nav:themes-gallery" },
       { to: "/app/calendar", label: "Calendar", icon: CalendarDays, capability: "view_my_ads", hintKey: "nav:calendar" },
       { to: "/app/agent-niva", label: "Agent Niva", icon: Bot, hintKey: "nav:agent-niva" },
     ],
@@ -55,13 +55,29 @@ export const NAV: { section: string; items: { to: string; label: string; icon: L
   },
 ];
 
-function visibleNav(role: string | undefined, capabilities: Record<string, boolean> | undefined) {
+// Tab-level icons for the persistent bottom bar — one per NAV section + Account
+const TAB_ICONS: Record<string, LucideIcon> = {
+  Create: Sparkles,
+  Library: Images,
+  Setup: Palette,
+  Insights: BarChart3,
+  Account: User,
+};
+
+// Capabilities that are tier-gated — even admins must respect these.
+// Must stay in sync with backend services/capabilities.py PRO_ONLY_CAPS.
+const TIER_GATED_CAPS = new Set(["view_analytics"]);
+
+function visibleNav(role: string | undefined, capabilities: Record<string, boolean> | undefined, tier: string | undefined) {
   return NAV
     .map((section) => ({
       ...section,
       items: section.items.filter((item) => {
         if (item.capability === "admin-only") return role === "admin";
         if (!item.capability) return true;
+        // Tier-gated caps: always check the capability value, even for admins —
+        // the backend already returns false for these on non-Pro plans.
+        if (TIER_GATED_CAPS.has(item.capability)) return !!capabilities?.[item.capability];
         return role === "admin" || !!capabilities?.[item.capability];
       }),
     }))
@@ -69,13 +85,232 @@ function visibleNav(role: string | undefined, capabilities: Record<string, boole
 }
 
 // Must match the backend's monthly credit grant per tier (see backend/app/services/billing.py TIER_CREDITS).
-const TIER_MONTHLY: Record<string, number> = { free: 3, starter: 10, growth: 30, pro: 120 };
+// NOTE: do NOT hardcode this — use me.plan_credits which comes from the backend directly.
+const TIER_MONTHLY_FALLBACK: Record<string, number> = { free: 3, starter: 150, pro: 500 };
 
+// ---------- Mobile bottom sheet grid ----------
+function MobileNavSheet({
+  section,
+  pathname,
+  onClose,
+}: {
+  section: { section: string; items: { to: string; label: string; icon: LucideIcon }[] };
+  pathname: string;
+  onClose: () => void;
+}) {
+  const items = section.items;
+  // Split into rows of max 3
+  const rows: (typeof items)[] = [];
+  for (let i = 0; i < items.length; i += 3) rows.push(items.slice(i, i + 3));
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 z-40 lg:hidden"
+        onClick={onClose}
+        style={{ background: "oklch(0 0 0 / 0.45)" }}
+      />
+      {/* Sheet */}
+      <div
+        className="fixed bottom-[60px] left-0 right-0 z-50 lg:hidden rounded-t-2xl overflow-hidden"
+        style={{
+          background: "var(--glass-sidebar)",
+          backdropFilter: "var(--glass-blur-sidebar)",
+          WebkitBackdropFilter: "var(--glass-blur-sidebar)",
+          border: "1px solid var(--glass-panel-border)",
+          borderBottom: "none",
+          boxShadow: "var(--glass-sidebar-shadow), 0 -8px 40px oklch(0 0 0 / 0.30)",
+        }}
+      >
+        {/* Drag handle */}
+        <div className="flex justify-center pt-2.5 pb-1">
+          <div className="h-1 w-8 rounded-full bg-white/20" />
+        </div>
+        {/* Section label */}
+        <div className="px-4 pb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+          {section.section}
+        </div>
+        {/* Grid rows */}
+        <div className="px-3 pb-4 space-y-2">
+          {rows.map((row, ri) => (
+            <div
+              key={ri}
+              className="flex gap-2"
+              style={{ justifyContent: row.length === 3 ? "stretch" : "center" }}
+            >
+              {row.map((item) => {
+                const active = pathname === item.to;
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    onClick={onClose}
+                    data-robot-hint-key={(item as any).hintKey || undefined}
+                    className="flex flex-col items-center gap-1.5 rounded-xl px-2 py-3 transition"
+                    style={{
+                      flex: row.length === 3 ? "1 1 0%" : "0 0 30%",
+                      background: active
+                        ? "oklch(0.66 0.26 305 / 0.15)"
+                        : "oklch(1 0 0 / 0.04)",
+                      border: active
+                        ? "1px solid oklch(0.66 0.26 305 / 0.35)"
+                        : "1px solid oklch(1 0 0 / 0.08)",
+                      boxShadow: active
+                        ? "inset 0 1px 0 oklch(1 0 0 / 0.12), 0 0 16px -4px oklch(0.66 0.26 305 / 0.25)"
+                        : "inset 0 1px 0 oklch(1 0 0 / 0.06)",
+                    }}
+                  >
+                    <item.icon
+                      className="h-5 w-5 shrink-0"
+                      strokeWidth={2}
+                      style={{ color: active ? "oklch(0.85 0.18 52)" : "oklch(0.70 0.05 280)" }}
+                    />
+                    <span
+                      className="text-[11px] font-medium text-center leading-tight"
+                      style={{ color: active ? "oklch(0.92 0.10 52)" : "oklch(0.75 0.04 280)" }}
+                    >
+                      {item.label}
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ---------- Mobile account sheet ----------
+function MobileAccountSheet({
+  onClose,
+  credits,
+  pct,
+  tier,
+  planCredits,
+  personInitial,
+  userName,
+  userEmail,
+  userRole,
+  companyName,
+  onBuyCredits,
+  onLogout,
+  onProfile,
+}: {
+  onClose: () => void;
+  credits: number;
+  pct: number;
+  tier: string;
+  planCredits: number;
+  personInitial: string;
+  userName: string;
+  userEmail: string;
+  userRole: string;
+  companyName: string;
+  onBuyCredits: () => void;
+  onLogout: () => void;
+  onProfile: () => void;
+}) {
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 z-40 lg:hidden"
+        onClick={onClose}
+        style={{ background: "oklch(0 0 0 / 0.45)" }}
+      />
+      {/* Sheet */}
+      <div
+        className="fixed bottom-[60px] left-0 right-0 z-50 lg:hidden rounded-t-2xl overflow-hidden"
+        style={{
+          background: "var(--glass-sidebar)",
+          backdropFilter: "var(--glass-blur-sidebar)",
+          WebkitBackdropFilter: "var(--glass-blur-sidebar)",
+          border: "1px solid var(--glass-panel-border)",
+          borderBottom: "none",
+          boxShadow: "var(--glass-sidebar-shadow), 0 -8px 40px oklch(0 0 0 / 0.30)",
+        }}
+      >
+        {/* Drag handle */}
+        <div className="flex justify-center pt-2.5 pb-1">
+          <div className="h-1 w-8 rounded-full bg-white/20" />
+        </div>
+
+        {/* Section label */}
+        <div className="px-4 pb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+          Account
+        </div>
+
+        {/* User info row */}
+        <div className="mx-3 mb-3 flex items-center gap-3 rounded-xl px-3 py-2.5"
+          style={{
+            background: "oklch(1 0 0 / 0.04)",
+            border: "1px solid oklch(1 0 0 / 0.08)",
+          }}>
+          <button
+            onClick={() => { onProfile(); onClose(); }}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-primary/40 bg-primary/10 text-sm font-semibold text-primary"
+          >
+            {personInitial}
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium text-foreground">{userName || userEmail}</div>
+            <div className="truncate text-[11px] text-muted-foreground">{companyName} · {userRole}</div>
+          </div>
+          <button
+            onClick={() => { onProfile(); onClose(); }}
+            className="text-[11px] text-muted-foreground hover:text-foreground transition"
+          >
+            Edit
+          </button>
+        </div>
+
+        {/* Credits card */}
+        <div className="mx-3 mb-4 rounded-xl border border-white/[0.09] px-3 py-2.5 relative overflow-hidden"
+          style={{
+            background: "oklch(1 0 0 / 0.04)",
+            boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.10), inset 0 -1px 0 oklch(0 0 0 / 0.12)",
+          }}>
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+          <div className="flex items-baseline justify-between">
+            <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Credits</div>
+            <div className="font-display text-xl font-bold text-foreground text-glow">{Number.isInteger(credits) ? credits : credits.toFixed(2).replace(/\.?0+$/, "")}</div>
+          </div>
+          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
+            <div className="h-full bg-neon-gradient" style={{ width: `${pct}%` }} />
+          </div>
+          <div className="mt-1 text-[10px] text-muted-foreground">
+            {tier} · {planCredits}/mo{credits > planCredits ? " · topped up" : ""}
+          </div>
+          <div className="mt-2.5 flex gap-1.5">
+            <button
+              onClick={() => { onBuyCredits(); onClose(); }}
+              className="flex-1 rounded-lg bg-gold-gradient py-2 text-center text-[11px] font-semibold text-background shadow-[var(--shadow-gold)]"
+            >
+              + Buy Credits
+            </button>
+            <button
+              onClick={onLogout}
+              className="flex-1 rounded-lg border border-border py-2 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground transition"
+            >
+              Log out
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ---------- Main AppShell ----------
 export function AppShell({ title, eyebrow, children, rightPanel }: { title: ReactNode; eyebrow?: ReactNode; children: ReactNode; rightPanel?: ReactNode }) {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const navigate = useNavigate();
   const { loading, isAuthed, me, logout, loggingOutRef, refresh } = useAuth();
   const [open, setOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<string | null>(null); // which bottom tab sheet is open
   const [showBuyCredits, setShowBuyCredits] = useState(false);
   const timeZone = detectedTimeZone();
   const [showProfile, setShowProfile] = useState(false);
@@ -83,12 +318,12 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
   const [notifications, setNotifications] = useState<{ id: string; type: string; title: string; body: string; action_url: string | null; created_at: string }[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { setOpen(false); }, [pathname]);
 
-  // Checkout can redirect back to whatever page the customer started
-  // from (not just Settings/home) - this fires on every /app/* page
-  // since they all render through AppShell, so the banner + credit
-  // refresh happens regardless of where Stripe sends them back to.
+  // Close desktop drawer on route change
+  useEffect(() => { setOpen(false); }, [pathname]);
+  // Close bottom sheet on route change
+  useEffect(() => { setActiveTab(null); }, [pathname]);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const billing = params.get("billing");
@@ -132,14 +367,10 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
     return () => document.removeEventListener("mousedown", handle);
   }, []);
 
-  // Auth guard: every /app/* page renders through AppShell, so gating here
-  // protects the whole authenticated app in one place. Skipped during an
-  // intentional logout (loggingOutRef) so that flow goes to "/" instead of
-  // racing this guard's own "/login" redirect.
   useEffect(() => {
     if (!loading && !isAuthed) {
       if (loggingOutRef.current) {
-        loggingOutRef.current = false; // consumed — only suppress the redirect once, right after logout
+        loggingOutRef.current = false;
       } else {
         navigate({ to: "/login" });
       }
@@ -157,7 +388,7 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
   const activeItem = NAV.flatMap((g) => g.items).find((i) => i.to === pathname);
   const personInitial = (me?.user.full_name || me?.user.email || "?").charAt(0).toUpperCase();
   const roleLabel: Record<string, string> = { admin: "Admin", editor: "Editor", poster: "Poster" };
-  const planCredits = TIER_MONTHLY[me?.tier ?? "free"] ?? 3;
+  const planCredits = me?.plan_credits ?? TIER_MONTHLY_FALLBACK[me?.tier ?? "free"] ?? 3;
   const credits = me?.credits ?? 0;
   const pct = Math.min(100, Math.round((credits / Math.max(planCredits, 1)) * 100));
 
@@ -166,7 +397,11 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
     navigate({ to: "/" });
   }
 
-  const nav = visibleNav(me?.user.role, me?.capabilities);
+  const nav = visibleNav(me?.user.role, me?.capabilities, me?.tier);
+
+  // Which section does the current route belong to?
+  const activeSection = nav.find((g) => g.items.some((i) => i.to === pathname))?.section ?? null;
+
   const NavList = (
     <nav className="flex-1 space-y-4 overflow-y-auto px-3 pt-10 pb-6">
       {nav.map((group) => (
@@ -206,7 +441,7 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
       <div className="flex items-baseline justify-between">
         <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Credits</div>
-        <div className="font-display text-xl font-bold text-foreground text-glow">{credits}</div>
+        <div className="font-display text-xl font-bold text-foreground text-glow">{Number.isInteger(credits) ? credits : credits.toFixed(2).replace(/\.?0+$/, "")}</div>
       </div>
       <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
         <div className="h-full bg-neon-gradient" style={{ width: `${pct}%` }} />
@@ -226,6 +461,9 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
     </div>
   );
 
+  // The bottom sheet section currently open (if any)
+  const openSection = nav.find((g) => g.section === activeTab) ?? null;
+
   return (
     <div className="flex min-h-screen text-foreground" style={{ background: "transparent" }}>
       {billingBanner && (
@@ -233,7 +471,8 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
           {billingBanner} <button onClick={() => setBillingBanner("")} className="ml-3 underline">dismiss</button>
         </div>
       )}
-      {/* Desktop sidebar — glass layer 1, rounded right edge, defined border */}
+
+      {/* ── Desktop sidebar ── */}
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col lg:flex"
         style={{
           background: "var(--glass-sidebar)",
@@ -247,13 +486,11 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
         <Link to="/" className="flex items-center gap-3 px-5 pt-5 pb-3">
           <img src="/logo-icon.png" alt="NivaSpark icon" className="h-9 w-9 shrink-0 object-contain" />
           <div className="leading-tight min-w-0">
-            {/* dark mode: silver/light text wording; light mode: navy text wording */}
             <img src="/logo-wording-dark.png" alt="NivaSpark" className="hidden dark:block h-7 object-contain object-left" />
             <img src="/logo-wording-light.png" alt="NivaSpark" className="block dark:hidden h-7 object-contain object-left" />
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Powered by Nivatier</div>
           </div>
         </Link>
-        {/* Live clock — browser timezone, no picker needed */}
         <div className="mx-3 mb-2 px-3 py-1.5 text-[10px] text-muted-foreground">
           🕐 <LiveClock timeZone={timeZone} />
         </div>
@@ -261,10 +498,11 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
         {CreditsCard}
       </aside>
 
-      {/* Main */}
+      {/* ── Main ── */}
       <main className="flex-1 min-w-0">
-        {/* Mobile top bar — glass, rounded bottom, theme-aware */}
-        <div className="sticky top-0 z-30 flex items-center gap-3 px-4 py-3 lg:hidden"
+
+        {/* Mobile top bar — compact */}
+        <div className="sticky top-0 z-30 flex items-center gap-3 px-4 py-2 lg:hidden"
           style={{
             background: "var(--glass-topbar)",
             backdropFilter: "var(--glass-blur-topbar)",
@@ -276,43 +514,38 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
             boxShadow: "var(--glass-topbar-shadow), 0 4px 16px oklch(0 0 0 / 0.08)",
           }}>
           <Link to="/" className="flex items-center gap-2">
-            <img src="/logo-icon.png" alt="NivaSpark icon" className="h-8 w-8 shrink-0 object-contain" />
-            <img src="/logo-wording-dark.png" alt="NivaSpark" className="hidden dark:block h-6 object-contain" />
-            <img src="/logo-wording-light.png" alt="NivaSpark" className="block dark:hidden h-6 object-contain" />
+            <img src="/logo-icon.png" alt="NivaSpark icon" className="h-7 w-7 shrink-0 object-contain" />
+            <img src="/logo-wording-dark.png" alt="NivaSpark" className="hidden dark:block h-5 object-contain" />
+            <img src="/logo-wording-light.png" alt="NivaSpark" className="block dark:hidden h-5 object-contain" />
           </Link>
           <div className="ml-auto flex items-center gap-2">
+            {/* Notifications bell — mobile */}
+            <div className="relative">
+              <button
+                onClick={() => setShowNotifications((v) => !v)}
+                title="Notifications"
+                className="relative grid h-7 w-7 place-items-center rounded-full border border-border bg-card/60 text-muted-foreground hover:border-primary/40 transition"
+              >
+                <Bell className="h-3.5 w-3.5" strokeWidth={2} />
+                {notifications.length > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-red-500 text-[8px] font-bold text-white">
+                    {notifications.length > 9 ? "9+" : notifications.length}
+                  </span>
+                )}
+              </button>
+            </div>
             <ThemeToggle />
-            <button onClick={() => setShowProfile(true)} className="grid h-8 w-8 place-items-center rounded-full border border-primary/40 bg-primary/10 text-xs font-semibold text-primary hover:border-primary/70">{personInitial}</button>
             <button
-              type="button"
-              onClick={() => setOpen((v) => !v)}
-              aria-expanded={open}
-              aria-label="Toggle menu"
-              className="grid h-9 w-9 place-items-center rounded-lg border border-border bg-card text-foreground hover:border-primary/40"
+              onClick={() => setShowProfile(true)}
+              className="grid h-7 w-7 place-items-center rounded-full border border-primary/40 bg-primary/10 text-[11px] font-semibold text-primary hover:border-primary/70"
             >
-              <span className="relative block h-3 w-4">
-                <span className={`absolute left-0 top-0 h-0.5 w-full bg-current transition ${open ? "translate-y-1.5 rotate-45" : ""}`} />
-                <span className={`absolute left-0 top-1.5 h-0.5 w-full bg-current transition ${open ? "opacity-0" : ""}`} />
-                <span className={`absolute left-0 top-3 h-0.5 w-full bg-current transition ${open ? "-translate-y-1.5 -rotate-45" : ""}`} />
-              </span>
+              {personInitial}
             </button>
           </div>
         </div>
 
-        {/* Mobile collapsible menu */}
-        <div
-          className={`lg:hidden overflow-hidden border-b border-sidebar-border backdrop-blur transition-[max-height] duration-300 ease-out ${
-            open ? "max-h-[80vh]" : "max-h-0"
-          }`}
-        >
-          <div className="max-h-[75vh] overflow-y-auto pt-3">
-            {NavList}
-            {CreditsCard}
-          </div>
-        </div>
-
-        {/* Page header — glass layer 2, rounded bottom, defined border */}
-        <header className="sticky top-[57px] z-20 px-5 py-5 lg:top-0 lg:px-10 lg:py-6"
+        {/* Page header — tighter on mobile */}
+        <header className="sticky top-[48px] z-20 px-4 py-2.5 lg:top-0 lg:px-10 lg:py-6"
           style={{
             background: "var(--glass-topbar)",
             backdropFilter: "var(--glass-blur-topbar)",
@@ -325,11 +558,9 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
           }}>
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 sm:flex sm:justify-between">
             <div className="min-w-0">
-              {eyebrow && <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-primary">{eyebrow}</div>}
-              <h1 className="mt-1 truncate font-display text-2xl font-bold tracking-tight text-glow lg:text-3xl">{title}</h1>
-              {activeItem && (
-                <div className="mt-1 text-[11px] text-muted-foreground lg:hidden">{activeItem.label}</div>
-              )}
+              {eyebrow && <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-primary">{eyebrow}</div>}
+              {/* Smaller title on mobile — lg keeps original size */}
+              <h1 className="mt-0.5 truncate font-display text-lg font-bold tracking-tight text-glow lg:text-3xl lg:mt-1">{title}</h1>
             </div>
             <div className="hidden items-center gap-3 text-xs text-muted-foreground lg:flex">
               <div className="hidden md:flex md:flex-col md:items-end">
@@ -337,7 +568,7 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
                 <span className="mt-1 text-[11px] text-muted-foreground">{me?.user.full_name || me?.user.email} · {roleLabel[me?.user.role || ""] || me?.user.role}</span>
               </div>
               <ThemeToggle />
-              {/* Notifications bell */}
+              {/* Notifications bell — desktop */}
               <div className="relative" ref={notifRef}>
                 <button onClick={() => setShowNotifications((v) => !v)} title="Notifications"
                   className="relative grid h-9 w-9 place-items-center rounded-full border border-border bg-card/60 text-muted-foreground hover:border-primary/40 hover:text-foreground transition">
@@ -399,8 +630,10 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
             </div>
           </div>
         </header>
+
+        {/* Page content — extra bottom padding on mobile so content clears the bottom nav */}
         <div className="flex min-h-0 flex-1 items-start">
-          <div className="flex-1 min-w-0 px-5 py-6 lg:px-10 lg:py-8">{children}</div>
+          <div className="flex-1 min-w-0 px-5 py-6 pb-24 lg:px-10 lg:py-8 lg:pb-8">{children}</div>
           {rightPanel && (
             <div
               className="hidden xl:flex w-[232px] shrink-0 flex-col overflow-hidden rounded-2xl border border-border/60 mr-6 bg-card"
@@ -416,6 +649,114 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
           )}
         </div>
       </main>
+
+      {/* ── Mobile bottom nav bar ── */}
+      <div
+        className="fixed bottom-0 left-0 right-0 z-40 lg:hidden"
+        style={{
+          background: "var(--glass-sidebar)",
+          backdropFilter: "var(--glass-blur-sidebar)",
+          WebkitBackdropFilter: "var(--glass-blur-sidebar)",
+          border: "1px solid var(--glass-panel-border)",
+          borderBottom: "none",
+          borderRadius: "1rem 1rem 0 0",
+          boxShadow: "var(--glass-sidebar-shadow), 0 -4px 24px oklch(0 0 0 / 0.20)",
+          // Respect iOS home indicator
+          paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        }}
+      >
+        <div className="flex items-stretch h-[60px]">
+          {/* Nav section tabs */}
+          {nav.map((group) => {
+            const TabIcon = TAB_ICONS[group.section] ?? Sparkles;
+            const isTabActive = activeSection === group.section;
+            const isSheetOpen = activeTab === group.section;
+            const lit = isTabActive || isSheetOpen;
+
+            return (
+              <button
+                key={group.section}
+                type="button"
+                onClick={() => setActiveTab(isSheetOpen ? null : group.section)}
+                className="flex flex-1 flex-col items-center justify-center gap-1 relative"
+              >
+                <span
+                  className="absolute top-0 h-0.5 w-8 rounded-b transition-all duration-200"
+                  style={{ background: lit ? "oklch(0.85 0.18 52)" : "transparent" }}
+                />
+                <TabIcon
+                  className="h-5 w-5 shrink-0"
+                  strokeWidth={lit ? 2.5 : 1.75}
+                  style={{ color: lit ? "oklch(0.85 0.18 52)" : "oklch(0.60 0.04 280)" }}
+                />
+                <span
+                  className="text-[10px] font-medium"
+                  style={{ color: lit ? "oklch(0.85 0.18 52)" : "oklch(0.55 0.04 280)" }}
+                >
+                  {group.section}
+                </span>
+              </button>
+            );
+          })}
+
+          {/* Account tab — always last */}
+          {(() => {
+            const isSheetOpen = activeTab === "Account";
+            return (
+              <button
+                type="button"
+                onClick={() => setActiveTab(isSheetOpen ? null : "Account")}
+                className="flex flex-1 flex-col items-center justify-center gap-1 relative"
+              >
+                <span
+                  className="absolute top-0 h-0.5 w-8 rounded-b transition-all duration-200"
+                  style={{ background: isSheetOpen ? "oklch(0.85 0.18 52)" : "transparent" }}
+                />
+                <User
+                  className="h-5 w-5 shrink-0"
+                  strokeWidth={isSheetOpen ? 2.5 : 1.75}
+                  style={{ color: isSheetOpen ? "oklch(0.85 0.18 52)" : "oklch(0.60 0.04 280)" }}
+                />
+                <span
+                  className="text-[10px] font-medium"
+                  style={{ color: isSheetOpen ? "oklch(0.85 0.18 52)" : "oklch(0.55 0.04 280)" }}
+                >
+                  Account
+                </span>
+              </button>
+            );
+          })()}
+        </div>
+      </div>
+
+      {/* ── Nav section bottom sheet ── */}
+      {openSection && (
+        <MobileNavSheet
+          section={openSection}
+          pathname={pathname}
+          onClose={() => setActiveTab(null)}
+        />
+      )}
+
+      {/* ── Account bottom sheet ── */}
+      {activeTab === "Account" && (
+        <MobileAccountSheet
+          onClose={() => setActiveTab(null)}
+          credits={credits}
+          pct={pct}
+          tier={me?.tier ? me.tier.charAt(0).toUpperCase() + me.tier.slice(1) : "Free"}
+          planCredits={planCredits}
+          personInitial={personInitial}
+          userName={me?.user.full_name ?? ""}
+          userEmail={me?.user.email ?? ""}
+          userRole={roleLabel[me?.user.role ?? ""] ?? (me?.user.role ?? "")}
+          companyName={me?.company_name ?? ""}
+          onBuyCredits={() => setShowBuyCredits(true)}
+          onLogout={handleLogout}
+          onProfile={() => setShowProfile(true)}
+        />
+      )}
+
       {showBuyCredits && <BuyCreditsModal onClose={() => setShowBuyCredits(false)} />}
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
     </div>

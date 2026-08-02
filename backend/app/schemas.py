@@ -107,8 +107,8 @@ class AdminOverviewOut(BaseModel):
     A company's admin should never see other companies' data, even
     aggregated."""
     tier: str
-    credits_remaining: int
-    credits_used_this_month: int
+    credits_remaining: float
+    credits_used_this_month: float
     team_members: int
     ads_created_total: int
     ads_created_this_month: int
@@ -132,7 +132,7 @@ class AnalyticsOut(BaseModel):
     details (that stays admin-only, in Moderation)."""
     ads_created_total: int
     ads_created_this_month: int
-    credits_used_this_month: int
+    credits_used_this_month: float
     scheduled_pending: int
     campaigns_total: int
     ads_by_day: list[DayCountOut]  # last 30 days, zero-filled for days with no activity
@@ -152,7 +152,7 @@ class AvailableModelOut(BaseModel):
     total without the raw $ structure ever reaching the browser."""
     id: str
     label: str
-    credits: int  # a representative/reference number — for models with dynamic pricing this is the cost of a common combination, not necessarily what any specific selection will actually cost; always call /ads/preview-cost for the real total
+    credits: float  # a representative/reference number in 0.25 steps — for models with dynamic pricing this is the cost of a common combination, not necessarily what any specific selection will actually cost; always call /ads/preview-cost for the real total
     min_duration: int | None = None  # video only — ignored if duration_options is set
     max_duration: int | None = None  # video only — ignored if duration_options is set
     duration_options: list[int] | None = None  # video only — set means DISCRETE choices only (e.g. [4, 6, 8]); Create Ad shows a picker instead of a free-entry duration field
@@ -174,12 +174,21 @@ class PreviewCostIn(BaseModel):
     model_id: str
     resolution: str | None = None
     audio: bool = False
-    duration_seconds: int | None = None  # required for video, ignored for image
-    has_reference_image: bool = False  # video only — whether a reference/frame image is currently attached; affects price for models with a mode-based rate split or a per-input reference cost (see services/pricing.py)
+    duration_seconds: int | None = None      # required for video, ignored for image
+    has_reference_image: bool = False         # video: reference/frame image attached
+    # Video prep options — only meaningful when kind="video"
+    refine_video_prompt: bool = False         # shot prompt review via text model
+    refine_video_frame: bool = False          # first-frame pre-render via image model
+    video_mode: str = "single_reference"      # "single_reference" | "first_last_frame"
+    shot_count: int = 1                       # number of shots — review cost scales per shot
 
 
 class PreviewCostOut(BaseModel):
-    credits: int
+    credits: float          # total in 0.25 steps
+    # Breakdown — helps the frontend show "X for video + Y for prep"
+    video_credits: float = 0.0
+    prep_text_credits: float = 0.0    # shot prompt review cost
+    prep_image_credits: float = 0.0   # frame pre-render cost
 
 
 class MarkupMultiplierOut(BaseModel):
@@ -567,7 +576,7 @@ class CompanyAdminOut(BaseModel):
     tier: str
     subscription_status: str
     cancel_at_period_end: bool
-    credits_balance: int
+    credits_balance: float
     user_count: int
     ads_total: int
     created_at: datetime
@@ -609,7 +618,7 @@ class DeveloperModelOut(BaseModel):
     id: str
     label: str
     model: str
-    credits: int  # LEGACY flat cost — still used as a fallback whenever "pricing" is absent, and shown as a reference number even when it isn't the live source of truth
+    credits: float  # flat cost in 0.25 steps — still used as fallback whenever "pricing" is absent, and shown as reference when it isn't the live source of truth
     min_duration: int | None = None
     max_duration: int | None = None
     duration_options: list[int] | None = None  # video only — DISCRETE allowed durations (e.g. [5, 10] for Kling O1, [4, 6, 8] for the Veo family) — when set, this replaces the min/max range entirely; Create Ad shows a picker instead of a free slider
@@ -634,7 +643,7 @@ class AddModelIn(BaseModel):
     kind: str = Field(pattern="^(text|image|video)$")
     label: str = Field(min_length=1, max_length=60)
     model: str = Field(min_length=1, max_length=200)
-    credits: int = Field(ge=1, le=50)
+    credits: float = Field(ge=0.25, le=50)
     min_duration: int | None = Field(default=None, ge=1, le=60)  # video only; ignored for image
     max_duration: int | None = Field(default=None, ge=1, le=60)  # video only; ignored for image
     duration_options: list[int] | None = None  # video only — set for models with fixed/discrete durations only (not a range)
@@ -654,7 +663,7 @@ class UpdateModelIn(BaseModel):
     overwrite what's explicitly provided)."""
     label: str | None = Field(default=None, min_length=1, max_length=60)
     model: str | None = Field(default=None, min_length=1, max_length=200)
-    credits: int | None = Field(default=None, ge=1, le=50)
+    credits: float | None = Field(default=None, ge=0.25, le=50)
     min_duration: int | None = Field(default=None, ge=1, le=60)
     max_duration: int | None = Field(default=None, ge=1, le=60)
     duration_options: list[int] | None = None
@@ -742,7 +751,8 @@ class MeOut(BaseModel):
     company_id: uuid.UUID
     company_name: str
     tier: str
-    credits: int
+    credits: float  # live balance in 0.25 steps
+    plan_credits: int  # monthly allowance for this tier — sent from backend so frontend never hardcodes tier→credits mapping
     current_period_end: datetime | None = None
     cancel_at_period_end: bool = False
     capabilities: dict[str, bool] = Field(default_factory=dict)  # resolved for THIS user's role — admin gets everything True
@@ -895,7 +905,7 @@ class AdListOut(BaseModel):
 class AdCreatedOut(BaseModel):
     ad_id: uuid.UUID
     job_id: uuid.UUID | None = None
-    credits_cost: int
+    credits_cost: float  # in 0.25 steps
 
 
 class PromptPreviewIn(BaseModel):

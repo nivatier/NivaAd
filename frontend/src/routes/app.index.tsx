@@ -567,6 +567,7 @@ function CreateAd() {
   const [videoAudio, setVideoAudio] = useState(true);
   const [liveImageCredits, setLiveImageCredits] = useState<number | null>(null);
   const [liveVideoCredits, setLiveVideoCredits] = useState<number | null>(null);
+  const [liveVideoCostBreakdown, setLiveVideoCostBreakdown] = useState<{ video: number; prepText: number; prepImage: number } | null>(null);
   const [liveTextCredits, setLiveTextCredits] = useState<number | null>(null);
   const [videoShots, setVideoShots] = useState<{
     prompt: string;
@@ -605,8 +606,9 @@ function CreateAd() {
   const [musicPresets, setMusicPresets] = useState<{ id: string; label: string; description: string }[]>([]);
   const [videoReferencePromptDefault, setVideoReferencePromptDefault] = useState<string>("");
 
-  // Platforms
-  const [selected, setSelected] = useState<Record<string, boolean>>({ instagram: true, facebook: true, linkedin: false, x: false, tiktok: false });
+  // Platforms — start empty, auto-populated once connected platforms load
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [hasAutoSelected, setHasAutoSelected] = useState(false);
 
   // Generation state
   const [busy, setBusy] = useState(false);
@@ -645,12 +647,21 @@ function CreateAd() {
 
   const { platforms: availablePlatforms, connected: connectedPlatformIds, testMode } = useConnectedPlatforms();
   const chosenPlatforms = availablePlatforms.filter((p) => selected[p.id]);
+
+  // Auto-select all connected platforms the first time they load.
+  // Only runs once (hasAutoSelected guard) so manual deselection isn't
+  // overridden if the user later toggles a platform off.
+  useEffect(() => {
+    if (hasAutoSelected || connectedPlatformIds.size === 0) return;
+    setSelected(Object.fromEntries([...connectedPlatformIds].map((id) => [id, true])));
+    setHasAutoSelected(true);
+  }, [connectedPlatformIds, hasAutoSelected]);
   const isDataUrlVideoFrame = !!videoFrameImage && videoFrameImage.startsWith("data:");
   const isDataUrlImageReference = !!imageReferenceImage && imageReferenceImage.startsWith("data:");
   const selectedTextModel = availableModels?.text.find((m) => m.id === textModelId) || null;
   const selectedImageModel = availableModels?.image.find((m) => m.id === imageModelId) || null;
   const selectedVideoModel = availableModels?.video.find((m) => m.id === videoModelId) || null;
-  const cost = estimateCost(outputs, format, variations, carouselCount, liveTextCredits ?? selectedTextModel?.credits ?? 1, liveImageCredits ?? selectedImageModel?.credits ?? 2, liveVideoCredits ?? selectedVideoModel?.credits ?? 5);
+  const cost = estimateCost(outputs, format, variations, carouselCount, liveTextCredits ?? selectedTextModel?.credits ?? 0.25, liveImageCredits ?? selectedImageModel?.credits ?? 1, liveVideoCredits ?? selectedVideoModel?.credits ?? 5);
   const videoTotalDuration = videoShots.reduce((sum, s) => sum + (s.duration || 0), 0);
   const videoShotsValid = !outputs.video || (!!selectedVideoModel && (
     selectedVideoModel.duration_options
@@ -698,41 +709,59 @@ function CreateAd() {
     }
   }, [selectedVideoModel?.id, selectedVideoModel?.supports_last_frame]);
 
-  // Live, exact pricing — recomputed server-side whenever the actual
-  // selection changes, since dynamically-priced models genuinely cost
-  // different amounts per resolution/audio/duration combination (see
-  // services/pricing.py). Falls back to the model's flat reference
-  // `credits` for models without dynamic pricing, avoiding an
-  // unnecessary API call for those.
+  // Live, exact pricing — always recomputed server-side so the displayed
+  // cost is always accurate regardless of whether a model uses dynamic
+  // or flat pricing (all models now return floats in 0.25 steps).
   useEffect(() => {
-    if (!outputs.text || !selectedTextModel?.has_dynamic_pricing) { setLiveTextCredits(null); return; }
+    if (!outputs.text || !selectedTextModel) { setLiveTextCredits(null); return; }
     let cancelled = false;
     api("/ads/preview-cost", { method: "POST", body: { kind: "text", model_id: selectedTextModel.id } })
       .then((r) => { if (!cancelled) setLiveTextCredits(r.credits); })
       .catch(() => { if (!cancelled) setLiveTextCredits(null); });
     return () => { cancelled = true; };
-  }, [outputs.text, selectedTextModel?.id, selectedTextModel?.has_dynamic_pricing]);
+  }, [outputs.text, selectedTextModel?.id]);
 
   useEffect(() => {
-    if (!outputs.image || !selectedImageModel?.has_dynamic_pricing) { setLiveImageCredits(null); return; }
+    if (!outputs.image || !selectedImageModel) { setLiveImageCredits(null); return; }
     let cancelled = false;
     api("/ads/preview-cost", { method: "POST", body: { kind: "image", model_id: selectedImageModel.id } })
       .then((r) => { if (!cancelled) setLiveImageCredits(r.credits); })
       .catch(() => { if (!cancelled) setLiveImageCredits(null); });
     return () => { cancelled = true; };
-  }, [outputs.image, selectedImageModel?.id, selectedImageModel?.has_dynamic_pricing]);
+  }, [outputs.image, selectedImageModel?.id]);
 
   useEffect(() => {
-    if (!outputs.video || !selectedVideoModel?.has_dynamic_pricing || !videoShotsValid) { setLiveVideoCredits(null); return; }
+    if (!outputs.video || !selectedVideoModel || !videoShotsValid) { setLiveVideoCredits(null); setLiveVideoCostBreakdown(null); return; }
     let cancelled = false;
     api("/ads/preview-cost", {
       method: "POST",
-      body: { kind: "video", model_id: selectedVideoModel.id, resolution: videoResolution, audio: videoAudio, duration_seconds: videoTotalDuration, has_reference_image: !!videoFrameImage },
+      body: {
+        kind: "video",
+        model_id: selectedVideoModel.id,
+        resolution: videoResolution,
+        audio: videoAudio,
+        duration_seconds: videoTotalDuration,
+        has_reference_image: !!videoFrameImage,
+        // Pass prep options so total shown includes all costs
+        refine_video_prompt: refineVideoPrompt,
+        refine_video_frame: refineVideoFrame,
+        video_mode: videoMode,
+        shot_count: videoShots.length || 1,
+      },
     })
-      .then((r) => { if (!cancelled) setLiveVideoCredits(r.credits); })
-      .catch(() => { if (!cancelled) setLiveVideoCredits(null); });
+      .then((r) => {
+        if (!cancelled) {
+          setLiveVideoCredits(r.credits);
+          setLiveVideoCostBreakdown({
+            video: r.video_credits ?? r.credits,
+            prepText: r.prep_text_credits ?? 0,
+            prepImage: r.prep_image_credits ?? 0,
+          });
+        }
+      })
+      .catch(() => { if (!cancelled) { setLiveVideoCredits(null); setLiveVideoCostBreakdown(null); } });
     return () => { cancelled = true; };
-  }, [outputs.video, selectedVideoModel?.id, selectedVideoModel?.has_dynamic_pricing, videoResolution, videoAudio, videoTotalDuration, videoShotsValid, videoFrameImage]);
+  }, [outputs.video, selectedVideoModel?.id, videoResolution, videoAudio, videoTotalDuration, videoShotsValid, videoFrameImage, refineVideoPrompt, refineVideoFrame, videoMode, videoShots.length]);
 
   // Switching between Text Theme Reference and Image Theme Reference
   // previously left the OTHER mode's composed text sitting in the
@@ -1284,7 +1313,7 @@ function CreateAd() {
                 <span className="text-lg">✍️</span>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-foreground">Ad Text</div>
-                  <div className="text-xs text-muted-foreground">~{liveTextCredits ?? selectedTextModel?.credits ?? 1} credit · always included</div>
+                  <div className="text-xs text-muted-foreground">~{liveTextCredits ?? selectedTextModel?.credits ?? 0.25} credit · always included</div>
                 </div>
                 <span className="shrink-0 rounded-full border border-primary/50 bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">Always on</span>
                 {textComplete && textCollapsed && (
@@ -1378,7 +1407,7 @@ function CreateAd() {
                 <span className="text-lg">🖼️</span>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-foreground">AI Image</div>
-                  <div className="text-xs text-muted-foreground">~{liveImageCredits ?? selectedImageModel?.credits ?? 2} credits</div>
+                  <div className="text-xs text-muted-foreground">~{liveImageCredits ?? selectedImageModel?.credits ?? 1} credits</div>
                 </div>
                 <div className={`shrink-0 h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${outputs.image ? "border-primary bg-primary" : "border-border"}`}>
                   {outputs.image && <svg className="h-3 w-3 text-background" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
@@ -1591,7 +1620,17 @@ function CreateAd() {
                 <span className="text-lg">🎬</span>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-foreground">AI Video</div>
-                  <div className="text-xs text-muted-foreground">~{liveVideoCredits ?? selectedVideoModel?.credits ?? 5} credits · takes a few minutes</div>
+                  <div className="text-xs text-muted-foreground">
+                    ~{liveVideoCredits ?? selectedVideoModel?.credits ?? 5} credits · takes a few minutes
+                    {liveVideoCostBreakdown && (liveVideoCostBreakdown.prepText > 0 || liveVideoCostBreakdown.prepImage > 0) && (
+                      <span className="ml-1 text-amber-400/80">
+                        ({liveVideoCostBreakdown.video} video
+                        {liveVideoCostBreakdown.prepText > 0 && ` + ${liveVideoCostBreakdown.prepText} prompt review`}
+                        {liveVideoCostBreakdown.prepImage > 0 && ` + ${liveVideoCostBreakdown.prepImage} frame prep`}
+                        )
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className={`shrink-0 h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${outputs.video ? "border-primary bg-primary" : "border-border"}`}>
                   {outputs.video && <svg className="h-3 w-3 text-background" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
@@ -2244,14 +2283,14 @@ function CreateAd() {
               { label: "Image model selected", met: !outputs.image || !!imageModelId },
               { label: "Video model selected", met: !outputs.video || !!videoModelId },
               { label: "Text model selected", met: !outputs.text || !!textModelId },
-              { label: "Sufficient credits", met: credits >= cost },
+              { label: `Sufficient credits (need ${cost})`, met: credits >= cost },
             ]}>
               <button
                 disabled={!productName.trim() || description.trim().length < 10 || !audience.trim() || (!outputs.text && !outputs.image && !outputs.video) || !videoShotsValid || (outputs.video && videoMode === "first_last_frame" && (!videoFrameImage || !videoEndFrameImage)) || credits < cost || previewBusy}
                 onClick={openPromptPreview}
                 className="rounded-full bg-gold-gradient px-6 py-2.5 text-sm font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-40"
               >
-                {previewBusy ? "Building prompts…" : credits < cost ? `Needs ${cost} credits — ${credits} left` : `Review prompts & generate (${cost} credit${cost > 1 ? "s" : ""}) →`}
+                {previewBusy ? "Building prompts…" : credits < cost ? `Needs ${cost} credits — ${credits} left` : `Review prompts & generate (${cost} credit${cost === 1 ? "" : "s"}) →`}
               </button>
             </RequirementChecklist>
             <button
@@ -2306,7 +2345,7 @@ function CreateAd() {
           {referenceRejectedMsg ? (
             <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-3 text-xs text-amber-400">
               <div>⚠ Your reference photo was rejected by the AI provider: <span className="text-amber-300">{referenceRejectedMsg}</span></div>
-              <div className="mt-1 text-amber-400/80">Nothing was generated yet — no credits were spent for this attempt. Want to try again without the reference photo (fully AI-imagined instead)? This will cost {cost} credit{cost > 1 ? "s" : ""}.</div>
+              <div className="mt-1 text-amber-400/80">Nothing was generated yet — no credits were spent for this attempt. Want to try again without the reference photo (fully AI-imagined instead)? This will cost {cost} credit{cost === 1 ? "" : "s"}.</div>
               <div className="mt-2 flex items-center gap-2">
                 <button disabled={retryingWithoutRef || credits < cost} onClick={retryWithoutReference} className="rounded-full bg-gold-gradient px-4 py-1.5 text-[11px] font-semibold text-background disabled:opacity-50">
                   {retryingWithoutRef ? "Retrying…" : credits < cost ? `Needs ${cost} credits — ${credits} left` : "Retry without reference photo"}

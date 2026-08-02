@@ -9,6 +9,21 @@ export const Route = createFileRoute("/developer/models")({
   head: () => ({ meta: [{ title: "Models — NivaSpark Developer" }] }),
 });
 
+
+// Mirrors backend pricing.py _round_to_quarter + _usd_to_credits
+function calcCredits(costUsd: number, markup: number, creditValueUsd: number): number {
+  if (!costUsd || !markup || !creditValueUsd) return 0;
+  const charged = costUsd * markup;
+  const raw = charged / creditValueUsd;
+  const quarters = Math.ceil(raw * 4 - 1e-9);
+  return Math.max(1, quarters) / 4;
+}
+
+function fmtCredits(n: number): string {
+  // e.g. 1.0 → "1", 1.75 → "1.75"
+  return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/\.?0+$/, "");
+}
+
 const COMMON_RESOLUTIONS = ["480p", "720p", "1080p"];
 const COMMON_ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:5", "1.91:1", "4:3", "3:4"];
 
@@ -121,7 +136,7 @@ function ResolutionPicker({ value, onChange }: { value: string[]; onChange: (v: 
   );
 }
 
-function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDown, canMoveUp, canMoveDown }: {
+function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDown, canMoveUp, canMoveDown, markup, creditValueUsd }: {
   kind: "text" | "image" | "video"; entry: DeveloperModel;
   onSave: (id: string, body: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
@@ -130,11 +145,13 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
   onMoveDown: () => void;
   canMoveUp: boolean;
   canMoveDown: boolean;
+  markup: number;
+  creditValueUsd: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(entry.label);
   const [model, setModel] = useState(entry.model);
-  const [credits, setCredits] = useState(String(entry.credits));
+  const [credits, setCredits] = useState(String(entry.credits ?? 0.25));
   const [minD, setMinD] = useState(String(entry.min_duration ?? ""));
   const [maxD, setMaxD] = useState(String(entry.max_duration ?? ""));
   const [durationOptions, setDurationOptions] = useState(entry.duration_options?.join(", ") ?? "");
@@ -142,6 +159,13 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
   const [aspectRatios, setAspectRatios] = useState<string[]>(entry.aspect_ratios || []);
   const [supportsAudio, setSupportsAudio] = useState(entry.supports_audio ?? false);
   const [supportsLastFrame, setSupportsLastFrame] = useState(entry.supports_last_frame ?? false);
+  // cost_usd: the raw OpenRouter cost per image/text generation.
+  // When set, credits are auto-calculated from cost × markup ÷ creditValueUsd.
+  const existingCostUsd = entry.pricing && typeof entry.pricing === "object" && "cost_usd" in entry.pricing
+    ? String((entry.pricing as Record<string, unknown>).cost_usd ?? "")
+    : "";
+  const [costUsd, setCostUsd] = useState(existingCostUsd);
+  // Video still uses raw JSON for the rates table
   const [pricingJson, setPricingJson] = useState(entry.pricing ? JSON.stringify(entry.pricing, null, 2) : "");
   const [pricingError, setPricingError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -150,20 +174,33 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
   async function save() {
     setPricingError("");
     let pricing: unknown = null;
-    if (pricingJson.trim()) {
-      try {
-        pricing = JSON.parse(pricingJson);
-      } catch {
-        setPricingError("That's not valid JSON — check for a missing comma or bracket.");
-        return;
+    if (kind === "video") {
+      if (pricingJson.trim()) {
+        try {
+          pricing = JSON.parse(pricingJson);
+        } catch {
+          setPricingError("That's not valid JSON — check for a missing comma or bracket.");
+          return;
+        }
       }
+    } else {
+      // text/image: build pricing block from the cost_usd field
+      const cost = parseFloat(costUsd);
+      if (!isNaN(cost) && cost > 0) {
+        pricing = { cost_usd: cost };
+      }
+    }
+    // Auto-calculate credits from cost when cost is set
+    let finalCredits = Math.max(0.25, Number(credits) || 0.25);
+    if (kind !== "video" && pricing && (pricing as any).cost_usd) {
+      finalCredits = calcCredits((pricing as any).cost_usd, markup, creditValueUsd);
     }
     const parsedDurationOptions = durationOptions.trim()
       ? durationOptions.split(",").map((s) => Number(s.trim())).filter((n) => n > 0)
       : null;
     setSaving(true);
     await onSave(entry.id, {
-      label: label.trim(), model: model.trim(), credits: Number(credits) || 1,
+      label: label.trim(), model: model.trim(), credits: finalCredits,
       min_duration: kind === "video" ? (Number(minD) || null) : null,
       max_duration: kind === "video" ? (Number(maxD) || null) : null,
       duration_options: kind === "video" ? parsedDurationOptions : null,
@@ -198,7 +235,7 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label shown to companies" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Model identifier" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <div className="flex items-center gap-2">
-            <input type="number" min={1} max={50} value={credits} onChange={(e) => setCredits(e.target.value)} className="w-20 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+            <input type="number" min={0.25} max={50} step={0.25} value={credits} onChange={(e) => setCredits(e.target.value)} className="w-20 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
             <span className="text-[11px] text-muted-foreground">credits</span>
           </div>
           {kind === "video" && (
@@ -240,15 +277,32 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
             <div className="space-y-2">
               {kind === "image" && <AspectRatioPicker value={aspectRatios} onChange={setAspectRatios} />}
               <div>
-                <div className="text-[10px] font-semibold text-muted-foreground mb-1">Dynamic pricing (optional — leave blank to keep the flat credits above)</div>
-                <textarea
-                  value={pricingJson}
-                  onChange={(e) => setPricingJson(e.target.value)}
-                  rows={2}
-                  placeholder='{"cost_usd": 0.001}'
-                  className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 font-mono text-[11px] text-foreground focus:border-ring focus:outline-none"
-                />
-                {pricingError && <div className="mt-1 text-[11px] text-destructive">{pricingError}</div>}
+                <div className="text-[10px] font-semibold text-muted-foreground mb-1">OpenRouter cost per generation (USD)</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-muted-foreground">$</span>
+                  <input
+                    type="number" min={0} step={0.001} value={costUsd}
+                    onChange={(e) => {
+                      setCostUsd(e.target.value);
+                      const cost = parseFloat(e.target.value);
+                      if (!isNaN(cost) && cost > 0 && markup && creditValueUsd) {
+                        setCredits(fmtCredits(calcCredits(cost, markup, creditValueUsd)));
+                      }
+                    }}
+                    placeholder="e.g. 0.039"
+                    className="w-28 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                  />
+                  {costUsd && !isNaN(parseFloat(costUsd)) && parseFloat(costUsd) > 0 && markup && creditValueUsd && (
+                    <span className="text-[11px] text-emerald-400">
+                      → {fmtCredits(calcCredits(parseFloat(costUsd), markup, creditValueUsd))} credits
+                      <span className="ml-1 text-muted-foreground">(${(parseFloat(costUsd) * markup).toFixed(3)} charged)</span>
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  Credits are auto-calculated: cost × {markup}× markup ÷ ${creditValueUsd}/credit, rounded up to nearest 0.25.
+                  The credits field above updates automatically — you can still override it manually.
+                </p>
               </div>
             </div>
           )}
@@ -292,12 +346,12 @@ function ModelRow({ kind, entry, onSave, onDelete, canDelete, onMoveUp, onMoveDo
   );
 }
 
-function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd: (body: Record<string, unknown>) => Promise<void> }) {
+function AddModelForm({ kind, onAdd, markup, creditValueUsd }: { kind: "text" | "image" | "video"; onAdd: (body: Record<string, unknown>) => Promise<void>; markup: number; creditValueUsd: number }) {
   const [open, setOpen] = useState(false);
   const [showCatalog, setShowCatalog] = useState(false);
   const [label, setLabel] = useState("");
   const [model, setModel] = useState("");
-  const [credits, setCredits] = useState("2");
+  const [credits, setCredits] = useState("0.25");
   const [minD, setMinD] = useState("4");
   const [maxD, setMaxD] = useState("15");
   const [durationOptions, setDurationOptions] = useState("");
@@ -306,6 +360,7 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
   const [supportsAudio, setSupportsAudio] = useState(false);
   const [supportsLastFrame, setSupportsLastFrame] = useState(false);
   const [pricePerSec, setPricePerSec] = useState<number | null>(null);
+  const [costUsd, setCostUsd] = useState("");
   const [saving, setSaving] = useState(false);
 
   function pickFromCatalog(m: OpenRouterCatalogModel) {
@@ -324,9 +379,19 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
     const parsedDurationOptions = durationOptions.trim()
       ? durationOptions.split(",").map((s) => Number(s.trim())).filter((n) => n > 0)
       : null;
+    // Build pricing block and auto-calculate credits for text/image
+    let addPricing: Record<string, unknown> | null = null;
+    let finalCredits = Math.max(0.25, Number(credits) || 0.25);
+    if (kind !== "video") {
+      const cost = parseFloat(costUsd);
+      if (!isNaN(cost) && cost > 0) {
+        addPricing = { cost_usd: cost };
+        finalCredits = calcCredits(cost, markup, creditValueUsd);
+      }
+    }
     setSaving(true);
     await onAdd({
-      kind, label: label.trim(), model: model.trim(), credits: Number(credits) || 1,
+      kind, label: label.trim(), model: model.trim(), credits: finalCredits,
       min_duration: kind === "video" ? Number(minD) || 4 : null,
       max_duration: kind === "video" ? Number(maxD) || 15 : null,
       duration_options: kind === "video" ? parsedDurationOptions : null,
@@ -335,9 +400,10 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
       supports_last_frame: kind === "video" ? supportsLastFrame : null,
       price_per_second_usd: kind === "video" ? pricePerSec : null,
       aspect_ratios: (kind === "image" || kind === "video") && aspectRatios.length > 0 ? aspectRatios : null,
+      pricing: addPricing,
     });
     setSaving(false);
-    setLabel(""); setModel(""); setCredits("2"); setMinD("4"); setMaxD("15"); setDurationOptions(""); setResolutions(["720p"]); setAspectRatios([]); setSupportsAudio(false); setSupportsLastFrame(false); setPricePerSec(null);
+    setLabel(""); setModel(""); setCredits("0.25"); setCostUsd(""); setMinD("4"); setMaxD("15"); setDurationOptions(""); setResolutions(["720p"]); setAspectRatios([]); setSupportsAudio(false); setSupportsLastFrame(false); setPricePerSec(null);
     setOpen(false);
   }
 
@@ -361,9 +427,37 @@ function AddModelForm({ kind, onAdd }: { kind: "text" | "image" | "video"; onAdd
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label shown to companies" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Model identifier" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <div className="flex items-center gap-2">
-            <input type="number" min={1} max={50} value={credits} onChange={(e) => setCredits(e.target.value)} className="w-20 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
-            <span className="text-[11px] text-muted-foreground">credits (token-to-cost mapping comes later — set a sensible number for now)</span>
+            <input type="number" min={0.25} max={50} step={0.25} value={credits} onChange={(e) => setCredits(e.target.value)} className="w-20 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+            <span className="text-[11px] text-muted-foreground">credits (auto-filled from OR cost below, or set manually)</span>
           </div>
+          {(kind === "image" || kind === "text") && (
+            <div>
+              <div className="text-[10px] font-semibold text-muted-foreground mb-1">OpenRouter cost per generation (USD)</div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-muted-foreground">$</span>
+                <input
+                  type="number" min={0} step={0.001} value={costUsd}
+                  onChange={(e) => {
+                    setCostUsd(e.target.value);
+                    const cost = parseFloat(e.target.value);
+                    if (!isNaN(cost) && cost > 0 && markup && creditValueUsd) {
+                      setCredits(fmtCredits(calcCredits(cost, markup, creditValueUsd)));
+                    }
+                  }}
+                  placeholder="e.g. 0.039"
+                  className="w-28 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                />
+                {costUsd && !isNaN(parseFloat(costUsd)) && parseFloat(costUsd) > 0 && (
+                  <span className="text-[11px] text-emerald-400">
+                    → {fmtCredits(calcCredits(parseFloat(costUsd), markup, creditValueUsd))} credits
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                Enter the OpenRouter per-image/text cost — credits auto-calculate at {markup}× markup, ${creditValueUsd}/credit.
+              </p>
+            </div>
+          )}
           {kind === "video" && (
             <>
               <div className="flex items-center gap-2">
@@ -483,10 +577,9 @@ function DeveloperModels() {
   const handleAuthError = useDevAuthErrorHandler();
 
   const [models, setModels] = useState<DeveloperModelsOut | null>(null);
+  const [markup, setMarkup] = useState<number>(2.5);
+  const [creditValueUsd, setCreditValueUsd] = useState<number>(0.10);
   const [err, setErr] = useState("");
-  const [markup, setMarkup] = useState<string>("");
-  const [markupSaved, setMarkupSaved] = useState(false);
-  const [savingMarkup, setSavingMarkup] = useState(false);
   const [promptReviewModelId, setPromptReviewModelId] = useState<string>("");
   const [videoPrepImageModelId, setVideoPrepImageModelId] = useState<string>("");
   const [savingVideoPrep, setSavingVideoPrep] = useState(false);
@@ -495,8 +588,13 @@ function DeveloperModels() {
   async function load() {
     try {
       setModels(await devApi("/developer/models"));
-      const m = await devApi("/developer/pricing/markup");
-      setMarkup(String(m.markup_multiplier));
+      // Fetch pricing config so the credit calculator in model forms uses
+      // the live markup and credit_value_usd rather than hardcoded defaults.
+      try {
+        const pc = await devApi("/developer/platform-config");
+        if (pc.markup_multiplier) setMarkup(Number(pc.markup_multiplier));
+        if (pc.credit_value_usd) setCreditValueUsd(Number(pc.credit_value_usd));
+      } catch { /* non-fatal — forms fall back to 2.5× / $0.10 */ }
       const vp = await devApi("/developer/video-prep");
       setPromptReviewModelId(vp.prompt_review_model_id || "");
       setVideoPrepImageModelId(vp.image_model_id || "");
@@ -516,20 +614,6 @@ function DeveloperModels() {
       if (!handleAuthError(e)) setErr(e.message || "Could not save");
     }
     setSavingVideoPrep(false);
-  }
-
-  async function saveMarkup() {
-    const value = Number(markup);
-    if (!value || value < 1) return;
-    setSavingMarkup(true); setMarkupSaved(false);
-    try {
-      await devApi("/developer/pricing/markup", { method: "PUT", body: { markup_multiplier: value } });
-      setMarkupSaved(true);
-      setTimeout(() => setMarkupSaved(false), 2000);
-    } catch (e: any) {
-      if (!handleAuthError(e)) setErr(e.message || "Could not save the markup");
-    }
-    setSavingMarkup(false);
   }
 
   async function handleAdd(body: Record<string, unknown>) {
@@ -626,9 +710,11 @@ function DeveloperModels() {
                 onMoveDown={() => handleReorder(kind, i, i + 1)}
                 canMoveUp={i > 0}
                 canMoveDown={i < models[kind].length - 1}
+                markup={markup}
+                creditValueUsd={creditValueUsd}
               />
             ))}
-            <AddModelForm kind={kind} onAdd={handleAdd} />
+            <AddModelForm kind={kind} onAdd={handleAdd} markup={markup} creditValueUsd={creditValueUsd} />
           </div>
         </div>
       </div>
@@ -661,19 +747,6 @@ function DeveloperModels() {
       {tab === "video" && <ModelKindTab kind="video" />}
       {tab === "config" && (
         <div className="space-y-6 max-w-xl">
-          <div className="rounded-xl border border-border bg-card/60 p-5">
-            <div className="text-sm font-semibold text-foreground">💰 Global markup multiplier</div>
-            <p className="mt-1 text-xs text-muted-foreground">Applied to every dynamically-priced model's real OpenRouter cost before converting to credits. Target 1.6–1.8× nets ~20% margin after infra and Stripe fees. Does not affect flat-credit models.</p>
-            <div className="mt-3 flex items-center gap-2">
-              <input type="number" step="0.05" min={1} max={10} value={markup} onChange={(e) => setMarkup(e.target.value)}
-                className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
-              <span className="text-xs text-muted-foreground">×</span>
-              <button disabled={savingMarkup} onClick={saveMarkup} className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
-                {savingMarkup ? "Saving…" : "Save"}
-              </button>
-              {markupSaved && <span className="text-xs text-emerald-400">✓ Saved</span>}
-            </div>
-          </div>
           <div className="rounded-xl border border-border bg-card/60 p-5">
             <div className="text-sm font-semibold text-foreground mb-2">🛠 Raw JSON editor</div>
             <p className="text-xs text-muted-foreground mb-3">Edit the full model config as JSON. Use with care — invalid JSON will be rejected.</p>

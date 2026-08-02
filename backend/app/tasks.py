@@ -1285,9 +1285,16 @@ def fire_due_scheduled_posts():
         failed_count = 0
         for sp in due:
             ad = db.get(Ad, sp.ad_id)
-            if sp.platform == "linkedin" and not settings.MOCK_POSTING:
+            # linkedin_personal is the real integration ID — "linkedin" was the
+            # old pre-split id used before personal/company were separated.
+            # Ad.platforms stores the ad-targeting id ("linkedin") but
+            # ScheduledPost.platform stores the connection id ("linkedin_personal").
+            # Match on both so ads targeted to "linkedin" post via "linkedin_personal".
+            is_linkedin_personal = sp.platform in ("linkedin_personal", "linkedin")
+            if is_linkedin_personal and not settings.MOCK_POSTING:
                 conn = db.scalar(select(PlatformConnection).where(
-                    PlatformConnection.company_id == sp.company_id, PlatformConnection.platform == "linkedin",
+                    PlatformConnection.company_id == sp.company_id,
+                    PlatformConnection.platform.in_(["linkedin_personal", "linkedin"]),
                 ))
                 if not (conn and conn.status == "connected"):
                     sp.status = "failed"
@@ -1297,7 +1304,7 @@ def fire_due_scheduled_posts():
                     access_token = decrypt_token(conn.encrypted_token)
                     person_urn = linkedin.get_person_urn(access_token)
                     variant = (ad.results or {}).get("variants", [{}])[0] if ad and ad.results else {}
-                    caption = (variant.get("linkedin") or {}).get("caption") or ""
+                    caption = (variant.get("linkedin") or variant.get("linkedin_personal") or {}).get("caption") or ""
                     linkedin.post_to_linkedin(access_token, person_urn, caption)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("[schedule] scheduled_post=%s LinkedIn post failed: %s", sp.id, exc)

@@ -78,7 +78,7 @@ async def get_analytics(user: User = Depends(require_capability("view_analytics"
     return AnalyticsOut(
         ads_created_total=ads_created_total or 0,
         ads_created_this_month=ads_created_this_month or 0,
-        credits_used_this_month=abs(credits_used_this_month),
+        credits_used_this_month=float(abs(credits_used_this_month or 0)),
         scheduled_pending=scheduled_pending or 0,
         campaigns_total=campaigns_total or 0,
         ads_by_day=ads_by_day,

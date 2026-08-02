@@ -163,6 +163,7 @@ export type MeOut = {
   company_name: string;
   tier: string;
   credits: number;
+  plan_credits: number;  // monthly credit allowance for this tier — use this, never hardcode TIER_MONTHLY
   current_period_end: string | null;
   cancel_at_period_end: boolean;
   capabilities: Record<string, boolean>;

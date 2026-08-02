@@ -19,7 +19,9 @@ from app.config import settings
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-TIER_CREDITS = {"starter": 10, "growth": 30, "pro": 120}
+TIER_CREDITS = {"starter": 150, "pro": 500}
+# Growth tier retired — archived in Stripe, no new subscriptions.
+# Free plan credits are defined as FREE_PLAN_CREDITS in auth.py / webhooks.py.
 
 _PRICE_MAP = None
 _REVERSE_MAP = None
@@ -108,6 +110,7 @@ def create_checkout_session(company_id: str, email: str, tier: str, term_months:
         client_reference_id=company_id,
         customer_email=email,
         metadata={"company_id": company_id, "tier": tier, "term_months": str(term_months)},
+        allow_promotion_codes=True,   # enables promo/coupon code box at checkout
         success_url=f"{settings.FRONTEND_URL}{path}?billing=success",
         cancel_url=f"{settings.FRONTEND_URL}{path}?billing=canceled",
     )
@@ -125,6 +128,7 @@ def create_topup_session(company_id: str, email: str, credits: int, return_to: s
         client_reference_id=company_id,
         customer_email=email,
         metadata={"company_id": company_id, "credits": str(credits)},
+        allow_promotion_codes=True,   # enables promo/coupon code box at checkout
         success_url=f"{settings.FRONTEND_URL}{path}?billing=topup-success",
         cancel_url=f"{settings.FRONTEND_URL}{path}?billing=canceled",
     )

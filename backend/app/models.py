@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
-    JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint,
+    JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -82,7 +82,7 @@ class CreditLedger(Base):
     __tablename__ = "credit_ledger"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
-    delta: Mapped[int] = mapped_column(Integer)
+    delta: Mapped[float] = mapped_column(Numeric(precision=10, scale=2))
     reason: Mapped[str] = mapped_column(String(50))
     ref_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
@@ -226,7 +226,7 @@ class GenerationJob(Base):
     ad_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ads.id"), index=True)
     kind: Mapped[str] = mapped_column(String(20), default="ad")
     status: Mapped[str] = mapped_column(String(20), default="queued")
-    credits_cost: Mapped[int] = mapped_column(Integer, default=1)
+    credits_cost: Mapped[float] = mapped_column(Numeric(precision=10, scale=2), default=0.25)
     model_used: Mapped[str | None] = mapped_column(String(120), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -203,13 +203,14 @@ async def get_available_models_endpoint(user: User = Depends(require_capability(
     real total."""
     models = await credit_svc.get_available_models(db)
     markup = await pricing_svc.get_markup_multiplier(db)
+    credit_value_usd = await pricing_svc.get_credit_value_usd(db)
 
     text_out = []
     for m in models["text"]:
         if not m.get("enabled", True):
             continue
         has_dynamic = bool(m.get("pricing", {}).get("cost_usd"))
-        credits = pricing_svc.compute_text_credits(m, markup) if has_dynamic else m["credits"]
+        credits = pricing_svc.compute_text_credits(m, markup, credit_value_usd) if has_dynamic else m.get("credits", 0.25)
         text_out.append(AvailableModelOut(id=m["id"], label=m["label"], credits=credits, has_dynamic_pricing=has_dynamic))
 
     image_out = []
@@ -217,7 +218,7 @@ async def get_available_models_endpoint(user: User = Depends(require_capability(
         if not m.get("enabled", True):
             continue
         has_dynamic = bool(m.get("pricing", {}).get("cost_usd"))
-        credits = pricing_svc.compute_image_credits(m, markup) if has_dynamic else m["credits"]
+        credits = pricing_svc.compute_image_credits(m, markup, credit_value_usd) if has_dynamic else m.get("credits", 1)
         image_out.append(AvailableModelOut(id=m["id"], label=m["label"], credits=credits, has_dynamic_pricing=has_dynamic, aspect_ratios=m.get("aspect_ratios") or None))
 
     video_out = []
@@ -229,9 +230,9 @@ async def get_available_models_endpoint(user: User = Depends(require_capability(
         if has_dynamic:
             ref_resolution = (m.get("resolutions") or [None])[0]
             ref_duration = m.get("min_duration") or (m.get("duration_options") or [6])[0]
-            credits = pricing_svc.compute_video_credits(m, ref_resolution, False, ref_duration, markup)
+            credits = pricing_svc.compute_video_credits(m, ref_resolution, False, ref_duration, markup, credit_value_usd)
         else:
-            credits = m["credits"]
+            credits = m.get("credits", 3)
         video_out.append(AvailableModelOut(
             id=m["id"], label=m["label"], credits=credits,
             min_duration=m.get("min_duration"), max_duration=m.get("max_duration"),
@@ -260,22 +261,68 @@ async def get_retention_info(_: User = Depends(get_current_user), db: AsyncSessi
 @router.post("/preview-cost", response_model=PreviewCostOut)
 async def preview_cost(data: PreviewCostIn, user: User = Depends(require_capability("create_ads")), db: AsyncSession = Depends(get_db)):
     """The real, exact credit cost for a specific combination — called
-    live as the customer changes resolution/audio/duration in Create
-    Ad, so the price shown is always accurate for what they've actually
-    selected, not a rough reference number. Deliberately returns ONLY
-    the credit total, never the underlying $ formula — the pricing
-    structure itself stays developer-only (see AvailableModelOut)."""
+    live as the customer changes resolution/audio/duration/prep options
+    in Create Ad. For video, includes the cost of any opt-in prep steps
+    (shot prompt review via a text model, first-frame pre-render via an
+    image model) so the total shown before generating is always complete.
+    Returns a breakdown so the frontend can explain each component."""
     models = await credit_svc.get_available_models(db)
     entry = next((m for m in models.get(data.kind, []) if m["id"] == data.model_id and m.get("enabled", True)), None)
     if entry is None:
         raise HTTPException(404, "That option is no longer available — pick another one.")
     markup = await pricing_svc.get_markup_multiplier(db)
+    credit_value_usd = await pricing_svc.get_credit_value_usd(db)
+
     if data.kind == "text":
-        return PreviewCostOut(credits=pricing_svc.compute_text_credits(entry, markup))
+        c = pricing_svc.compute_text_credits(entry, markup, credit_value_usd)
+        return PreviewCostOut(credits=c)
     if data.kind == "image":
-        return PreviewCostOut(credits=pricing_svc.compute_image_credits(entry, markup))
+        c = pricing_svc.compute_image_credits(entry, markup, credit_value_usd)
+        return PreviewCostOut(credits=c)
+
+    # ── Video ──────────────────────────────────────────────────────────────
     duration = data.duration_seconds or entry.get("min_duration") or 6
-    return PreviewCostOut(credits=pricing_svc.compute_video_credits(entry, data.resolution, data.audio, duration, markup, has_reference_image=data.has_reference_image))
+    video_credits = pricing_svc.compute_video_credits(
+        entry, data.resolution, data.audio, duration, markup, credit_value_usd,
+        has_reference_image=data.has_reference_image,
+    )
+
+    prep_text_credits = 0.0
+    prep_image_credits = 0.0
+
+    if data.refine_video_prompt or (data.refine_video_frame and data.video_mode == "single_reference" and data.has_reference_image):
+        prep_settings = await video_prep_svc.get_video_prep_settings(db)
+
+        # Shot prompt review — one text call per shot
+        if data.refine_video_prompt and prep_settings.get("prompt_review_model_id"):
+            review_entry = next(
+                (m for m in models.get("text", []) if m["id"] == prep_settings["prompt_review_model_id"]),
+                None,
+            )
+            if review_entry:
+                per_shot = pricing_svc.compute_text_credits(review_entry, markup, credit_value_usd)
+                prep_text_credits = per_shot * max(1, data.shot_count)
+
+        # First-frame pre-render — one image call, single_reference mode only
+        if (data.refine_video_frame
+                and data.video_mode == "single_reference"
+                and data.has_reference_image
+                and prep_settings.get("image_model_id")):
+            prep_entry = next(
+                (m for m in models.get("image", []) if m["id"] == prep_settings["image_model_id"]),
+                None,
+            )
+            if prep_entry:
+                prep_image_credits = pricing_svc.compute_image_credits(prep_entry, markup, credit_value_usd)
+
+    from app.services.credits import _round_to_quarter
+    total = _round_to_quarter(video_credits + prep_text_credits + prep_image_credits)
+    return PreviewCostOut(
+        credits=total,
+        video_credits=video_credits,
+        prep_text_credits=prep_text_credits,
+        prep_image_credits=prep_image_credits,
+    )
 
 
 @router.post("/preview-prompt", response_model=PromptPreviewOut)
@@ -410,10 +457,11 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
             )
 
     markup = await pricing_svc.get_markup_multiplier(db)
-    text_credits_resolved = pricing_svc.compute_text_credits(text_model, markup) if text_model else None
-    image_credits_resolved = pricing_svc.compute_image_credits(image_model, markup) if image_model else None
+    credit_value_usd = await pricing_svc.get_credit_value_usd(db)
+    text_credits_resolved = pricing_svc.compute_text_credits(text_model, markup, credit_value_usd) if text_model else None
+    image_credits_resolved = pricing_svc.compute_image_credits(image_model, markup, credit_value_usd) if image_model else None
     video_has_reference = bool(data.video_frame_image or data.video_frame_image_url)
-    video_credits_resolved = pricing_svc.compute_video_credits(video_model, video_resolution, data.video_audio, total_duration, markup, has_reference_image=video_has_reference) if video_model else None
+    video_credits_resolved = pricing_svc.compute_video_credits(video_model, video_resolution, data.video_audio, total_duration, markup, credit_value_usd, has_reference_image=video_has_reference) if video_model else None
 
     cost = credit_svc.generation_cost(
         text_credits_resolved,
@@ -421,6 +469,39 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
         video_credits_resolved,
         data.format, data.variations, carousel_count,
     )
+
+    # ── Video prep surcharges ────────────────────────────────────────────────
+    # Shot prompt review (text model) and first-frame pre-render (image model)
+    # are opt-in per generation. Each triggers a real AI call that costs us
+    # money — charge the customer before deducting so they know the full total.
+    prep_text_credits = 0.0
+    prep_image_credits = 0.0
+    if video_model:
+        prep_settings = await video_prep_svc.get_video_prep_settings(db)
+        all_models = await credit_svc.get_available_models(db)
+
+        if data.refine_video_prompt and prep_settings.get("prompt_review_model_id"):
+            review_entry = next(
+                (m for m in all_models.get("text", []) if m["id"] == prep_settings["prompt_review_model_id"]),
+                None,
+            )
+            if review_entry:
+                per_shot = pricing_svc.compute_text_credits(review_entry, markup, credit_value_usd)
+                prep_text_credits = per_shot * max(1, shot_count)
+                cost = credit_svc._round_to_quarter(cost + prep_text_credits)
+
+        if (data.refine_video_frame
+                and video_has_reference
+                and data.video_mode == "single_reference"
+                and prep_settings.get("image_model_id")):
+            prep_entry = next(
+                (m for m in all_models.get("image", []) if m["id"] == prep_settings["image_model_id"]),
+                None,
+            )
+            if prep_entry:
+                prep_image_credits = pricing_svc.compute_image_credits(prep_entry, markup, credit_value_usd)
+                cost = credit_svc._round_to_quarter(cost + prep_image_credits)
+
     bal = await credit_svc.balance(db, user.company_id)
     if bal < cost:
         raise HTTPException(402, f"Not enough credits: this generation costs {cost}, you have {bal}. Upgrade your plan or top up.")
@@ -512,6 +593,10 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
             "refine_video_prompt": data.refine_video_prompt if video_model else False,
             "refine_video_frame": data.refine_video_frame if video_model else False,
             "video_audio": data.video_audio if video_model else None,
+            # Prep surcharge credits — stored so refund logic in tasks.py
+            # knows exactly how much to give back on a total failure.
+            "prep_text_credits": prep_text_credits if video_model else 0.0,
+            "prep_image_credits": prep_image_credits if video_model else 0.0,
             "text_model": text_model["model"] if text_model else None,
             "text_model_credits": text_model["credits"] if text_model else None,
             # New video enhancement fields — stored at brief level so tasks.py
@@ -943,15 +1028,18 @@ async def post_ad(ad_id: uuid.UUID, data: PostAdIn, user: User = Depends(require
     failed: dict[str, str] = {}
     variant = (ad.results or {}).get("variants", [{}])[0] if ad.results else {}
     for platform in data.platforms:
-        if platform == "linkedin" and not settings.MOCK_POSTING:
+        # Match both "linkedin" (ad-targeting id) and "linkedin_personal" (connection id)
+        is_linkedin_personal = platform in ("linkedin", "linkedin_personal")
+        if is_linkedin_personal and not settings.MOCK_POSTING:
             conn = await db.scalar(select(PlatformConnection).where(
-                PlatformConnection.company_id == user.company_id, PlatformConnection.platform == "linkedin",
+                PlatformConnection.company_id == user.company_id,
+                PlatformConnection.platform.in_(["linkedin_personal", "linkedin"]),
             ))
             if conn and conn.status == "connected":
                 try:
                     access_token = decrypt_token(conn.encrypted_token)
                     person_urn = linkedin.get_person_urn(access_token)
-                    caption = (variant.get(platform) or {}).get("caption") or ""
+                    caption = (variant.get(platform) or variant.get("linkedin") or variant.get("linkedin_personal") or {}).get("caption") or ""
                     linkedin.post_to_linkedin(access_token, person_urn, caption)
                     succeeded.append(platform)
                 except Exception as exc:  # noqa: BLE001

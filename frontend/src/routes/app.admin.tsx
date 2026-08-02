@@ -384,6 +384,13 @@ function Admin() {
   // comes back false, so this reliably blocks non-admins. This was the
   // missing guard — the page had NO access check at all before this.
   const allowed = useRequireCapability("admin-only");
+  const { me } = useAuth();
+  const tier = me?.tier ?? "free";
+
+  // Starter/Free plan admins: Overview tab only (contains Test Mode toggle).
+  // Pro plan admins: all tabs (Overview, Users, Profiles).
+  const visibleTabs = tier === "pro" ? TABS : TABS.slice(0, 1);
+  const visibleTabHints = tier === "pro" ? TAB_HINTS : TAB_HINTS.slice(0, 1);
 
   const [tab, setTab] = useState(0);
 
@@ -400,9 +407,9 @@ function Admin() {
       }
     >
       <div className="mb-6 flex flex-wrap gap-2 border-b border-border pb-4">
-        {TABS.map((t, i) => (
+        {visibleTabs.map((t, i) => (
           <button key={t} onClick={() => setTab(i)} className={`rounded-full border px-4 py-1.5 text-xs font-medium transition ${i === tab ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground"}`}>
-            {t}{TAB_HINTS[i] && <NovaHint hintKey={TAB_HINTS[i]} />}
+            {t}{visibleTabHints[i] && <NovaHint hintKey={visibleTabHints[i]} />}
           </button>
         ))}
       </div>

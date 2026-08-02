@@ -10,6 +10,7 @@ from app.schemas import (
     GenerateBrandVideoShotIn, PlatformRatioOverrideIn, UpdateBrandVideoShotIn,
 )
 from app.services import credits as credit_svc
+from app.services import pricing as pricing_svc
 from app.services import video_ratios as video_ratios_svc
 from app.services.storage import upload_data_url
 from app.worker import celery_app
@@ -151,7 +152,11 @@ async def generate_brand_video_shot_endpoint(data: GenerateBrandVideoShotIn, use
             raise HTTPException(422, "That logo isn't in your Brand Kit.")
         reference_logo_id = logo.id
 
-    cost = model["credits"]  # representative cost for this model — same simplification AvailableModelOut documents; dynamic-pricing models are charged their base rate here rather than a duration-specific recompute
+    # Use dynamic pricing at the shot's actual duration so brand kit
+    # shots are priced consistently with Create Ad video generations.
+    markup = await pricing_svc.get_markup_multiplier(db)
+    credit_value_usd = await pricing_svc.get_credit_value_usd(db)
+    cost = pricing_svc.compute_video_credits(model, None, not data.mute_audio, data.duration, markup, credit_value_usd)
     bal = await credit_svc.balance(db, user.company_id)
     if bal < cost:
         raise HTTPException(402, f"Not enough credits: generating this shot costs {cost}, you have {bal}.")

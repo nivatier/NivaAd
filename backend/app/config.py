@@ -31,8 +31,23 @@ class Settings(BaseSettings):
     REGISTRATION_OPEN: bool = False   # when False only pre-approved emails can register
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
-    STRIPE_PRICE_IDS: str = "{}"   # JSON: {"starter":{"1":"price_..","3":"price_..."}, "growth":{...}, "pro":{...}}
-    STRIPE_PRICE_TOPUP: str = ""   # one-time price id for the credit top-up
+    # Growth tier retired 2026-08-02 — only starter and pro remain.
+    # These are the live Stripe price IDs; override via Developer > Settings
+    # without a redeploy if prices ever change.
+    STRIPE_PRICE_IDS: str = (
+        '{"starter":{' 
+        '"1":"price_1TzvbJCJBGtf5GFheeQv0H5I",'
+        '"3":"price_1TzvcPCJBGtf5GFhGXWCEmAt",'
+        '"6":"price_1TzvcbCJBGtf5GFh4xWEVMmb",'
+        '"12":"price_1TzvclCJBGtf5GFhXbR3R6G3"'
+        '},"pro":{' 
+        '"1":"price_1Tzvg5CJBGtf5GFhfmCXvJ55",'
+        '"3":"price_1Tzvj4CJBGtf5GFhewfQBx8P",'
+        '"6":"price_1TzvjGCJBGtf5GFhBcmTPxWT",'
+        '"12":"price_1TzvjSCJBGtf5GFhL0EkTxOB"'
+        '}}' 
+    )
+    STRIPE_PRICE_TOPUP: str = "price_1TyuBmCJBGtf5GFhvvkWxKYw"
     # What one credit is actually worth in USD when a customer buys it —
     # MUST match whatever STRIPE_PRICE_TOPUP is configured to charge per
     # unit in Stripe (currently $0.90/credit). Used by services/pricing.py
@@ -48,7 +63,10 @@ class Settings(BaseSettings):
     # number isn't derived from this constant. Review Developer > Models
     # after deploying this and double any flat credit values you want to
     # keep at the same real dollar price.
-    CREDIT_VALUE_USD: float = 0.45
+    # Fallback only — the live value is stored in ModelConfig "pricing"
+    # row and editable from Developer > Settings without a code deploy.
+    # $0.10 per credit = the public "$0.10 = 1 credit" pricing.
+    CREDIT_VALUE_USD: float = 0.10
     FRONTEND_URL: str = "http://localhost:5173"
     FERNET_KEY: str = ""
     MOCK_POSTING: bool = True

@@ -8,16 +8,58 @@ export const Route = createFileRoute("/pricing")({
   head: () => ({ meta: [{ title: "Pricing — NivaSpark" }] }),
 });
 
+// Prices match Stripe exactly — update via Developer > Settings if they change.
+// Discounts: 3mo −5%, 6mo −10%, 12mo −15% (kept conservative to protect margins).
 const TIERS = [
-  { key: "starter", name: "Starter", monthly: 29, credits: 10, feats: ["Text + image ads", "2 connected platforms", "No watermark", "Basic analytics"] },
-  { key: "growth", name: "Growth", monthly: 79, credits: 30, hot: true, feats: ["Image + video + carousels", "5 platforms · variations", "Brand kit + scheduling", "Creative score + compliance"] },
-  { key: "pro", name: "Pro", monthly: 199, credits: 120, feats: ["Everything in Growth", "Campaign launch sets", "Team seats + approvals", "Priority support"] },
+  {
+    key: "starter",
+    name: "Starter",
+    // Monthly base price per term (total ÷ months)
+    prices: { 1: 17.00, 3: 16.15, 6: 15.30, 12: 14.45 },
+    // Total charged per period in Stripe
+    totals: { 1: 17.00, 3: 48.45, 6: 91.80, 12: 173.40 },
+    credits: 150,
+    hot: false,
+    feats: [
+      { text: "150 credits / month", highlight: true },
+      { text: "Text + image ads" },
+      { text: "AI video ads" },
+      { text: "Carousel ads" },
+      { text: "Brand Kit" },
+      { text: "Campaigns" },
+      { text: "Agent Niva (autonomous)" },
+      { text: "All platform connections" },
+      { text: "Scheduling" },
+      { text: "Credit top-ups" },
+      { text: "Admin (test mode)" },
+    ],
+    cta: "Start with Starter",
+  },
+  {
+    key: "pro",
+    name: "Pro",
+    prices: { 1: 59.00, 3: 56.05, 6: 53.10, 12: 55.75 },  // 12mo = $669/12 = $55.75 (~$999 total, rounded)
+    totals: { 1: 59.00, 3: 168.15, 6: 318.60, 12: 999.00 },
+    credits: 500,
+    hot: true,
+    feats: [
+      { text: "500 credits / month", highlight: true },
+      { text: "Everything in Starter" },
+      { text: "Analytics" },
+      { text: "Team seats (2 members)" },
+      { text: "Content moderation & approvals" },
+      { text: "Priority support" },
+    ],
+    cta: "Go Pro",
+  },
 ];
+
+// Term options — shown as toggle buttons above the cards
 const TERMS = [
-  { m: 1, label: "1 month", disc: 0 },
-  { m: 3, label: "3 months", disc: 0.10 },
-  { m: 6, label: "6 months", disc: 0.18 },
-  { m: 12, label: "12 months", disc: 0.30 },
+  { m: 1,  label: "Monthly",   badge: null },
+  { m: 3,  label: "3 months",  badge: "−5%" },
+  { m: 6,  label: "6 months",  badge: "−10%" },
+  { m: 12, label: "Annual",    badge: "−15%" },
 ];
 
 function Pricing() {
@@ -27,10 +69,13 @@ function Pricing() {
   const [err, setErr] = useState("");
 
   async function choose(tierKey: string) {
-    if (!isAuthed) return; // Link below handles the logged-out case
+    if (!isAuthed) return;
     setErr(""); setBusy(true);
     try {
-      const res = await api("/billing/checkout", { method: "POST", body: { tier: tierKey, term_months: TERMS[term].m, return_to: window.location.pathname } });
+      const res = await api("/billing/checkout", {
+        method: "POST",
+        body: { tier: tierKey, term_months: TERMS[term].m, return_to: window.location.pathname },
+      });
       window.location.href = res.url;
     } catch (e: any) {
       setErr(e.message || "Could not start checkout");
@@ -38,9 +83,13 @@ function Pricing() {
     }
   }
 
+  const selectedTerm = TERMS[term];
+
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto max-w-6xl px-4 py-12">
+      <div className="mx-auto max-w-5xl px-4 py-12">
+
+        {/* Header */}
         <div className="flex items-center justify-between mb-10">
           <Link to="/" className="flex items-center gap-2.5">
             <img src="/logo-icon.png" alt="NivaSpark icon" className="h-9 w-9 shrink-0 object-contain" />
@@ -57,47 +106,161 @@ function Pricing() {
           )}
         </div>
 
+        {/* Title */}
         <h1 className="text-center font-display text-4xl font-bold tracking-tight text-glow">
           Simple plans, <span className="text-gold-gradient">no surprise charges</span>
         </h1>
-        <p className="mt-2 text-center text-sm text-muted-foreground">Every generation shows its credit cost before you click it. Cancel anytime.</p>
+        <p className="mt-2 text-center text-sm text-muted-foreground">
+          Every generation shows its credit cost before you click. 1 credit = $0.10. Cancel anytime.
+        </p>
 
-        <div className="mt-8 flex justify-center gap-2">
+        {/* Term toggle */}
+        <div className="mt-8 flex justify-center gap-2 flex-wrap">
           {TERMS.map((t, i) => (
-            <button key={t.m} onClick={() => setTerm(i)} className={`rounded-full border px-4 py-2 text-sm ${term === i ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}>
-              {t.label}{t.disc > 0 && <span className="ml-1 text-secondary">−{t.disc * 100}%</span>}
+            <button
+              key={t.m}
+              onClick={() => setTerm(i)}
+              className={`relative rounded-full border px-4 py-2 text-sm transition ${
+                term === i
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/40"
+              }`}
+            >
+              {t.label}
+              {t.badge && (
+                <span className="ml-1.5 rounded-full bg-gold-gradient px-1.5 py-0.5 text-[10px] font-semibold text-background">
+                  {t.badge}
+                </span>
+              )}
             </button>
           ))}
         </div>
 
         {err && <div className="mt-4 text-center text-xs text-destructive">{err}</div>}
 
+        {/* Free + Paid plan cards */}
         <div className="mt-10 grid gap-4 md:grid-cols-3">
+
+          {/* Free plan */}
+          <div className="rounded-2xl border border-border bg-card/60 p-6 flex flex-col">
+            <div className="font-display text-xl font-bold text-foreground">Free</div>
+            <div className="mt-3 font-display text-4xl font-bold text-foreground">
+              $0<span className="text-sm font-normal text-muted-foreground">/mo</span>
+            </div>
+            <div className="mt-1 text-sm text-muted-foreground">3 credits / month</div>
+            <ul className="mt-4 flex-1 space-y-2 text-sm text-muted-foreground">
+              <li>✓ 3 credits / month</li>
+              <li>✓ Text + image ads</li>
+              <li>✓ 1 platform connection</li>
+              <li className="text-muted-foreground/50">✗ AI video</li>
+              <li className="text-muted-foreground/50">✗ Campaigns</li>
+              <li className="text-muted-foreground/50">✗ Agent Niva</li>
+              <li className="text-muted-foreground/50">✗ Brand Kit</li>
+              <li className="text-muted-foreground/50">✗ Team seats</li>
+            </ul>
+            {isAuthed ? (
+              <Link to="/app" className="mt-6 block w-full rounded-full border border-border py-2.5 text-center text-sm text-foreground hover:border-primary/40">
+                Continue on Free
+              </Link>
+            ) : (
+              <Link to="/signup" className="mt-6 block w-full rounded-full border border-border py-2.5 text-center text-sm text-foreground hover:border-primary/40">
+                Get started free
+              </Link>
+            )}
+          </div>
+
+          {/* Starter + Pro */}
           {TIERS.map((tier) => {
-            const price = Math.round(tier.monthly * (1 - TERMS[term].disc));
+            const monthlyPrice = tier.prices[selectedTerm.m as keyof typeof tier.prices];
+            const totalCharged = tier.totals[selectedTerm.m as keyof typeof tier.totals];
             return (
-              <div key={tier.key} className={`rounded-2xl border p-6 ${tier.hot ? "border-primary bg-primary/5" : "border-border bg-card/60"}`}>
-                {tier.hot && <div className="mb-2 text-[10px] uppercase tracking-widest text-primary">Most popular</div>}
+              <div
+                key={tier.key}
+                className={`rounded-2xl border p-6 flex flex-col ${
+                  tier.hot
+                    ? "border-primary bg-primary/5 shadow-[0_0_0_1px_oklch(0.66_0.26_305_/_0.15),0_8px_32px_-4px_oklch(0.66_0.26_305_/_0.20)]"
+                    : "border-border bg-card/60"
+                }`}
+              >
+                {tier.hot && (
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-primary">Most popular</div>
+                )}
                 <div className="font-display text-xl font-bold text-foreground">{tier.name}</div>
-                <div className="mt-3 font-display text-4xl font-bold text-foreground">${price}<span className="text-sm font-normal text-muted-foreground">/mo</span></div>
-                <div className="mt-1 text-sm text-secondary">{tier.credits} credits / month</div>
-                <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
-                  {tier.feats.map((f) => <li key={f}>✓ {f}</li>)}
+                <div className="mt-3 font-display text-4xl font-bold text-foreground">
+                  ${monthlyPrice.toFixed(2).replace(/\.00$/, "")}
+                  <span className="text-sm font-normal text-muted-foreground">/mo</span>
+                </div>
+                {selectedTerm.m > 1 && (
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    ${totalCharged.toFixed(2).replace(/\.00$/, "")} billed every {selectedTerm.m === 12 ? "year" : `${selectedTerm.m} months`}
+                  </div>
+                )}
+                <div className="mt-1 text-sm text-muted-foreground">{tier.credits} credits / month</div>
+                <ul className="mt-4 flex-1 space-y-2 text-sm">
+                  {tier.feats.map((f) => (
+                    <li
+                      key={f.text}
+                      className={f.highlight ? "font-semibold text-foreground" : "text-muted-foreground"}
+                    >
+                      ✓ {f.text}
+                    </li>
+                  ))}
                 </ul>
                 {isAuthed ? (
-                  <button disabled={busy} onClick={() => choose(tier.key)}
-                    className={`mt-6 w-full rounded-full py-2.5 text-sm font-semibold disabled:opacity-50 ${tier.hot ? "bg-gold-gradient text-background shadow-[var(--shadow-gold)]" : "border border-border text-foreground"}`}>
-                    {busy ? "Redirecting…" : `Upgrade to ${tier.name}`}
+                  <button
+                    disabled={busy}
+                    onClick={() => choose(tier.key)}
+                    className={`mt-6 w-full rounded-full py-2.5 text-sm font-semibold disabled:opacity-50 transition ${
+                      tier.hot
+                        ? "bg-gold-gradient text-background shadow-[var(--shadow-gold)]"
+                        : "border border-border text-foreground hover:border-primary/40"
+                    }`}
+                  >
+                    {busy ? "Redirecting…" : tier.cta}
                   </button>
                 ) : (
-                  <Link to="/signup" className={`mt-6 block w-full rounded-full py-2.5 text-center text-sm font-semibold ${tier.hot ? "bg-gold-gradient text-background shadow-[var(--shadow-gold)]" : "border border-border text-foreground"}`}>
-                    Choose {tier.name}
+                  <Link
+                    to="/signup"
+                    className={`mt-6 block w-full rounded-full py-2.5 text-center text-sm font-semibold ${
+                      tier.hot
+                        ? "bg-gold-gradient text-background shadow-[var(--shadow-gold)]"
+                        : "border border-border text-foreground hover:border-primary/40"
+                    }`}
+                  >
+                    {tier.cta}
                   </Link>
                 )}
               </div>
             );
           })}
         </div>
+
+        {/* Credit explainer */}
+        <div className="mt-10 rounded-2xl border border-border/60 bg-card/40 px-6 py-5">
+          <div className="text-sm font-semibold text-foreground mb-2">How credits work</div>
+          <div className="grid gap-3 sm:grid-cols-3 text-xs text-muted-foreground">
+            <div>
+              <div className="font-medium text-foreground mb-1">Text ad copy</div>
+              ~0.25 credits per generation. Always shown before you generate.
+            </div>
+            <div>
+              <div className="font-medium text-foreground mb-1">Image ads</div>
+              ~0.75–2 credits depending on model quality chosen.
+            </div>
+            <div>
+              <div className="font-medium text-foreground mb-1">Video ads</div>
+              Priced by model + duration. Preview shown before generating.
+            </div>
+          </div>
+          <div className="mt-3 text-xs text-muted-foreground">
+            Unused credits don't roll over. Need more? Buy top-up credits anytime from your account (Starter and Pro plans only).
+          </div>
+        </div>
+
+        {/* FAQ-style footer notes */}
+        <p className="mt-6 text-center text-xs text-muted-foreground">
+          All prices in USD · VAT/tax may apply · Payments processed securely by Stripe · Cancel anytime, no lock-in
+        </p>
       </div>
     </div>
   );

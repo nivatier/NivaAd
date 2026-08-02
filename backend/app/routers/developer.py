@@ -60,7 +60,7 @@ router = APIRouter(prefix="/developer", tags=["developer"])
 # Real, current tier pricing (see scripts/setup_stripe_prices.py) — used
 # only for the estimated MRR figure on the overview. If pricing ever
 # changes, update both places.
-TIER_MONTHLY_USD = {"free": 0, "starter": 29, "growth": 79, "pro": 199}
+TIER_MONTHLY_USD = {"free": 0, "starter": 17, "pro": 59}  # growth retired 2026-08-02
 
 
 @router.post("/login", response_model=DeveloperTokenOut)
@@ -895,6 +895,188 @@ async def list_companies(_: str = Depends(require_developer_permission("companie
             created_at=c.created_at,
         ))
     return out
+
+
+@router.get("/companies/{company_id}/users")
+async def get_company_users(
+    company_id: str,
+    _: str = Depends(require_developer_permission("companies")),
+    db: AsyncSession = Depends(get_db),
+):
+    """All users for a specific company — used in the developer Companies page edit modal."""
+    try:
+        cid = uuid.UUID(company_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid company_id")
+    users = (await db.scalars(
+        select(User).where(User.company_id == cid).order_by(User.role, User.created_at)
+    )).all()
+    return [
+        {
+            "id": str(u.id),
+            "email": u.email,
+            "full_name": u.full_name,
+            "role": u.role,
+            "status": u.status,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+        }
+        for u in users
+    ]
+
+
+@router.get("/all-users")
+async def list_all_users(
+    _: str = Depends(require_developer_permission("companies")),
+    db: AsyncSession = Depends(get_db),
+):
+    """All users across every company — joined with company name, tier,
+    and credit balance. Used in Developer > Settings > Users tab."""
+    # Fetch all users with their company in one join
+    rows = (await db.execute(
+        select(User, Company.name.label("company_name"))
+        .join(Company, Company.id == User.company_id)
+        .order_by(Company.name, User.role, User.created_at)
+    )).all()
+
+    if not rows:
+        return []
+
+    company_ids = list({u.company_id for u, _ in rows})
+
+    # Latest subscription per company
+    sub_rows = (await db.execute(
+        select(Subscription.company_id, Subscription.tier, Subscription.status)
+        .where(Subscription.company_id.in_(company_ids))
+        .order_by(Subscription.created_at.desc())
+    )).all()
+    latest_sub: dict[uuid.UUID, tuple] = {}
+    for cid, tier, status in sub_rows:
+        if cid not in latest_sub:
+            latest_sub[cid] = (tier, status)
+
+    # Credit balance per company
+    credit_rows = (await db.execute(
+        select(CreditLedger.company_id, func.coalesce(func.sum(CreditLedger.delta), 0))
+        .where(CreditLedger.company_id.in_(company_ids))
+        .group_by(CreditLedger.company_id)
+    )).all()
+    credits_map = {cid: float(total) for cid, total in credit_rows}
+
+    return [
+        {
+            "id": str(u.id),
+            "company_id": str(u.company_id),
+            "company_name": company_name,
+            "email": u.email,
+            "full_name": u.full_name,
+            "role": u.role,
+            "status": u.status,
+            "email_verified": u.email_verified,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "tier": latest_sub.get(u.company_id, ("free", "active"))[0],
+            "subscription_status": latest_sub.get(u.company_id, ("free", "active"))[1],
+            "credits_balance": credits_map.get(u.company_id, 0.0),
+        }
+        for u, company_name in rows
+    ]
+
+
+@router.put("/companies/{company_id}")
+async def update_company(
+    company_id: str,
+    body: dict,
+    _: str = Depends(require_developer_permission("companies")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit any company — name, admin email/name, tier, credits top-up.
+    Works for ALL companies (self-registered and developer-created alike),
+    unlike /created-users/{id} which was restricted to developer-created."""
+    try:
+        cid = uuid.UUID(company_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid company_id")
+
+    company = await db.get(Company, cid)
+    if not company:
+        raise HTTPException(404, "Company not found")
+
+    admin = await db.scalar(
+        select(User).where(User.company_id == cid, User.role == "admin").limit(1)
+    )
+    sub = await db.scalar(
+        select(Subscription).where(Subscription.company_id == cid)
+        .order_by(Subscription.created_at.desc()).limit(1)
+    )
+
+    # Company name
+    if "company_name" in body:
+        new_name = str(body["company_name"]).strip()
+        if not new_name:
+            raise HTTPException(422, "company_name cannot be empty")
+        company.name = new_name
+
+    # Admin user details
+    if admin:
+        if "email" in body:
+            new_email = str(body["email"]).strip().lower()
+            if not new_email or "@" not in new_email:
+                raise HTTPException(422, "Valid email required")
+            if new_email != admin.email:
+                conflict = await db.scalar(select(User).where(User.email == new_email))
+                if conflict:
+                    raise HTTPException(409, f"{new_email} is already in use")
+                admin.email = new_email
+        if "full_name" in body:
+            admin.full_name = str(body["full_name"]).strip()
+        if "status" in body and body["status"] in ("active", "suspended"):
+            admin.status = body["status"]
+
+    # Tier change
+    if "tier" in body and sub:
+        new_tier = str(body["tier"]).strip()
+        TIER_CREDITS = {"free": 3, "starter": 150, "pro": 500}
+        if new_tier not in TIER_CREDITS:
+            raise HTTPException(422, f"tier must be one of {list(TIER_CREDITS)}")
+        if new_tier != sub.tier:
+            new_credits = TIER_CREDITS[new_tier]
+            sub.tier = new_tier
+            sub.monthly_credits = new_credits
+            db.add(CreditLedger(company_id=cid, delta=new_credits, reason="plan_grant"))
+
+    # Manual credit adjustment (top-up or deduction)
+    if "credits_adjust" in body:
+        try:
+            delta = float(body["credits_adjust"])
+        except (TypeError, ValueError):
+            raise HTTPException(422, "credits_adjust must be a number")
+        if delta != 0:
+            db.add(CreditLedger(
+                company_id=cid,
+                delta=delta,
+                reason=body.get("credits_adjust_reason") or "developer_manual_adjustment",
+            ))
+
+    db.add(AuditLog(
+        company_id=cid,
+        action="company.updated",
+        detail={"updated_by": "developer", "fields": list(body.keys())},
+    ))
+    await db.commit()
+
+    # Return fresh data
+    fresh_credits = await db.scalar(
+        select(func.coalesce(func.sum(CreditLedger.delta), 0))
+        .where(CreditLedger.company_id == cid)
+    )
+    return {
+        "company_id": str(cid),
+        "company_name": company.name,
+        "email": admin.email if admin else None,
+        "full_name": admin.full_name if admin else None,
+        "tier": sub.tier if sub else "free",
+        "credits_balance": float(fresh_credits or 0),
+        "status": admin.status if admin else None,
+    }
 
 
 @router.get("/models", response_model=DeveloperModelsOut)
@@ -1768,7 +1950,7 @@ async def developer_create_user(body: dict, _: str = Depends(require_developer),
     existing = await db.scalar(select(User).where(User.email == email))
     if existing: raise HTTPException(409, f"{email} already has an account")
 
-    TIER_CREDITS = {"free": 3, "starter": 10, "growth": 30, "pro": 120}
+    TIER_CREDITS = {"free": 3, "starter": 150, "pro": 500}  # growth retired
     credits = TIER_CREDITS.get(tier, 3)
 
     company = Company(name=company_name)
@@ -1874,7 +2056,7 @@ async def update_developer_created_user(
         if conflict:
             raise HTTPException(409, f"{new_email} is already in use")
 
-    TIER_CREDITS = {"free": 3, "starter": 10, "growth": 30, "pro": 120}
+    TIER_CREDITS = {"free": 3, "starter": 150, "pro": 500}  # growth retired 2026-08-02
 
     company.name = new_company_name
 
@@ -1903,6 +2085,88 @@ async def update_developer_created_user(
         "user_id":      str(admin.id) if admin else None,
         "tier":         sub.tier if sub else new_tier,
     }
+
+
+@router.delete("/users/{user_id}", status_code=204)
+async def delete_user(
+    user_id: str,
+    _: str = Depends(require_developer_permission("companies")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a single user account. Does NOT delete the company or other
+    users in the same company — only the specific user row is removed.
+    Audit log entries referencing this user are nulled (user_id is
+    nullable) rather than deleted so the history is preserved."""
+    try:
+        uid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid user_id")
+    user = await db.get(User, uid)
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    # Null out audit_log.user_id — the FK is nullable so the log entries
+    # stay but no longer reference the deleted user row.
+    audit_rows = (await db.execute(
+        select(AuditLog).where(AuditLog.user_id == uid)
+    )).scalars().all()
+    for row in audit_rows:
+        row.user_id = None
+
+    # Same for flagged_content.user_id
+    from app.models import FlaggedContent
+    flagged_rows = (await db.execute(
+        select(FlaggedContent).where(FlaggedContent.user_id == uid)
+    )).scalars().all()
+    for row in flagged_rows:
+        row.user_id = None
+
+    db.add(AuditLog(
+        company_id=user.company_id,
+        action="user.deleted",
+        detail={"deleted_by": "developer", "email": user.email},
+    ))
+    await db.delete(user)
+    await db.commit()
+
+
+@router.delete("/companies/{company_id}", status_code=204)
+async def delete_company(
+    company_id: str,
+    _: str = Depends(require_developer_permission("companies")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete ANY company and all its data — works for both
+    self-registered and developer-created companies. Deletes in
+    dependency order (children before parent) to avoid FK violations."""
+    from app.models import (
+        BrandKit, BrandLogo, BrandVideoShot, Product, Ad, GenerationJob,
+        Campaign, ScheduledPost, PlatformConnection, FlaggedContent,
+        CompanyModelConfig, CompanyAgentSettings, Notification,
+        AgentEvent, AgentRecommendation, AgentScrapeJob, ScrapedSite,
+    )
+    try:
+        cid = uuid.UUID(company_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid company_id")
+
+    company = await db.get(Company, cid)
+    if not company:
+        raise HTTPException(404, "Company not found")
+
+    for model in [
+        Notification, AgentEvent, AgentRecommendation, AgentScrapeJob, ScrapedSite,
+        FlaggedContent, ScheduledPost, GenerationJob, Ad, Campaign,
+        PlatformConnection, Product, BrandVideoShot, BrandLogo, BrandKit,
+        CompanyModelConfig, CompanyAgentSettings,
+        CreditLedger, Subscription, AuditLog, User,
+    ]:
+        rows = (await db.execute(select(model).where(model.company_id == cid))).scalars().all()
+        for r in rows:
+            await db.delete(r)
+
+    await db.delete(company)
+    await db.commit()
 
 
 @router.delete("/created-users/{company_id}", status_code=204)
@@ -1964,11 +2228,14 @@ async def _save_platform_cfg(db: AsyncSession, patch: dict) -> dict:
 
 @router.get("/platform-config")
 async def get_platform_config(_: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
-    """Runtime-editable business values — credit price, carousel cap, Stripe prices, and API base URLs.
-    Falls back to .env defaults when no override has been saved yet."""
+    """Runtime-editable business values — credit price, markup, carousel cap, Stripe prices, and API base URLs.
+    Falls back to .env / coded defaults when no override has been saved yet."""
     saved = await _get_platform_cfg(db)
+    markup = await pricing_svc.get_markup_multiplier(db)
+    credit_value = await pricing_svc.get_credit_value_usd(db)
     return {
-        "credit_value_usd":     saved.get("credit_value_usd",     settings.CREDIT_VALUE_USD),
+        "credit_value_usd":     credit_value,
+        "markup_multiplier":    markup,
         "carousel_max_images":  saved.get("carousel_max_images",  settings.CAROUSEL_MAX_IMAGES),
         "stripe_price_ids":     saved.get("stripe_price_ids",     settings.STRIPE_PRICE_IDS),
         "stripe_price_topup":   saved.get("stripe_price_topup",   settings.STRIPE_PRICE_TOPUP),
@@ -1989,6 +2256,15 @@ async def put_platform_config(
         if v <= 0:
             raise HTTPException(422, "credit_value_usd must be positive")
         patch["credit_value_usd"] = round(v, 4)
+        # Also write into the pricing ModelConfig row — that's where
+        # pricing.py's get_credit_value_usd() reads from at runtime.
+        await pricing_svc.set_credit_value_usd(db, round(v, 4))
+
+    if "markup_multiplier" in body:
+        mv = float(body["markup_multiplier"])
+        if mv < 1.0:
+            raise HTTPException(422, "markup_multiplier must be at least 1.0")
+        await pricing_svc.set_markup_multiplier(db, round(mv, 4))
 
     if "carousel_max_images" in body:
         v = int(body["carousel_max_images"])
@@ -2045,8 +2321,11 @@ async def put_platform_config(
                 setattr(mod, attr, f"{base}{suffix}")
             except Exception:
                 pass
+    markup_ret = await pricing_svc.get_markup_multiplier(db)
+    credit_value_ret = await pricing_svc.get_credit_value_usd(db)
     return {
-        "credit_value_usd":     saved.get("credit_value_usd",     settings.CREDIT_VALUE_USD),
+        "credit_value_usd":     credit_value_ret,
+        "markup_multiplier":    markup_ret,
         "carousel_max_images":  saved.get("carousel_max_images",  settings.CAROUSEL_MAX_IMAGES),
         "stripe_price_ids":     saved.get("stripe_price_ids",     settings.STRIPE_PRICE_IDS),
         "stripe_price_topup":   saved.get("stripe_price_topup",   settings.STRIPE_PRICE_TOPUP),

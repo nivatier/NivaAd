@@ -180,12 +180,15 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
         .where(CreditLedger.company_id == user.company_id)
     )
     caps = await capabilities_for_user(db, user)
+    from app.services.billing import TIER_CREDITS
+    plan_credits = sub.monthly_credits if sub and sub.monthly_credits else TIER_CREDITS.get(sub.tier if sub else "free", FREE_PLAN_CREDITS)
     return MeOut(
         user=UserOut.model_validate(user),
         company_id=company.id,
         company_name=company.name,
         tier=sub.tier if sub else "free",
-        credits=credits or 0,
+        credits=float(credits or 0),
+        plan_credits=plan_credits,
         current_period_end=sub.current_period_end if sub else None,
         cancel_at_period_end=sub.cancel_at_period_end if sub else False,
         capabilities=caps,
