@@ -1,54 +1,74 @@
 """LinkedIn OAuth (3-legged, authorization_code grant) and the real
-Posts API — verified against LinkedIn's current documented endpoints
-and payload shape (not guessed): token exchange at
-https://www.linkedin.com/oauth/v2/accessToken, posting at
-https://api.linkedin.com/rest/posts with the LinkedIn-Version header
-in YYYYMM format and X-Restli-Protocol-Version: 2.0.0.
+Posts API — verified against LinkedIn's current documented endpoints.
 
-IMPORTANT SCOPE CAVEAT: LinkedIn draws a hard line between posting to a
-PERSONAL profile (w_member_social — self-serve, no approval needed)
-and posting to a COMPANY PAGE (w_organization_social — requires
-LinkedIn's Community Management API approval, which is a real, multi-
-day-or-longer application process). The scope requested is whatever
-the developer configured in Developer > Platforms; the author URN
-construction below assumes personal-profile posting
-(urn:li:person:{id}) to match the default scope — switch both together
-once organization access is approved.
+Image posting flow (3 steps):
+  1. POST /rest/images?action=initializeUpload  → uploadUrl + image URN
+  2. PUT {uploadUrl} with raw image bytes        → 201 No Content
+  3. POST /rest/posts with content.media block  → post URN in x-restli-id header
 
-CLIENT ID/SECRET ARE NO LONGER READ FROM .env — they're developer-
-managed in the database (see services/platform_config.py) so they can
-be added/rotated without a server restart, and every function here
-takes them as explicit parameters instead."""
+Text-only posting falls through to step 3 with no content.media block.
+
+SCOPE CAVEAT: LinkedIn draws a hard line between posting to a PERSONAL
+profile (w_member_social — self-serve, no approval needed) and to a
+COMPANY PAGE (w_organization_social — requires LinkedIn's Community
+Management API approval). The scope is developer-configured in
+Developer > Platforms; author URN uses urn:li:person:{id} for personal.
+
+CLIENT ID/SECRET are developer-managed in the database (see
+services/platform_config.py) — not read from .env.
+"""
 import urllib.parse
 
 import httpx
 
-AUTHORIZE_URL = "https://www.linkedin.com/oauth/v2/authorization"
-TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
-USERINFO_URL = "https://api.linkedin.com/v2/userinfo"  # OpenID Connect — gives us the person's own URN
-POSTS_URL = "https://api.linkedin.com/rest/posts"  # default; overridden at call time from platform config api_url if set
-LINKEDIN_API_VERSION = "202506"  # YYYYMM per LinkedIn's Linkedin-Version header requirement — bump periodically
+AUTHORIZE_URL   = "https://www.linkedin.com/oauth/v2/authorization"
+TOKEN_URL       = "https://www.linkedin.com/oauth/v2/accessToken"
+USERINFO_URL    = "https://api.linkedin.com/v2/userinfo"
+POSTS_URL       = "https://api.linkedin.com/rest/posts"
+IMAGES_URL      = "https://api.linkedin.com/rest/images"
+
+LINKEDIN_API_VERSION = "202501"  # YYYYMM fallback — override via Developer > Platforms > API Version
+# Active versions as of mid-2025: 202501, 202504, 202607
+# Never use a future/unreleased month — LinkedIn returns 426 NONEXISTENT_VERSION.
 DEFAULT_SCOPE = "openid profile w_member_social"
 
 
-def _get_posts_url(db=None) -> str:
-    """Return the configured LinkedIn posts URL. Reads api_url from the
-    platform config entry for linkedin_personal if db is provided,
-    otherwise falls back to the hardcoded default."""
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _get_linkedin_platform(db=None) -> dict:
+    """Return the stored platform config for LinkedIn (sync DB only)."""
     if db is None:
-        return POSTS_URL
+        return {}
     try:
         from app.services.platform_config import get_platform_integrations_sync
-        platforms = get_platform_integrations_sync(db)
-        for p in platforms:
+        for p in get_platform_integrations_sync(db):
             if p.get("id") in ("linkedin_personal", "linkedin_company", "linkedin"):
-                url = p.get("api_url")
-                if url:
-                    return url
+                return p
     except Exception:
         pass
-    return POSTS_URL
+    return {}
 
+
+def _get_posts_url(db=None) -> str:
+    p = _get_linkedin_platform(db)
+    return p.get("api_url") or POSTS_URL
+
+
+def _get_api_version(db=None) -> str:
+    p = _get_linkedin_platform(db)
+    return (p.get("api_version") or "").strip() or LINKEDIN_API_VERSION
+
+
+def _headers(access_token: str, version: str) -> dict:
+    return {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "X-Restli-Protocol-Version": "2.0.0",
+        "LinkedIn-Version": version,
+    }
+
+
+# ── OAuth helpers ─────────────────────────────────────────────────────────────
 
 def get_authorize_url(client_id: str, redirect_uri: str, scope: str, state: str) -> str:
     params = {
@@ -62,8 +82,7 @@ def get_authorize_url(client_id: str, redirect_uri: str, scope: str, state: str)
 
 
 def exchange_code_for_token(code: str, client_id: str, client_secret: str, redirect_uri: str) -> dict:
-    """Returns {access_token, expires_in, refresh_token?} — LinkedIn
-    tokens are documented to last 60 days, refresh tokens 365 days."""
+    """Returns {access_token, expires_in, refresh_token?}."""
     resp = httpx.post(
         TOKEN_URL,
         data={
@@ -82,8 +101,7 @@ def exchange_code_for_token(code: str, client_id: str, client_secret: str, redir
 
 
 def get_person_urn(access_token: str) -> str:
-    """OpenID Connect userinfo — the 'sub' claim is the member's ID,
-    used to build the author URN for personal-profile posts."""
+    """OpenID Connect userinfo — 'sub' is used as the person's URN."""
     resp = httpx.get(USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"}, timeout=20)
     if resp.status_code >= 400:
         raise RuntimeError(f"LinkedIn userinfo {resp.status_code}: {resp.text[:400]}")
@@ -93,27 +111,130 @@ def get_person_urn(access_token: str) -> str:
     return f"urn:li:person:{sub}"
 
 
-def post_to_linkedin(access_token: str, author_urn: str, text: str) -> str:
-    """Text-only post for now — LinkedIn's image/video upload flow is a
-    separate multi-step process (register upload -> PUT the binary ->
-    reference the resulting asset URN in the post), not yet wired in
-    here. Returns the new post's URN."""
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-        "X-Restli-Protocol-Version": "2.0.0",
-        "LinkedIn-Version": LINKEDIN_API_VERSION,
-    }
-    body = {
+# ── Image upload ──────────────────────────────────────────────────────────────
+
+def upload_image_to_linkedin(
+    access_token: str,
+    author_urn: str,
+    image_url: str,
+    version: str,
+) -> str:
+    """Download image from our S3/R2 storage and upload to LinkedIn.
+
+    Returns the LinkedIn image URN (e.g. urn:li:image:C5600...) which
+    is then referenced in the post body's content.media block.
+
+    Uses storage.fetch_bytes() to read via the internal S3 endpoint
+    (container-to-container) rather than the public HTTP URL — this
+    avoids "Connection refused" errors when the public URL is localhost
+    in local development.
+
+    Steps:
+      1. Fetch image bytes from our S3/MinIO via boto3
+      2. POST initializeUpload → get LinkedIn uploadUrl + image URN
+      3. PUT image bytes to uploadUrl
+    """
+    from app.services.storage import fetch_bytes as _fetch_bytes
+
+    # Step 1 — read from storage via internal S3 connection (works in all envs)
+    try:
+        image_bytes, content_type = _fetch_bytes(image_url)
+    except Exception as exc:
+        raise RuntimeError(f"Could not read image from storage: {exc}") from exc
+
+    hdrs = _headers(access_token, version)
+
+    # Step 2 — initialize upload
+    init_resp = httpx.post(
+        f"{IMAGES_URL}?action=initializeUpload",
+        headers=hdrs,
+        json={"initializeUploadRequest": {"owner": author_urn}},
+        timeout=30,
+    )
+    if init_resp.status_code >= 400:
+        raise RuntimeError(f"LinkedIn initializeUpload {init_resp.status_code}: {init_resp.text[:400]}")
+
+    init_data = init_resp.json().get("value", {})
+    upload_url = init_data.get("uploadUrl")
+    image_urn  = init_data.get("image")
+
+    if not upload_url or not image_urn:
+        raise RuntimeError(f"LinkedIn initializeUpload returned unexpected shape: {init_resp.text[:400]}")
+
+    # Step 3 — PUT binary to LinkedIn's pre-signed upload URL
+    # Must NOT include LinkedIn-Version or X-Restli-Protocol-Version headers here.
+    put_resp = httpx.put(
+        upload_url,
+        content=image_bytes,
+        headers={"Content-Type": content_type},
+        timeout=120,
+    )
+    if put_resp.status_code not in (200, 201):
+        raise RuntimeError(f"LinkedIn image upload PUT {put_resp.status_code}: {put_resp.text[:400]}")
+
+    return image_urn
+
+
+# ── Post ──────────────────────────────────────────────────────────────────────
+
+def post_to_linkedin(
+    access_token: str,
+    author_urn: str,
+    text: str,
+    db=None,
+    api_version: str | None = None,
+    image_url: str | None = None,
+) -> str:
+    """Post text (+ optional image) to LinkedIn. Returns the new post's URN.
+
+    If image_url is provided, runs the 3-step LinkedIn image upload flow
+    and attaches the image to the post. Falls back to text-only if the
+    image upload fails (logs a warning rather than aborting the whole post).
+
+    Pass api_version explicitly (preferred when called from async context)
+    or db (sync Session only) to override LINKEDIN_API_VERSION default.
+    """
+    import logging
+    logger = logging.getLogger("nivaad.linkedin")
+
+    version = (api_version or "").strip() or _get_api_version(db)
+    hdrs = _headers(access_token, version)
+
+    # ── Image upload (optional) ───────────────────────────────────────
+    image_urn: str | None = None
+    if image_url:
+        try:
+            image_urn = upload_image_to_linkedin(access_token, author_urn, image_url, version)
+            logger.info("[linkedin] image uploaded → %s", image_urn)
+        except Exception as exc:
+            logger.warning("[linkedin] image upload failed, posting text-only: %s", exc)
+            image_urn = None
+
+    # ── Build post body ───────────────────────────────────────────────
+    body: dict = {
         "author": author_urn,
         "commentary": text,
         "visibility": "PUBLIC",
-        "distribution": {"feedDistribution": "MAIN_FEED", "targetEntities": [], "thirdPartyDistributionChannels": []},
+        "distribution": {
+            "feedDistribution": "MAIN_FEED",
+            "targetEntities": [],
+            "thirdPartyDistributionChannels": [],
+        },
         "lifecycleState": "PUBLISHED",
         "isReshareDisabledByAuthor": False,
     }
-    resp = httpx.post(_get_posts_url(), headers=headers, json=body, timeout=30)
+
+    if image_urn:
+        body["content"] = {
+            "media": {
+                "altText": "Ad image",
+                "id": image_urn,
+            }
+        }
+
+    posts_url = _get_posts_url(db)
+    resp = httpx.post(posts_url, headers=hdrs, json=body, timeout=30)
     if resp.status_code >= 400:
         raise RuntimeError(f"LinkedIn post {resp.status_code}: {resp.text[:500]}")
-    # LinkedIn returns the new post's URN in the x-restli-id response header, not the body.
+
     return resp.headers.get("x-restli-id", "")

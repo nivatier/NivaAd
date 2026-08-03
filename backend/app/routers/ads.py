@@ -1001,6 +1001,21 @@ async def retry_without_reference(ad_id: uuid.UUID, user: User = Depends(require
     return AdCreatedOut(ad_id=ad.id, job_id=job_id, credits_cost=cost)
 
 
+
+async def _is_mock_posting(db: AsyncSession) -> bool:
+    """Returns True if posting is in mock/simulation mode.
+    Checks the developer launch-control DB config first (set via
+    Developer -> Settings -> Launch), falling back to the MOCK_POSTING
+    environment variable. DB setting takes precedence so developers
+    can toggle mock mode without a redeploy."""
+    from app.models import get_config_row
+    row = await get_config_row(db, "platform")
+    cfg = (row.config or {}).get("launch", {})
+    if "mock_posting" in cfg:
+        return bool(cfg["mock_posting"])
+    return settings.MOCK_POSTING
+
+
 @router.post("/{ad_id}/post", response_model=AdOut)
 async def post_ad(ad_id: uuid.UUID, data: PostAdIn, user: User = Depends(require_capability("post_content")), db: AsyncSession = Depends(get_db)):
     """Marks specific platforms as posted (adds to posted_platforms, does not
@@ -1024,13 +1039,25 @@ async def post_ad(ad_id: uuid.UUID, data: PostAdIn, user: User = Depends(require
     if ad.status not in ("ready", "posted", "scheduled"):
         raise HTTPException(409, f"Ad is not ready to post (status: {ad.status})")
 
+    mock_posting = await _is_mock_posting(db)
+
+    # Read LinkedIn API version from DB config upfront (async) — the
+    # linkedin service can only do sync reads so we pass the resolved
+    # string directly rather than letting it try to read the async session.
+    from app.services.platform_config import get_platform_integrations
+    _platform_integrations = await get_platform_integrations(db)
+    _linkedin_cfg = next(
+        (p for p in _platform_integrations if p.get("id") in ("linkedin_personal", "linkedin_company", "linkedin")),
+        {}
+    )
+    linkedin_api_version = (_linkedin_cfg.get("api_version") or "").strip() or linkedin.LINKEDIN_API_VERSION
+
     succeeded: list[str] = []
     failed: dict[str, str] = {}
     variant = (ad.results or {}).get("variants", [{}])[0] if ad.results else {}
     for platform in data.platforms:
-        # Match both "linkedin" (ad-targeting id) and "linkedin_personal" (connection id)
         is_linkedin_personal = platform in ("linkedin", "linkedin_personal")
-        if is_linkedin_personal and not settings.MOCK_POSTING:
+        if is_linkedin_personal and not mock_posting:
             conn = await db.scalar(select(PlatformConnection).where(
                 PlatformConnection.company_id == user.company_id,
                 PlatformConnection.platform.in_(["linkedin_personal", "linkedin"]),
@@ -1040,14 +1067,17 @@ async def post_ad(ad_id: uuid.UUID, data: PostAdIn, user: User = Depends(require
                     access_token = decrypt_token(conn.encrypted_token)
                     person_urn = linkedin.get_person_urn(access_token)
                     caption = (variant.get(platform) or variant.get("linkedin") or variant.get("linkedin_personal") or {}).get("caption") or ""
-                    linkedin.post_to_linkedin(access_token, person_urn, caption)
+                    # Use platform-specific reframed image if available, else master image
+                    platform_image_urls = variant.get("platform_image_urls") or {}
+                    image_url = platform_image_urls.get(platform) or platform_image_urls.get("linkedin") or variant.get("image_url")
+                    linkedin.post_to_linkedin(access_token, person_urn, caption, api_version=linkedin_api_version, image_url=image_url)
                     succeeded.append(platform)
                 except Exception as exc:  # noqa: BLE001
                     failed[platform] = str(exc)[:300]
                 continue
             failed[platform] = "LinkedIn isn't connected — connect it in Settings first."
             continue
-        # Every other platform (or LinkedIn while MOCK_POSTING=True) —
+        # Every other platform (or LinkedIn while mock_posting=True) —
         # no real integration built yet, same honest simulated posting
         # the app has always done.
         succeeded.append(platform)

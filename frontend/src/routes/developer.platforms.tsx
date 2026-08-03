@@ -23,13 +23,14 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
   const [redirectUri, setRedirectUri] = useState(entry.redirect_uri || "");
   const [videoRatio, setVideoRatio] = useState(entry.video_ratio || "1:1");
   const [apiUrl, setApiUrl] = useState(entry.api_url || "");
+  const [apiVersion, setApiVersion] = useState(entry.api_version || "");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [togglingEnabled, setTogglingEnabled] = useState(false);
 
   async function save() {
     setSaving(true);
-    const body: Record<string, unknown> = { label: label.trim(), client_id: clientId.trim(), scope: scope.trim() || null, redirect_uri: redirectUri.trim() || null, video_ratio: videoRatio, api_url: apiUrl.trim() || null };
+    const body: Record<string, unknown> = { label: label.trim(), client_id: clientId.trim(), scope: scope.trim() || null, redirect_uri: redirectUri.trim() || null, video_ratio: videoRatio, api_url: apiUrl.trim() || null, api_version: apiVersion.trim() || null };
     if (clientSecret.trim()) body.client_secret = clientSecret.trim(); // omit entirely if left blank — keeps the existing secret unchanged
     await onSave(entry.id, body);
     setSaving(false);
@@ -64,6 +65,12 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
             <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="https://api.platform.com/..." className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
           </div>
           <div>
+            <div className="mb-1 text-[10px] text-muted-foreground">
+              API Version <span className="font-normal opacity-60">(LinkedIn only — YYYYMM format, e.g. 202501. Leave blank to use the system default.)</span>
+            </div>
+            <input value={apiVersion} onChange={(e) => setApiVersion(e.target.value)} placeholder="e.g. 202501" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
+          </div>
+          <div>
             <div className="mb-1 text-[10px] text-muted-foreground">Video posting ratio — what the reframe pipeline treats as this platform's required format</div>
             <select value={videoRatio} onChange={(e) => setVideoRatio(e.target.value)} className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
               {ratios.map((r) => <option key={r} value={r}>{r}</option>)}
@@ -82,7 +89,7 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
               {!entry.built && <span className="ml-2 rounded-full bg-amber-900/40 px-2 py-0.5 text-[9px] font-normal text-amber-400">NO INTEGRATION CODE YET</span>}
               {!entry.enabled && <span className="ml-2 rounded-full bg-foreground px-2 py-0.5 text-[9px] font-normal text-muted-foreground">DISABLED</span>}
             </div>
-            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">Client ID: {entry.client_id || "—"} · Secret: {entry.has_secret ? "✓ set" : "not set"} · Ratio: {entry.video_ratio || "1:1"}</div>
+            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">Client ID: {entry.client_id || "—"} · Secret: {entry.has_secret ? "✓ set" : "not set"} · Ratio: {entry.video_ratio || "1:1"}{entry.api_version ? ` · API v${entry.api_version}` : ""}</div>
             {entry.api_url && <div className="mt-0.5 truncate text-[11px] text-muted-foreground">API: {entry.api_url}</div>}
             {entry.redirect_uri && <div className="mt-0.5 truncate text-[11px] text-muted-foreground">Redirect: {entry.redirect_uri}</div>}
           </div>

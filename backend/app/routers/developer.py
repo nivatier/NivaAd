@@ -1768,8 +1768,10 @@ def _to_out(p: dict) -> PlatformIntegrationOut:
         id=p["id"], label=p["label"], client_id=p.get("client_id", ""),
         has_secret=bool(p.get("client_secret_encrypted")),
         scope=p.get("scope"), redirect_uri=p.get("redirect_uri"),
-        enabled=p.get("enabled", True), built=p["id"] in ("linkedin_personal",),  # only LinkedIn personal-profile posting has real integration code so far — see services/linkedin.py; linkedin_company needs the Organization API work discussed but not yet built
+        enabled=p.get("enabled", True), built=p["id"] in ("linkedin_personal",),
         video_ratio=p.get("video_ratio", "1:1"),
+        api_url=p.get("api_url"),
+        api_version=p.get("api_version"),
     )
 
 
@@ -1791,6 +1793,8 @@ async def add_platform_integration(data: AddPlatformIntegrationIn, _: str = Depe
         "client_secret_encrypted": encrypt_token(data.client_secret),
         "scope": data.scope, "redirect_uri": data.redirect_uri, "enabled": True,
         "video_ratio": data.video_ratio,
+        "api_url": data.api_url or None,
+        "api_version": data.api_version.strip() if data.api_version else None,
     })
     await platform_config.save_platform_integrations(db, platforms)
     return [_to_out(p) for p in platforms]
@@ -1821,6 +1825,10 @@ async def update_platform_integration(platform_id: str, data: UpdatePlatformInte
                 p["enabled"] = data.enabled
             if data.video_ratio is not None:
                 p["video_ratio"] = data.video_ratio
+            if data.api_url is not None:
+                p["api_url"] = data.api_url or None
+            if data.api_version is not None:
+                p["api_version"] = data.api_version.strip() or None
     if not found:
         raise HTTPException(404, "That platform integration no longer exists.")
     await platform_config.save_platform_integrations(db, platforms)
@@ -1872,14 +1880,25 @@ async def _save_launch_cfg_dev(db: AsyncSession, patch: dict) -> dict:
 @router.get("/launch-control")
 async def get_launch_control(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
     cfg = await _get_launch_cfg_dev(db)
-    return {"registration_open": cfg.get("registration_open", settings.REGISTRATION_OPEN)}
+    return {
+        "registration_open": cfg.get("registration_open", settings.REGISTRATION_OPEN),
+        "mock_posting": cfg.get("mock_posting", settings.MOCK_POSTING),
+    }
 
 @router.put("/launch-control")
 async def put_launch_control(body: dict, _: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
-    if "registration_open" not in body:
-        raise HTTPException(422, "registration_open required")
-    saved = await _save_launch_cfg_dev(db, {"registration_open": bool(body["registration_open"])})
-    return {"registration_open": saved.get("registration_open", settings.REGISTRATION_OPEN)}
+    patch: dict = {}
+    if "registration_open" in body:
+        patch["registration_open"] = bool(body["registration_open"])
+    if "mock_posting" in body:
+        patch["mock_posting"] = bool(body["mock_posting"])
+    if not patch:
+        raise HTTPException(422, "At least one of registration_open or mock_posting required")
+    saved = await _save_launch_cfg_dev(db, patch)
+    return {
+        "registration_open": saved.get("registration_open", settings.REGISTRATION_OPEN),
+        "mock_posting": saved.get("mock_posting", settings.MOCK_POSTING),
+    }
 
 
 

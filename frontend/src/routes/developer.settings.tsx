@@ -356,44 +356,75 @@ function ThemeAiSettingsCard() {
 function LaunchControlCard() {
   const handleAuthError = useDevAuthErrorHandler();
   const [open, setOpen] = useState<boolean | null>(null);
+  const [mockPosting, setMockPosting] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     devApi("/developer/launch-control")
-      .then((r) => setOpen(r.registration_open))
+      .then((r) => { setOpen(r.registration_open); setMockPosting(r.mock_posting); })
       .catch((e: any) => { if (!handleAuthError(e)) setErr(e.message || "Could not load"); });
   }, []);
 
-  async function toggleOpen() {
-    if (open === null) return;
+  async function toggle(field: "registration_open" | "mock_posting", currentValue: boolean | null) {
+    if (currentValue === null) return;
     setSaving(true); setErr("");
     try {
-      const r = await devApi("/developer/launch-control", { method: "PUT", body: { registration_open: !open } });
+      const r = await devApi("/developer/launch-control", { method: "PUT", body: { [field]: !currentValue } });
       setOpen(r.registration_open);
+      setMockPosting(r.mock_posting);
     } catch (e: any) { if (!handleAuthError(e)) setErr(e.message || "Could not save"); }
     setSaving(false);
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card/60 p-5 sm:col-span-2">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="text-sm font-semibold text-foreground">🚀 Registration</div>
-            {open === true  && <span className="rounded-full bg-emerald-500/15 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-bold text-emerald-400">OPEN</span>}
-            {open === false && <span className="rounded-full bg-destructive/15 border border-destructive/40 px-2 py-0.5 text-[10px] font-bold text-destructive">DISABLED</span>}
+    <div className="space-y-3 sm:col-span-2">
+      {/* Registration toggle */}
+      <div className="rounded-xl border border-border bg-card/60 p-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-semibold text-foreground">🚀 Registration</div>
+              {open === true  && <span className="rounded-full bg-emerald-500/15 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-bold text-emerald-400">OPEN</span>}
+              {open === false && <span className="rounded-full bg-destructive/15 border border-destructive/40 px-2 py-0.5 text-[10px] font-bold text-destructive">DISABLED</span>}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {open ? "Anyone can register a new account." : "Registration is disabled — no one can sign up via the public form. Use the form below to add users directly."}
+            </p>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {open ? "Anyone can register a new account." : "Registration is disabled — no one can sign up via the public form. Use the form below to add users directly."}
-          </p>
+          <button onClick={() => toggle("registration_open", open)} disabled={saving || open === null}
+            className={`relative shrink-0 h-7 w-12 rounded-full border-2 transition-colors focus:outline-none disabled:opacity-50 ${open ? "border-emerald-500 bg-emerald-500" : "border-border bg-muted/40"}`}>
+            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background shadow transition-transform ${open ? "translate-x-5" : "translate-x-0.5"}`} />
+          </button>
         </div>
-        <button onClick={toggleOpen} disabled={saving || open === null}
-          className={`relative shrink-0 h-7 w-12 rounded-full border-2 transition-colors focus:outline-none disabled:opacity-50 ${open ? "border-emerald-500 bg-emerald-500" : "border-border bg-muted/40"}`}>
-          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background shadow transition-transform ${open ? "translate-x-5" : "translate-x-0.5"}`} />
-        </button>
       </div>
-      {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
+
+      {/* Mock Posting toggle */}
+      <div className="rounded-xl border border-border bg-card/60 p-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-semibold text-foreground">🎭 Mock Posting</div>
+              {mockPosting === true  && <span className="rounded-full bg-amber-500/15 border border-amber-500/40 px-2 py-0.5 text-[10px] font-bold text-amber-400">SIMULATED</span>}
+              {mockPosting === false && <span className="rounded-full bg-emerald-500/15 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-bold text-emerald-400">LIVE</span>}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {mockPosting
+                ? "Posts are simulated — nothing is actually published to any platform. Safe for testing."
+                : "Posts are LIVE — ads will actually be published to connected platforms when posted."}
+            </p>
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              Overrides the <code className="rounded bg-muted px-1 py-0.5">MOCK_POSTING</code> environment variable. Takes effect immediately — no restart needed.
+            </p>
+          </div>
+          <button onClick={() => toggle("mock_posting", mockPosting)} disabled={saving || mockPosting === null}
+            className={`relative shrink-0 h-7 w-12 rounded-full border-2 transition-colors focus:outline-none disabled:opacity-50 ${mockPosting ? "border-amber-500 bg-amber-500" : "border-emerald-500 bg-emerald-500"}`}>
+            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background shadow transition-transform ${mockPosting ? "translate-x-0.5" : "translate-x-5"}`} />
+          </button>
+        </div>
+      </div>
+
+      {err && <div className="text-xs text-destructive">{err}</div>}
     </div>
   );
 }

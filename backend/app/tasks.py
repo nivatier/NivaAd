@@ -1304,7 +1304,15 @@ def fire_due_scheduled_posts():
             # ScheduledPost.platform stores the connection id ("linkedin_personal").
             # Match on both so ads targeted to "linkedin" post via "linkedin_personal".
             is_linkedin_personal = sp.platform in ("linkedin_personal", "linkedin")
-            if is_linkedin_personal and not settings.MOCK_POSTING:
+            # Read mock_posting and linkedin api_version from DB config (sync session — works fine here)
+            from app.models import get_config_row_sync as _gcr
+            from app.services.platform_config import get_platform_integrations_sync as _get_platforms
+            _platform_cfg = (_gcr(db, "platform").config or {})
+            _launch_cfg = _platform_cfg.get("launch", {})
+            mock_posting = _launch_cfg.get("mock_posting", settings.MOCK_POSTING)
+            _li_cfg = next((p for p in _get_platforms(db) if p.get("id") in ("linkedin_personal", "linkedin_company", "linkedin")), {})
+            linkedin_api_version = (_li_cfg.get("api_version") or "").strip() or linkedin.LINKEDIN_API_VERSION
+            if is_linkedin_personal and not mock_posting:
                 conn = db.scalar(select(PlatformConnection).where(
                     PlatformConnection.company_id == sp.company_id,
                     PlatformConnection.platform.in_(["linkedin_personal", "linkedin"]),
@@ -1318,7 +1326,9 @@ def fire_due_scheduled_posts():
                     person_urn = linkedin.get_person_urn(access_token)
                     variant = (ad.results or {}).get("variants", [{}])[0] if ad and ad.results else {}
                     caption = (variant.get("linkedin") or variant.get("linkedin_personal") or {}).get("caption") or ""
-                    linkedin.post_to_linkedin(access_token, person_urn, caption)
+                    platform_image_urls = variant.get("platform_image_urls") or {}
+                    image_url = platform_image_urls.get(sp.platform) or platform_image_urls.get("linkedin") or variant.get("image_url")
+                    linkedin.post_to_linkedin(access_token, person_urn, caption, api_version=linkedin_api_version, image_url=image_url)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("[schedule] scheduled_post=%s LinkedIn post failed: %s", sp.id, exc)
                     sp.status = "failed"

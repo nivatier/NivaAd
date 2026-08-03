@@ -696,9 +696,10 @@ class PlatformIntegrationOut(BaseModel):
     scope: str | None = None
     redirect_uri: str | None = None
     enabled: bool = True
-    built: bool = False  # whether real integration code exists for this platform yet (currently only linkedin) — informational, so the developer isn't surprised nothing happens when they enable an unbuilt one
-    video_ratio: str = "1:1"  # the aspect ratio the reframe pipeline treats as this platform's required format — set here, alongside everything else about the platform, so adding a platform and setting its ratio happen in one place
-    api_url: str | None = None  # platform's posting/API base URL — e.g. https://api.linkedin.com/rest/posts; stored here and used by the posting service when this platform's integration code is built
+    built: bool = False
+    video_ratio: str = "1:1"
+    api_url: str | None = None
+    api_version: str | None = None  # e.g. "202501" for LinkedIn — overrides the hardcoded default in the integration service; format is platform-specific (YYYYMM for LinkedIn)
 
 
 class AddPlatformIntegrationIn(BaseModel):
@@ -708,19 +709,21 @@ class AddPlatformIntegrationIn(BaseModel):
     client_secret: str = Field(min_length=1, max_length=500)
     scope: str | None = None
     redirect_uri: str | None = None
-    video_ratio: str = "1:1"  # validated against the developer's current ratio list at the endpoint, not a fixed pattern here — see services/video_ratios.py
+    video_ratio: str = "1:1"
     api_url: str | None = None
+    api_version: str | None = Field(default=None, max_length=20)
 
 
 class UpdatePlatformIntegrationIn(BaseModel):
     label: str | None = Field(default=None, min_length=1, max_length=60)
     client_id: str | None = Field(default=None, min_length=1, max_length=300)
-    client_secret: str | None = Field(default=None, min_length=1, max_length=500)  # omit to keep the current secret unchanged
+    client_secret: str | None = Field(default=None, min_length=1, max_length=500)
     scope: str | None = None
     redirect_uri: str | None = None
     enabled: bool | None = None
-    video_ratio: str | None = None  # validated against the developer's current ratio list at the endpoint
-    api_url: str | None = None  # update to set or change this platform's posting API URL
+    video_ratio: str | None = None
+    api_url: str | None = None
+    api_version: str | None = Field(default=None, max_length=20)  # set to override the platform's default API version (e.g. "202501" for LinkedIn)
 
 
 class CompanyPlatformOut(BaseModel):
