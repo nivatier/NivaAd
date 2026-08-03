@@ -1065,12 +1065,139 @@ const SETTINGS_TABS = [
   { key: "api",       label: "🔌 API Endpoints" },
   { key: "users",     label: "👥 Users" },
   { key: "retention", label: "🗄 Retention" },
+  { key: "scraper",   label: "🕷 Web Scraper" },
   { key: "theme",     label: "🎨 Theme AI" },
   { key: "ratios",    label: "📐 Video Ratios" },
   { key: "railway",   label: "🚂 Railway" },
   { key: "legal",     label: "📄 Legal" },
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number]["key"];
+
+// ── Web Scraper tab ───────────────────────────────────────────────────────────
+function WebScraperTab() {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [maxPages, setMaxPages]           = useState("12");
+  const [maxDepth, setMaxDepth]           = useState("2");
+  const [pageTimeoutMs, setPageTimeoutMs] = useState("20000");
+  const [saving, setSaving]   = useState(false);
+  const [saved, setSaved]     = useState(false);
+  const [err, setErr]         = useState("");
+
+  useEffect(() => {
+    devApi("/developer/scraper-settings")
+      .then((r: any) => {
+        setMaxPages(String(r.max_pages));
+        setMaxDepth(String(r.max_depth));
+        setPageTimeoutMs(String(r.page_timeout_ms));
+      })
+      .catch((e: any) => { if (!handleAuthError(e)) setErr(e.message || "Could not load scraper settings"); });
+  }, []);
+
+  async function save() {
+    const pages   = parseInt(maxPages);
+    const depth   = parseInt(maxDepth);
+    const timeout = parseInt(pageTimeoutMs);
+    if (isNaN(pages)   || pages < 1   || pages > 200)    { setErr("Max pages must be 1–200"); return; }
+    if (isNaN(depth)   || depth < 1   || depth > 10)     { setErr("Max depth must be 1–10"); return; }
+    if (isNaN(timeout) || timeout < 3000 || timeout > 120000) { setErr("Page timeout must be 3000–120000 ms"); return; }
+    setSaving(true); setErr(""); setSaved(false);
+    try {
+      const r = await devApi("/developer/scraper-settings", {
+        method: "PUT",
+        body: { max_pages: pages, max_depth: depth, page_timeout_ms: timeout },
+      });
+      setMaxPages(String(r.max_pages));
+      setMaxDepth(String(r.max_depth));
+      setPageTimeoutMs(String(r.page_timeout_ms));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not save");
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div className="space-y-5 max-w-xl">
+      <div className="rounded-xl border border-border bg-card/60 p-5">
+        <div className="text-sm font-semibold text-foreground mb-1">Web scraper settings</div>
+        <p className="text-xs text-muted-foreground mb-5">
+          Controls how Agent Niva crawls company websites during Quick Start. Changes take effect immediately on the
+          next scrape — no restart needed. Higher values mean more thorough scraping but slower results.
+        </p>
+
+        <div className="space-y-5">
+          {/* Max pages */}
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+              Max pages <span className="font-normal">(1–200)</span>
+            </label>
+            <div className="flex items-center gap-3">
+              <input type="number" min={1} max={200} step={1} value={maxPages} onChange={(e) => setMaxPages(e.target.value)}
+                className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
+              <span className="text-xs text-muted-foreground">pages per crawl</span>
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              Maximum number of pages to visit from a single domain. Default 12 — enough for most company sites
+              without long wait times. Raise to 30–50 for large sites with many product pages.
+            </p>
+          </div>
+
+          {/* Max depth */}
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+              Max depth <span className="font-normal">(1–10)</span>
+            </label>
+            <div className="flex items-center gap-3">
+              <input type="number" min={1} max={10} step={1} value={maxDepth} onChange={(e) => setMaxDepth(e.target.value)}
+                className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
+              <span className="text-xs text-muted-foreground">link levels from homepage</span>
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              How many clicks deep from the homepage to follow links. Depth 1 = homepage + direct links only.
+              Depth 2 (default) also follows links found on those pages. Rarely needs to go above 3.
+            </p>
+          </div>
+
+          {/* Page timeout */}
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+              Page timeout <span className="font-normal">(3000–120000 ms)</span>
+            </label>
+            <div className="flex items-center gap-3">
+              <input type="number" min={3000} max={120000} step={1000} value={pageTimeoutMs} onChange={(e) => setPageTimeoutMs(e.target.value)}
+                className="w-28 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none" />
+              <span className="text-xs text-muted-foreground">ms ({(parseInt(pageTimeoutMs) / 1000 || 0).toFixed(0)}s)</span>
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              How long to wait for each page to fully load before moving on. Default 20,000ms (20s). Increase for
+              slow or JavaScript-heavy sites; decrease if scrapes are timing out on fast sites.
+            </p>
+          </div>
+        </div>
+
+        {/* Reference table */}
+        <div className="mt-5 rounded-lg border border-border/50 bg-muted/20 p-3">
+          <div className="text-[10px] font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Quick reference</div>
+          <div className="grid grid-cols-3 gap-2 text-[10px] text-muted-foreground">
+            <div><span className="font-semibold text-foreground">Small site</span><br />pages: 10, depth: 2</div>
+            <div><span className="font-semibold text-foreground">Medium site</span><br />pages: 20, depth: 3</div>
+            <div><span className="font-semibold text-foreground">Large site</span><br />pages: 50, depth: 4</div>
+          </div>
+        </div>
+
+        <div className="mt-5 flex items-center gap-3">
+          <button onClick={save} disabled={saving}
+            className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+            {saving ? "Saving…" : "Save scraper settings"}
+          </button>
+          {saved && <span className="text-xs text-emerald-400">✓ Saved — takes effect on next scrape</span>}
+        </div>
+        {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
+      </div>
+    </div>
+  );
+}
 
 function DeveloperSettings() {
   const allowed = useRequireDeveloperPermission("settings");
@@ -1097,6 +1224,7 @@ function DeveloperSettings() {
       {tab === "api"       && <ApiEndpointsTab />}
       {tab === "users"     && <UsersTab />}
       {tab === "retention" && <RetentionTab />}
+      {tab === "scraper"   && <WebScraperTab />}
       {tab === "theme"     && <ThemeAiSettingsCard />}
       {tab === "ratios"    && <VideoRatiosCard />}
       {tab === "railway"   && <RailwayTab />}

@@ -33,7 +33,7 @@ from app.services.guardrails import check_text
 from app.services import storage
 from app.services.storage import upload_data_url
 from app.services.token_crypto import decrypt_token
-from app.tasks import _build_prompt, _image_prompt, _multi_shot_video_prompt, _resolve_platforms, _review_shot_prompt, _video_prompt
+from app.tasks import PLATFORM_STYLE, _build_prompt, _image_prompt, _multi_shot_video_prompt, _resolve_platforms, _review_shot_prompt, _shape, _video_prompt
 from app.worker import celery_app
 
 router = APIRouter(prefix="/ads", tags=["ads"])
@@ -1106,7 +1106,241 @@ async def patch_ad(ad_id: uuid.UUID, data: AdPatchIn, user: User = Depends(get_c
     return _ad_out(ad)
 
 
-@router.delete("/{ad_id}", status_code=204)
+@router.post("/{ad_id}/reframe/{platform_id}", response_model=AdOut)
+async def reframe_for_platform(
+    ad_id: uuid.UUID,
+    platform_id: str,
+    user: User = Depends(require_capability("create_ads")),
+    db: AsyncSession = Depends(get_db),
+):
+    """On-demand: reframe the master image/video for one platform using the
+    brand kit padding settings and the platform's configured ratio.
+    Stores the result in platform_image_urls / platform_video_urls on the
+    ad's first variant so the preview can show it immediately.
+    Called from the Preview modal when the user clicks
+    'Generate for [platform]' on a platform that has no crop yet."""
+    from app.services.reframe import reframe_image, reframe_video
+    from app.services.platform_config import get_ad_targeting_ratios
+    from app.services.video_ratios import get_video_ratios, resolve_ratio
+
+    ad = await db.get(Ad, ad_id)
+    if ad is None or ad.company_id != user.company_id:
+        raise HTTPException(404, "Ad not found")
+
+    brand_kit = await db.scalar(select(BrandKit).where(BrandKit.company_id == user.company_id))
+    if brand_kit is None:
+        raise HTTPException(422, "No Brand Kit configured — set one up in Brand Kit first.")
+
+    platform_ratios = await get_ad_targeting_ratios(db)
+    if brand_kit.platform_ratio_overrides:
+        platform_ratios = {**platform_ratios, **brand_kit.platform_ratio_overrides}
+
+    if platform_id not in platform_ratios:
+        raise HTTPException(422, f"No ratio configured for platform '{platform_id}'.")
+
+    available_ratios = await get_video_ratios(db)
+    ratio = resolve_ratio(platform_ratios[platform_id], available_ratios)
+
+    results = ad.results or {"variants": [{}]}
+    variants = list(results.get("variants", [{}]))
+    first = variants[0] if variants else {}
+
+    master_image_url: str | None = first.get("image_url")
+    master_video_url: str | None = first.get("video_url")
+
+    if not master_image_url and not master_video_url:
+        raise HTTPException(422, "No master image or video found on this ad.")
+
+    # Reframe image
+    if master_image_url:
+        try:
+            img_bytes = await asyncio.to_thread(reframe_image, master_image_url, ratio, brand_kit)
+            reframed_url = storage.upload_bytes(img_bytes, "image/png", "png")
+            platform_image_urls = dict(first.get("platform_image_urls") or {})
+            platform_image_urls[platform_id] = reframed_url
+            first["platform_image_urls"] = platform_image_urls
+        except Exception as exc:
+            raise HTTPException(500, f"Image reframe failed: {exc}") from exc
+
+    # Reframe video
+    if master_video_url:
+        try:
+            vid_bytes = await asyncio.to_thread(reframe_video, master_video_url, ratio, brand_kit)
+            reframed_vid_url = storage.upload_bytes(vid_bytes, "video/mp4", "mp4")
+            platform_video_urls = dict(first.get("platform_video_urls") or {})
+            platform_video_urls[platform_id] = reframed_vid_url
+            first["platform_video_urls"] = platform_video_urls
+        except Exception as exc:
+            raise HTTPException(500, f"Video reframe failed: {exc}") from exc
+
+    variants[0] = first
+    ad.results = {"variants": variants}
+    flag_modified(ad, "results")
+    await db.commit()
+    await db.refresh(ad)
+    return _ad_out(ad)
+
+
+@router.post("/{ad_id}/add-platform/{platform_id}", response_model=AdOut)
+async def add_platform_to_ad(
+    ad_id: uuid.UUID,
+    platform_id: str,
+    user: User = Depends(require_capability("create_ads")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a new platform to an existing ad — generates text copy for that
+    platform using the same text model the ad was originally created with,
+    charges credits accordingly, then reframes the master image via ffmpeg
+    (no extra AI cost) and saves both to the ad's results.
+
+    This lets users add platforms they forgot during creation at any time,
+    with only the text generation charged (ffmpeg reframe is free).
+    """
+    from app.services.reframe import reframe_image, reframe_video
+    from app.services.platform_config import get_ad_targeting_ratios
+    from app.services.video_ratios import get_video_ratios, resolve_ratio
+    from app.services import text_gen as text_gen_svc
+    from app.services import pricing as pricing_svc
+
+    ad = await db.get(Ad, ad_id)
+    if ad is None or ad.company_id != user.company_id:
+        raise HTTPException(404, "Ad not found")
+
+    brief: dict = ad.brief or {}
+
+    # ── 1. Resolve text model from the ad's brief ─────────────────────────
+    # The original text model slug and credit cost are stored on the brief
+    # at creation time — reuse them so the platform add uses the same model
+    # and same pricing as the original generation.
+    text_model_slug: str | None = brief.get("text_model")
+    text_model_credits: float | None = brief.get("text_model_credits")
+
+    if not text_model_slug:
+        # Brief predates text_model storage — fall back to first enabled model
+        available = await credit_svc.get_available_models(db)
+        text_models = [m for m in available.get("text", []) if m.get("enabled", True)]
+        if not text_models:
+            raise HTTPException(422, "No text model available — ask your developer to add one.")
+        text_model_slug = text_models[0]["model"]
+        text_model_credits = text_models[0].get("credits")
+
+    # ── 2. Check balance ──────────────────────────────────────────────────
+    markup = await pricing_svc.get_markup_multiplier(db)
+    credit_value_usd = await pricing_svc.get_credit_value_usd(db)
+
+    # Build a model entry dict the same shape compute_text_credits expects
+    model_entry = {"model": text_model_slug, "credits": text_model_credits}
+    text_cost = pricing_svc.compute_text_credits(model_entry, markup, credit_value_usd)
+
+    bal = await credit_svc.balance(db, user.company_id)
+    if bal < text_cost:
+        raise HTTPException(
+            402,
+            f"Not enough credits — this costs {text_cost} credit(s) but you have {bal:.2f}. "
+            f"Top up in Settings → Billing."
+        )
+
+    # ── 3. Generate text for the new platform ────────────────────────────
+    platform_style = PLATFORM_STYLE.get(platform_id, "clear, concise, and engaging")
+    text_prompt = (
+        f"You are an expert social media ad copywriter. "
+        f"Product: {brief.get('product_name')}. Description: {brief.get('description')}. "
+        f"Target audience: {brief.get('audience') or 'general consumers'}. "
+        f"Offer: {brief.get('offer') or 'none'}. Campaign goal: {brief.get('goal')}. "
+        f"Tone: {brief.get('tone')}. "
+    )
+    if brief.get("tagline"):
+        text_prompt += f'Weave in the brand tagline naturally: "{brief["tagline"]}". '
+
+    text_prompt += (
+        f"Write ad copy specifically for {platform_id} ({platform_style}). "
+        f"Rate the copy 0-100 for predicted engagement (score) and give one concrete improvement tip. "
+        f'Respond ONLY with raw JSON, no markdown fences: {_shape([platform_id])}'
+    )
+
+    try:
+        parsed = await asyncio.to_thread(text_gen_svc.generate_text, text_prompt, text_model_slug)
+    except Exception as exc:
+        raise HTTPException(502, f"Text generation failed: {exc}") from exc
+
+    platform_copy = parsed.get(platform_id, {})
+    if not platform_copy.get("caption"):
+        raise HTTPException(500, "Model returned empty caption — try again.")
+
+    # ── 4. Deduct credits ────────────────────────────────────────────────
+    db.add(CreditLedger(
+        company_id=user.company_id,
+        delta=-text_cost,
+        reason="add_platform",
+        ref_id=str(ad.id),
+    ))
+
+    # ── 5. Reframe image/video via ffmpeg (free) ─────────────────────────
+    brand_kit = await db.scalar(select(BrandKit).where(BrandKit.company_id == user.company_id))
+
+    results = ad.results or {"variants": [{}]}
+    variants = list(results.get("variants", [{}]))
+    first = variants[0] if variants else {}
+
+    master_image_url: str | None = first.get("image_url")
+    master_video_url: str | None = first.get("video_url")
+
+    if brand_kit and (master_image_url or master_video_url):
+        platform_ratios = await get_ad_targeting_ratios(db)
+        if brand_kit.platform_ratio_overrides:
+            platform_ratios = {**platform_ratios, **brand_kit.platform_ratio_overrides}
+
+        if platform_id in platform_ratios:
+            available_ratios = await get_video_ratios(db)
+            ratio = resolve_ratio(platform_ratios[platform_id], available_ratios)
+
+            if master_image_url:
+                try:
+                    img_bytes = await asyncio.to_thread(reframe_image, master_image_url, ratio, brand_kit)
+                    reframed_url = storage.upload_bytes(img_bytes, "image/png", "png")
+                    platform_image_urls = dict(first.get("platform_image_urls") or {})
+                    platform_image_urls[platform_id] = reframed_url
+                    first["platform_image_urls"] = platform_image_urls
+                except Exception as exc:
+                    # Non-fatal — text still generated and charged, image crop just won't exist yet
+                    import logging as _log
+                    _log.getLogger("nivaad.ads").warning(
+                        "[add_platform] image reframe failed for %s on ad=%s: %s", platform_id, ad_id, exc
+                    )
+
+            if master_video_url:
+                try:
+                    vid_bytes = await asyncio.to_thread(reframe_video, master_video_url, ratio, brand_kit)
+                    reframed_vid_url = storage.upload_bytes(vid_bytes, "video/mp4", "mp4")
+                    platform_video_urls = dict(first.get("platform_video_urls") or {})
+                    platform_video_urls[platform_id] = reframed_vid_url
+                    first["platform_video_urls"] = platform_video_urls
+                except Exception as exc:
+                    import logging as _log
+                    _log.getLogger("nivaad.ads").warning(
+                        "[add_platform] video reframe failed for %s on ad=%s: %s", platform_id, ad_id, exc
+                    )
+
+    # ── 6. Save text + image into the variant ────────────────────────────
+    first[platform_id] = platform_copy
+    variants[0] = first
+
+    # Also update ad.platforms so the new platform is tracked
+    current_platforms = list(ad.platforms or [])
+    if platform_id not in current_platforms and platform_id != "default":
+        # Remove "default" placeholder if present
+        current_platforms = [p for p in current_platforms if p != "default"]
+        current_platforms.append(platform_id)
+        ad.platforms = current_platforms
+
+    ad.results = {"variants": variants}
+    flag_modified(ad, "results")
+    await db.commit()
+    await db.refresh(ad)
+    return _ad_out(ad)
+
+
+
 async def delete_ad(ad_id: uuid.UUID, user: User = Depends(require_capability("create_ads")), db: AsyncSession = Depends(get_db)):
     ad = await db.get(Ad, ad_id)
     if ad is None or ad.company_id != user.company_id:

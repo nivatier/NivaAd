@@ -389,9 +389,17 @@ function ImageThemeTab() {
     try {
       const r = await devApi("/developer/themes/image-theme/generate-all-missing", { method: "POST" });
       setData(r.editor);
-      setGenerateMsg(r.filled === 0 ? "Nothing to fill — every tag already has a prompt." : `Filled ${r.filled} tag${r.filled === 1 ? "" : "s"}${r.skipped ? `, ${r.skipped} failed (try again)` : ""}.`);
+      if (r.filled === 0 && r.skipped === 0) {
+        setGenerateMsg("nothing-to-fill");
+      } else if (r.skipped > 0 && r.filled === 0) {
+        setGenerateMsg(`all-skipped:${r.skipped}`);
+      } else if (r.skipped > 0) {
+        setGenerateMsg(`partial:${r.filled}:${r.skipped}`);
+      } else {
+        setGenerateMsg(`ok:${r.filled}`);
+      }
     } catch (e: any) {
-      if (!handleAuthError(e)) setErr(e.message || "Could not generate — check a text model is set in Developer > Settings.");
+      if (!handleAuthError(e)) setErr(e.message || "Could not generate.");
     }
     setGeneratingAll(false);
   }
@@ -431,7 +439,27 @@ function ImageThemeTab() {
               {generatingAll ? "Generating…" : "✨ Generate all missing prompts"}
             </button>
           </div>
-          {generateMsg && <div className="mb-2 text-[11px] text-emerald-400">{generateMsg}</div>}
+          {generateMsg === "nothing-to-fill" && (
+            <div className="mb-2 text-[11px] text-emerald-400">✓ Every tag already has a prompt.</div>
+          )}
+          {generateMsg.startsWith("ok:") && (
+            <div className="mb-2 text-[11px] text-emerald-400">✓ Filled {generateMsg.split(":")[1]} tag{generateMsg.split(":")[1] === "1" ? "" : "s"} successfully.</div>
+          )}
+          {generateMsg.startsWith("partial:") && (() => {
+            const [, filled, skipped] = generateMsg.split(":");
+            return (
+              <div className="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-400">
+                ✓ Filled {filled} tag{filled === "1" ? "" : "s"} — {skipped} failed. Try clicking again to retry the failed ones.
+              </div>
+            );
+          })()}
+          {generateMsg.startsWith("all-skipped:") && (
+            <div className="mb-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
+              ✕ All {generateMsg.split(":")[1]} tags failed to generate. Go to{" "}
+              <a href="/developer/settings" className="underline font-semibold">Developer → Settings → Theme AI</a>{" "}
+              and select a text model first.
+            </div>
+          )}
           <div className="max-w-3xl rounded-xl border border-border bg-card/60 p-4">
             <TagPromptEditor tags={tags} values={data.text_for_image[axis]} onSave={saveTextPrompt} addTagAxis={axis === "style" ? "style" : "category"} />
           </div>

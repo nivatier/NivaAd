@@ -2379,6 +2379,56 @@ async def update_post_retention(data: PostRetentionMonthsIn, _: str = Depends(re
     return PostRetentionMonthsOut(post_retention_months=data.post_retention_months)
 
 
+# ── Web scraper settings ───────────────────────────────────────────────────────
+# Controls how Agent Niva's Quick Start crawls company websites.
+# Stored in ModelConfig "platform" topic under key "scraper".
+# Defaults mirror the hardcoded values in services/agent_scraper.py so
+# existing behaviour is unchanged until a developer explicitly changes them.
+
+SCRAPER_DEFAULTS = {
+    "max_pages":        12,    # max pages to crawl per site
+    "max_depth":        2,     # max link depth from the homepage
+    "page_timeout_ms":  20000, # per-page load timeout in milliseconds
+}
+
+async def _get_scraper_cfg(db: AsyncSession) -> dict:
+    row = await get_config_row(db, "platform")
+    cfg = row.config or {}
+    return {**SCRAPER_DEFAULTS, **cfg.get("scraper", {})}
+
+async def _save_scraper_cfg(db: AsyncSession, patch: dict) -> dict:
+    row = await get_config_row(db, "platform")
+    cfg = dict(row.config or {})
+    cfg["scraper"] = {**SCRAPER_DEFAULTS, **cfg.get("scraper", {}), **patch}
+    row.config = cfg
+    flag_modified(row, "config")
+    await db.commit()
+    return cfg["scraper"]
+
+@router.get("/scraper-settings")
+async def get_scraper_settings(_: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
+    return await _get_scraper_cfg(db)
+
+@router.put("/scraper-settings")
+async def put_scraper_settings(body: dict, _: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
+    max_pages       = int(body.get("max_pages", SCRAPER_DEFAULTS["max_pages"]))
+    max_depth       = int(body.get("max_depth", SCRAPER_DEFAULTS["max_depth"]))
+    page_timeout_ms = int(body.get("page_timeout_ms", SCRAPER_DEFAULTS["page_timeout_ms"]))
+    if not (1 <= max_pages <= 200):
+        raise HTTPException(422, "max_pages must be 1–200")
+    if not (1 <= max_depth <= 10):
+        raise HTTPException(422, "max_depth must be 1–10")
+    if not (3000 <= page_timeout_ms <= 120000):
+        raise HTTPException(422, "page_timeout_ms must be 3000–120000")
+    saved = await _save_scraper_cfg(db, {
+        "max_pages": max_pages,
+        "max_depth": max_depth,
+        "page_timeout_ms": page_timeout_ms,
+    })
+    return saved
+
+
+
 @router.get("/video-prep", response_model=VideoPrepSettingsOut)
 async def get_video_prep(_: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     return VideoPrepSettingsOut(**await video_prep_svc.get_video_prep_settings(db))

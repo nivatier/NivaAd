@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { AppShell, Panel, Field, Input, Chip } from "@/components/app-shell";
 import { PLATFORMS, estimateCost, PlatformPreviewCard, PromptConfirmModal, type AdVariant } from "@/components/create-ad-parts";
+import { RepostModal } from "@/components/repost-modal";
 
 /** Shown in the preview when no platform is connected/selected. */
 const DEFAULT_PLATFORM = { id: "default", name: "Default", tag: "📄", color: "#6366f1" };
@@ -9,7 +10,7 @@ import { useConnectedPlatforms } from "@/hooks/use-connected-platforms";
 import { CAROUSEL_MAX_IMAGES, CAROUSEL_MIN_IMAGES, MAX_VIDEO_SHOTS } from "@/lib/constants";
 import { TimezoneSelect } from "@/components/timezone-picker";
 import { detectedTimeZone, zonedWallTimeToUtcNaiveIso } from "@/lib/timezone";
-import { api, type AvailableModelsOut } from "@/lib/api";
+import { api, type AdOut, type AvailableModelsOut } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { NovaHint } from "@/components/nova-hint";
 import { RequirementChecklist } from "@/components/requirement-checklist";
@@ -194,9 +195,11 @@ type AdGenerationEntry = {
 };
 
 /** Compact right-panel card for one tracked generation. */
-/** Lightweight preview modal — shows generated image/video + first caption. */
+/** Preview modal for the Create Ad page — fetches the ad then renders
+ *  the same RepostModal used in My Ads, so the preview is identical:
+ *  platform tabs, correct aspect ratios, reframed images, captions. */
 function AdPreviewModal({ adId, onClose }: { adId: string; onClose: () => void }) {
-  const [ad, setAd] = useState<any>(null);
+  const [ad, setAd] = useState<AdOut | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
@@ -216,77 +219,29 @@ function AdPreviewModal({ adId, onClose }: { adId: string; onClose: () => void }
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
-  const firstVariant = ad?.results?.variants?.[0];
-  const imageUrl: string | null = firstVariant?.image_url ?? null;
-  const videoUrl: string | null = firstVariant?.video_url ?? null;
-  const platforms: string[] = ad?.platforms ?? [];
-  // When no platform was selected at creation, the backend stores copy under
-  // "default". Scan all variant keys to find whichever platform has a caption.
-  const RESERVED_KEYS = new Set(["image_url", "image_urls", "video_url"]);
-  const captionPlatform: string = (() => {
-    if (!firstVariant) return "default";
-    // Prefer an explicitly-connected platform if present
-    for (const p of platforms) {
-      if (firstVariant[p]?.caption) return p;
-    }
-    // Fall back to any key that has a caption (covers "default" and any other)
-    for (const k of Object.keys(firstVariant)) {
-      if (!RESERVED_KEYS.has(k) && firstVariant[k]?.caption) return k;
-    }
-    return platforms[0] ?? "default";
-  })();
-  const caption: string = firstVariant?.[captionPlatform]?.caption ?? "";
-  const productName: string = (ad?.brief as any)?.product_name ?? "Ad";
-  const displayPlatform = captionPlatform === "default" ? "Default" : captionPlatform;
+  if (loading) {
+    return (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+        <svg className="h-8 w-8 animate-spin text-primary" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+        </svg>
+      </div>
+    );
+  }
 
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="relative w-full max-w-sm rounded-2xl border border-border bg-card overflow-hidden shadow-[0_0_0_1px_oklch(1_0_0_/_0.07),0_24px_64px_oklch(0_0_0_/_0.6)]" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-foreground truncate">{productName}</div>
-            {platforms.length > 0 && <div className="text-[10px] text-muted-foreground mt-0.5">{platforms.join(" · ")}</div>}
-          </div>
-          <button onClick={onClose} className="ml-3 shrink-0 grid h-7 w-7 place-items-center rounded-full border border-border text-muted-foreground hover:text-foreground transition leading-none">✕</button>
-        </div>
-
-        {/* Media + caption */}
-        {loading ? (
-          <div className="flex h-48 items-center justify-center">
-            <svg className="h-6 w-6 animate-spin text-primary" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-            </svg>
-          </div>
-        ) : err ? (
-          <div className="flex h-48 items-center justify-center text-xs text-destructive px-4 text-center">{err}</div>
-        ) : (
-          <>
-            {videoUrl ? (
-              <video src={videoUrl} controls playsInline className="w-full max-h-72 object-contain bg-black" />
-            ) : imageUrl ? (
-              <img src={imageUrl} alt={productName} className="w-full max-h-72 object-contain bg-muted/20" />
-            ) : (
-              <div className="flex h-32 items-center justify-center text-2xl">✍️</div>
-            )}
-            {caption && (
-              <div className="px-4 py-3 border-t border-border/60">
-                <div className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">Caption · {displayPlatform}</div>
-                <p className="text-xs text-foreground leading-relaxed line-clamp-4">{caption}</p>
-              </div>
-            )}
-          </>
-        )}
-
-        <div className="px-4 py-3 border-t border-border/60">
-          <button onClick={onClose} className="w-full rounded-full border border-border py-1.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground transition">
-            Close
-          </button>
+  if (err || !ad) {
+    return (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+        <div className="rounded-2xl border border-border bg-card p-6 text-center">
+          <div className="text-xs text-destructive mb-3">{err || "Could not load ad"}</div>
+          <button onClick={onClose} className="rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground">Close</button>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  return <RepostModal ad={ad} onClose={onClose} onUpdated={() => {}} />;
 }
 
 function AdGenCard({ entry, isActive }: { entry: AdGenerationEntry; isActive: boolean }) {

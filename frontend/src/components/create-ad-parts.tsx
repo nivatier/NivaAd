@@ -4,11 +4,11 @@ import type React from "react";
 export type Platform = { id: string; name: string; color: string; tag: string; ratio: string };
 
 export const PLATFORMS: Platform[] = [
-  { id: "instagram", name: "Instagram", color: "#E1306C", tag: "IG", ratio: "Square 1:1" },
-  { id: "facebook", name: "Facebook", color: "#1877F2", tag: "FB", ratio: "Landscape 1.91:1" },
-  { id: "linkedin", name: "LinkedIn", color: "#0A66C2", tag: "IN", ratio: "Landscape 1.91:1" },
-  { id: "x", name: "X (Twitter)", color: "#e7e9ea", tag: "𝕏", ratio: "Landscape 16:9" },
-  { id: "tiktok", name: "TikTok", color: "#25F4EE", tag: "TT", ratio: "Vertical 9:16" },
+  { id: "instagram",  name: "Instagram",   color: "#E1306C", tag: "IG", ratio: "Square 1:1" },
+  { id: "facebook",   name: "Facebook",    color: "#1877F2", tag: "FB", ratio: "Landscape 1.91:1" },
+  { id: "linkedin",   name: "LinkedIn",    color: "#0A66C2", tag: "IN", ratio: "Landscape 1.91:1" },
+  { id: "x",          name: "X (Twitter)", color: "#e7e9ea", tag: "𝕏",  ratio: "Landscape 16:9" },
+  { id: "tiktok",     name: "TikTok",      color: "#25F4EE", tag: "TT", ratio: "Vertical 9:16" },
 ];
 
 // Mirrors the backend's default model tiers (services/billing.py / services/credits.py)
@@ -151,8 +151,16 @@ export function PostPreviewCard({
     setDetectedRatio(`${w}/${h}`);
   }, []);
 
-  // Default aspect ratio from the platform; overridden by real video dimensions.
-  const defaultRatio = platform.id === "tiktok" ? "9/16" : "1/1";
+  // Parse the platform's ratio string (e.g. "Landscape 1.91:1", "Vertical 9:16", "Square 1:1")
+  // into a CSS aspect-ratio value (e.g. "1.91/1", "9/16", "1/1").
+  // For videos, the real pixel dimensions override this once metadata loads.
+  const platformRatioCss = (() => {
+    // Extract the numeric ratio from strings like "Landscape 1.91:1" or "9:16"
+    const match = platform.ratio.match(/([\d.]+):([\d.]+)/);
+    if (match) return `${match[1]}/${match[2]}`;
+    return "1/1";
+  })();
+  const defaultRatio = platformRatioCss;
   const containerRatio = detectedRatio ?? defaultRatio;
 
   return (

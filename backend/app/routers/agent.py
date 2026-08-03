@@ -10,7 +10,7 @@ from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, Gene
 from app.schemas import (
     AdCreateIn, AgentEventIn, AgentEventOut, AgentRecommendationOut,
     AgentScrapeJobOut, AgentSettingsOut, AgentSettingsUpdateIn, NotificationOut, QuickStartIn,
-    ScrapedSiteOut, ScrapedSiteLabelIn,
+    QuickStartFromSiteIn, ScrapedSiteOut, ScrapedSiteLabelIn,
 )
 from app.services import agent_settings as agent_settings_svc
 from app.services import credits as credit_svc
@@ -447,14 +447,13 @@ async def delete_scraped_site(
 @router.post("/quick-start/from-site/{site_id}", response_model=AgentScrapeJobOut)
 async def quick_start_from_saved_site(
     site_id: str,
-    data: "QuickStartFromSiteIn",
+    data: QuickStartFromSiteIn,
     user: User = Depends(require_capability("create_ads")),
     db: AsyncSession = Depends(get_db),
 ):
     """Generate recommendations from a previously saved site scrape —
     no re-crawl, uses the stored content directly."""
     import uuid as _uuid
-    from app.schemas import QuickStartFromSiteIn as _In
     site = await db.get(ScrapedSite, _uuid.UUID(site_id))
     if not site or site.company_id != user.company_id:
         raise HTTPException(404, "Saved site not found")

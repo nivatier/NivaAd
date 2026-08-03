@@ -247,25 +247,50 @@ async def generate_video_theme_thumbnail(db, prompt: str) -> str:
     )
     img_bytes, ext = await asyncio.to_thread(generate_image, still_prompt, image_model_slug)
     return upload_data_url(f"data:image/{ext};base64,{base64.b64encode(img_bytes).decode()}", prefix="theme-thumbnails")
+
+
+async def generate_all_missing_prompts(db, style_tags: list[str], category_tags: list[str]) -> dict:
     """Loops every Style and Product tag that currently has an empty
     prompt in the Text for Image editor and drafts one via the text
     model — the bulk "fill in everything" action, so the developer isn't
     stuck typing 20 prompts by hand after tags accumulate."""
-    from app.services import themes as themes_svc  # local import: avoid a circular import at module load time
+    import logging
+    _log = logging.getLogger("nivaad.theme_ai")
+
+    # Pre-flight: check a text model is configured before starting the loop —
+    # avoids silently failing every single tag and returning skipped=N with
+    # no explanation to the developer.
+    settings_ = await get_theme_ai_settings(db)
+    slug = await _resolve_model_slug(db, "text", settings_["text_model_id"])
+    if not slug:
+        raise RuntimeError(
+            "No text model is set for Theme AI — go to Developer → Settings → Theme AI "
+            "and pick a text model before generating prompts."
+        )
+
+    from app.services import themes as themes_svc  # local import: avoid circular import
 
     editor = await themes_svc.get_image_theme_editor(db)
     text_for_image = editor["text_for_image"]
+
     filled = 0
     skipped = 0
     for axis, tags in (("style", style_tags), ("product", category_tags)):
         for tag in tags:
-            if text_for_image[axis].get(tag, "").strip():
+            current = text_for_image.get(axis, {}).get(tag, "")
+            if current and current.strip():
                 continue
             try:
                 prompt = await generate_tag_prompt(db, axis, tag)
+                if axis not in text_for_image:
+                    text_for_image[axis] = {}
                 text_for_image[axis][tag] = prompt
                 filled += 1
-            except Exception:  # noqa: BLE001 — one bad generation shouldn't stop the rest
+                _log.info("[generate_all_missing] filled %s[%r]", axis, tag)
+            except Exception as exc:  # noqa: BLE001 — one bad generation shouldn't stop the rest
+                _log.warning("[generate_all_missing] failed %s[%r]: %s", axis, tag, exc)
                 skipped += 1
+
     saved = await themes_svc.set_image_theme_editor(db, text_for_image, editor["image_for_image"])
+    _log.info("[generate_all_missing] done — filled=%d skipped=%d", filled, skipped)
     return {"editor": saved, "filled": filled, "skipped": skipped}

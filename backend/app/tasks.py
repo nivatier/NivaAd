@@ -69,6 +69,7 @@ def _build_prompt(brief: dict, platforms: list[str], outputs: dict, feedback: st
     platforms = _resolve_platforms(platforms)
     fmt = outputs.get("format", "single")
     variations = outputs.get("variations", 1)
+    is_default = platforms == ["default"]
     styles = "; ".join(f"{p}: {PLATFORM_STYLE.get(p, 'platform-appropriate')}" for p in platforms)
     base = (
         "You are an expert social media ad copywriter and creative reviewer. "
@@ -84,6 +85,18 @@ def _build_prompt(brief: dict, platforms: list[str], outputs: dict, feedback: st
         base += f'Weave in the brand tagline naturally: "{brief["tagline"]}". '
     if fmt == "carousel":
         base += "Format: 3-slide carousel — the caption should tease a swipe. "
+    if is_default:
+        # No platform was selected — write one general-purpose caption stored
+        # under the literal key "default" so the frontend can reliably find it.
+        # Explicitly naming the key in the instruction stops LLMs from
+        # substituting real platform names (facebook, instagram, etc.) instead.
+        base += (
+            'Write one versatile, platform-agnostic ad caption suitable for any social media channel. '
+            'Also rate the copy 0-100 for predicted engagement (score) and give one concrete improvement tip. '
+            'Respond ONLY with raw JSON using EXACTLY the key "default" — no other key name, '
+            'no markdown fences: {"default": {"caption": "...", "hashtags": ["#.."], "score": 85, "tip": "..."}}'
+        )
+        return base
     base += (
         f"Write ad copy for these platforms, adapted per platform ({styles}). "
         "For each platform also rate the copy 0-100 for predicted engagement (score) "
@@ -1479,7 +1492,7 @@ def generate_quick_start_recommendations(self, job_id: str):
             if job.content:
                 site_text = job.content
             else:
-                site_text = scrape_company_website(job.url)
+                site_text = scrape_company_website(job.url, db=db)
                 job.content = site_text  # store so caller can save it as a ScrapedSite
                 db.commit()
             text_models = [m for m in get_available_models_sync(db).get("text", []) if m.get("enabled", True)]
