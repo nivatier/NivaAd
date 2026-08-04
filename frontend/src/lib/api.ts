@@ -199,8 +199,8 @@ export const authApi = {
     setTokens(tokens);
     return tokens as Tokens;
   },
-  async resendVerification(payload: { email: string; password: string }) {
-    return rawRequest("/auth/resend-verification", { method: "POST", body: payload }) as Promise<{ message: string }>;
+  async resendVerification(payload: { email: string; password?: string }) {
+    return rawRequest("/auth/resend-verification", { method: "POST", body: { email: payload.email, password: payload.password || "" } }) as Promise<{ message: string }>;
   },
   async login(payload: { email: string; password: string }) {
     const tokens = await rawRequest("/auth/login", { method: "POST", body: payload });

@@ -219,12 +219,17 @@ def _resend_rate_check(email: str) -> tuple[bool, int]:
 
 @router.post("/resend-verification")
 async def resend_verification(data: LoginIn, db: AsyncSession = Depends(get_db)):
-    """Lets a pending user request a new verification email if theirs expired.
-    Rate limited: 60 s cooldown, max 5 per hour."""
+    """Lets a pending user request a new verification email.
+    Rate limited: 60 s cooldown, max 5 per hour.
+    Password is optional — we only need the email to find a pending account.
+    Not revealing whether an account exists is less important here since
+    the user just came from the registration flow."""
+    import logging
+    logger = logging.getLogger(__name__)
     email = data.email.lower()
     user = await db.scalar(select(User).where(User.email == email))
 
-    if user and user.status == "pending" and user.password_hash and verify_password(data.password, user.password_hash):
+    if user and user.status == "pending":
         allowed, seconds_left = _resend_rate_check(email)
         if not allowed:
             raise HTTPException(429, f"Please wait {seconds_left} seconds before requesting another verification email.")
@@ -235,10 +240,11 @@ async def resend_verification(data: LoginIn, db: AsyncSession = Depends(get_db))
             from app.services import email as email_svc
             import asyncio
             await asyncio.to_thread(email_svc.send_verification_email, email, user.full_name, verify_url)
-        except Exception:
-            pass
+            logger.info("[auth] Verification email resent to %s", email)
+        except Exception as exc:
+            logger.error("[auth] Failed to resend verification email to %s: %s", email, exc)
+            raise HTTPException(500, "Failed to send verification email. Please try again shortly.")
 
-    # Same response whether found or not — don't reveal account existence
     return {"message": "If that account exists and is pending verification, a new link has been sent."}
 
 
