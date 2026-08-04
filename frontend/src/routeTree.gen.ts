@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as LoginRouteImport } from './routes/login'
@@ -46,6 +47,11 @@ import { Route as AppAnalyticsRouteImport } from './routes/app.analytics'
 import { Route as AppAgentNivaRouteImport } from './routes/app.agent-niva'
 import { Route as AppAdminRouteImport } from './routes/app.admin'
 
+const VerifyEmailRoute = VerifyEmailRouteImport.update({
+  id: '/verify-email',
+  path: '/verify-email',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
@@ -236,6 +242,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/pricing': typeof PricingRoute
   '/signup': typeof SignupRoute
+  '/verify-email': typeof VerifyEmailRoute
   '/app/admin': typeof AppAdminRoute
   '/app/agent-niva': typeof AppAgentNivaRoute
   '/app/analytics': typeof AppAnalyticsRoute
@@ -274,6 +281,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/pricing': typeof PricingRoute
   '/signup': typeof SignupRoute
+  '/verify-email': typeof VerifyEmailRoute
   '/app/admin': typeof AppAdminRoute
   '/app/agent-niva': typeof AppAgentNivaRoute
   '/app/analytics': typeof AppAnalyticsRoute
@@ -313,6 +321,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/pricing': typeof PricingRoute
   '/signup': typeof SignupRoute
+  '/verify-email': typeof VerifyEmailRoute
   '/app/admin': typeof AppAdminRoute
   '/app/agent-niva': typeof AppAgentNivaRoute
   '/app/analytics': typeof AppAnalyticsRoute
@@ -353,6 +362,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/pricing'
     | '/signup'
+    | '/verify-email'
     | '/app/admin'
     | '/app/agent-niva'
     | '/app/analytics'
@@ -391,6 +401,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/pricing'
     | '/signup'
+    | '/verify-email'
     | '/app/admin'
     | '/app/agent-niva'
     | '/app/analytics'
@@ -429,6 +440,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/pricing'
     | '/signup'
+    | '/verify-email'
     | '/app/admin'
     | '/app/agent-niva'
     | '/app/analytics'
@@ -468,6 +480,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   PricingRoute: typeof PricingRoute
   SignupRoute: typeof SignupRoute
+  VerifyEmailRoute: typeof VerifyEmailRoute
   AppAdminRoute: typeof AppAdminRoute
   AppAgentNivaRoute: typeof AppAgentNivaRoute
   AppAnalyticsRoute: typeof AppAnalyticsRoute
@@ -501,6 +514,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/verify-email': {
+      id: '/verify-email'
+      path: '/verify-email'
+      fullPath: '/verify-email'
+      preLoaderRoute: typeof VerifyEmailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/signup': {
       id: '/signup'
       path: '/signup'
@@ -764,6 +784,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   PricingRoute: PricingRoute,
   SignupRoute: SignupRoute,
+  VerifyEmailRoute: VerifyEmailRoute,
   AppAdminRoute: AppAdminRoute,
   AppAgentNivaRoute: AppAgentNivaRoute,
   AppAnalyticsRoute: AppAnalyticsRoute,

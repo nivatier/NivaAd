@@ -1292,7 +1292,7 @@ function Index() {
               ) : (
                 <>
                   <button onClick={openLogin} className="rounded-full px-4 py-2 text-muted-foreground hover:text-foreground">Log in</button>
-                  <button onClick={openRegister} className="rounded-full bg-gold-gradient px-4 py-2 font-medium text-background shadow-[var(--shadow-gold)]">Start free</button>
+                  <button onClick={openRegister} className="rounded-full bg-gold-gradient px-4 py-2 font-medium text-background shadow-[var(--shadow-gold)]">Register</button>
                 </>
               )}
               <ThemeToggle className="ml-1" />
@@ -1318,7 +1318,7 @@ function Index() {
               ) : (
                 <>
                   <button onClick={() => { setMenuOpen(false); openLogin(); }} className="block w-full rounded-xl px-4 py-3 text-left text-sm text-foreground hover:bg-muted">Log in</button>
-                  <button onClick={() => { setMenuOpen(false); openRegister(); }} className="mt-1 block w-full rounded-xl bg-gold-gradient px-4 py-3 text-center text-sm font-medium text-background shadow-[var(--shadow-gold)]">Start free</button>
+                  <button onClick={() => { setMenuOpen(false); openRegister(); }} className="mt-1 block w-full rounded-xl bg-gold-gradient px-4 py-3 text-center text-sm font-medium text-background shadow-[var(--shadow-gold)]">Register</button>
                 </>
               )}
             </div>

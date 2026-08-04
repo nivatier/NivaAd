@@ -14,11 +14,11 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user, require_capability
-from app.models import Ad, AuditLog, BrandKit, Campaign, CreditLedger, GenerationJob, PlatformConnection, Product, ScheduledPost, User
+from app.models import Ad, AuditLog, BrandKit, Campaign, CreditLedger, GenerationJob, PlatformConnection, PostJob, Product, ScheduledPost, User
 from app.schemas import (
     AdCreateIn, AdCreatedOut, AdListOut, AdOut, AdPatchIn, AdScheduledPostOut, AssistantHintOut,
     AssistantSettingsOut, AvailableModelOut, AvailableModelsOut, CameraStylePresetOut, MusicPresetOut,
-    PostAdIn, PreviewCostIn, PreviewCostOut, PromptPreviewIn, PromptPreviewOut, RawThemesOut, RefineIn,
+    PostAdIn, PostJobOut, PreviewCostIn, PreviewCostOut, PromptPreviewIn, PromptPreviewOut, RawThemesOut, RefineIn,
     RetentionInfoOut, TextStylePresetOut, TextThemeSelectionOut, VideoReferencePromptDefaultOut,
     VideoThemeOut, VideoThemeShotOut,
 )
@@ -1016,105 +1016,94 @@ async def _is_mock_posting(db: AsyncSession) -> bool:
     return settings.MOCK_POSTING
 
 
-@router.post("/{ad_id}/post", response_model=AdOut)
-async def post_ad(ad_id: uuid.UUID, data: PostAdIn, user: User = Depends(require_capability("post_content")), db: AsyncSession = Depends(get_db)):
-    """Marks specific platforms as posted (adds to posted_platforms, does not
-    replace it) — supports posting to more platforms later, or reposting to
-    the same ones again after edits. Sets posted_at the FIRST time an ad is
-    posted; later posts don't move that original date.
+@router.post("/{ad_id}/post", response_model=PostJobOut)
+async def post_ad(
+    ad_id: uuid.UUID,
+    data: PostAdIn,
+    user: User = Depends(require_capability("post_content")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue an async Celery task to post this ad to the requested platforms.
 
-    For platforms with a real, connected integration (currently just
-    LinkedIn — see services/linkedin.py) and MOCK_POSTING=False, this
-    actually publishes. Everything else still uses the same honest
-    simulated-posting behavior the app has always had. Each platform is
-    attempted independently: if LinkedIn's real API call fails, that
-    platform is NOT marked posted and the failure is reported, but
-    other platforms in the same request still go through."""
+    Returns immediately with a PostJobOut containing the job_id.
+    Poll GET /ads/{id}/post-status/{job_id} for per-platform results.
+
+    Why async/Celery:
+      - LinkedIn image upload takes 5-8s per post
+      - With 100 concurrent users each posting to multiple platforms,
+        blocking the API server causes timeouts and drops requests
+      - Celery worker processes jobs at its concurrency limit (2 by default
+        on Railway Hobby) — the API stays responsive for everyone
+      - Auto-retry (up to 3x, 10s delay) handles transient LinkedIn API blips
+    """
     ad = await db.get(Ad, ad_id)
     if ad is None or ad.company_id != user.company_id:
         raise HTTPException(404, "Ad not found")
-    # "scheduled" is included deliberately — this is exactly the case of a
-    # customer manually posting an ad early, before its scheduled time
-    # arrives (e.g. a campaign phase). That must be allowed, not rejected.
     if ad.status not in ("ready", "posted", "scheduled"):
         raise HTTPException(409, f"Ad is not ready to post (status: {ad.status})")
 
-    mock_posting = await _is_mock_posting(db)
+    platforms = [p for p in data.platforms if p != "default"]
+    if not platforms:
+        raise HTTPException(422, "No platforms selected")
 
-    # Read LinkedIn API version from DB config upfront (async) — the
-    # linkedin service can only do sync reads so we pass the resolved
-    # string directly rather than letting it try to read the async session.
-    from app.services.platform_config import get_platform_integrations
-    _platform_integrations = await get_platform_integrations(db)
-    _linkedin_cfg = next(
-        (p for p in _platform_integrations if p.get("id") in ("linkedin_personal", "linkedin_company", "linkedin")),
-        {}
+    # Create PostJob row — tracks this posting attempt
+    job = PostJob(
+        company_id=user.company_id,
+        ad_id=ad.id,
+        platforms=platforms,
+        status="queued",
+        succeeded=[],
+        failed={},
     )
-    linkedin_api_version = (_linkedin_cfg.get("api_version") or "").strip() or linkedin.LINKEDIN_API_VERSION
+    db.add(job)
+    db.add(AuditLog(
+        company_id=user.company_id,
+        user_id=user.id,
+        action="ad.post_queued",
+        detail={"ad_id": str(ad.id), "platforms": platforms},
+    ))
+    await db.flush()
+    job_id = str(job.id)
+    await db.commit()
 
-    succeeded: list[str] = []
-    failed: dict[str, str] = {}
-    variant = (ad.results or {}).get("variants", [{}])[0] if ad.results else {}
-    for platform in data.platforms:
-        is_linkedin_personal = platform in ("linkedin", "linkedin_personal")
-        if is_linkedin_personal and not mock_posting:
-            conn = await db.scalar(select(PlatformConnection).where(
-                PlatformConnection.company_id == user.company_id,
-                PlatformConnection.platform.in_(["linkedin_personal", "linkedin"]),
-            ))
-            if conn and conn.status == "connected":
-                try:
-                    access_token = decrypt_token(conn.encrypted_token)
-                    person_urn = linkedin.get_person_urn(access_token)
-                    caption = (variant.get(platform) or variant.get("linkedin") or variant.get("linkedin_personal") or {}).get("caption") or ""
-                    # Use platform-specific reframed image if available, else master image
-                    platform_image_urls = variant.get("platform_image_urls") or {}
-                    image_url = platform_image_urls.get(platform) or platform_image_urls.get("linkedin") or variant.get("image_url")
-                    linkedin.post_to_linkedin(access_token, person_urn, caption, api_version=linkedin_api_version, image_url=image_url)
-                    succeeded.append(platform)
-                except Exception as exc:  # noqa: BLE001
-                    failed[platform] = str(exc)[:300]
-                continue
-            failed[platform] = "LinkedIn isn't connected — connect it in Settings first."
-            continue
-        # Every other platform (or LinkedIn while mock_posting=True) —
-        # no real integration built yet, same honest simulated posting
-        # the app has always done.
-        succeeded.append(platform)
+    # Queue Celery task — returns immediately, worker does the real work
+    celery_app.send_task("app.post_ad_now", args=[job_id])
 
-    if succeeded:
-        current = set(ad.posted_platforms or [])
-        current.update(succeeded)
-        ad.posted_platforms = list(current)
-        flag_modified(ad, "posted_platforms")
-        if ad.posted_at is None:
-            ad.posted_at = datetime.utcnow()
-        ad.status = "posted"
+    return PostJobOut(
+        job_id=job.id,
+        status="queued",
+        platforms=platforms,
+        succeeded=[],
+        failed={},
+        finished=False,
+    )
 
-        # If this ad had pending scheduled posts for these platforms (e.g. a
-        # campaign phase posted manually, ahead of its scheduled time), resolve
-        # them now — otherwise they'd keep showing as "upcoming" in Schedule,
-        # and the Beat job would try to fire them again later.
-        pending = (await db.scalars(
-            select(ScheduledPost).where(
-                ScheduledPost.ad_id == ad.id,
-                ScheduledPost.platform.in_(succeeded),
-                ScheduledPost.status == "pending",
-            )
-        )).all()
-        for sp in pending:
-            sp.status = "posted"
-            sp.posted_at = ad.posted_at
 
-        db.add(AuditLog(company_id=user.company_id, user_id=user.id, action="ad.posted",
-                        detail={"ad_id": str(ad.id), "platforms": succeeded}))
-        await db.commit()
-        await db.refresh(ad)
+@router.get("/{ad_id}/post-status/{job_id}", response_model=PostJobOut)
+async def get_post_status(
+    ad_id: uuid.UUID,
+    job_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Poll for the status of an async post job.
 
-    if failed:
-        raise HTTPException(502, f"Posted to {', '.join(succeeded) or 'nothing'}. Failed: " + "; ".join(f"{p} ({msg})" for p, msg in failed.items()))
+    Frontend polls this every 2 seconds until finished=True.
+    Returns per-platform succeeded/failed breakdown as it progresses.
+    """
+    job = await db.get(PostJob, job_id)
+    if job is None or job.ad_id != ad_id or job.company_id != user.company_id:
+        raise HTTPException(404, "Post job not found")
 
-    return _ad_out(ad)
+    finished = job.status in ("done", "partial", "failed")
+    return PostJobOut(
+        job_id=job.id,
+        status=job.status,
+        platforms=job.platforms or [],
+        succeeded=job.succeeded or [],
+        failed=job.failed or {},
+        finished=finished,
+    )
 
 
 @router.patch("/{ad_id}", response_model=AdOut)
@@ -1371,6 +1360,7 @@ async def add_platform_to_ad(
 
 
 
+@router.delete("/{ad_id}", status_code=204)
 async def delete_ad(ad_id: uuid.UUID, user: User = Depends(require_capability("create_ads")), db: AsyncSession = Depends(get_db)):
     ad = await db.get(Ad, ad_id)
     if ad is None or ad.company_id != user.company_id:
@@ -1378,6 +1368,7 @@ async def delete_ad(ad_id: uuid.UUID, user: User = Depends(require_capability("c
     # No ON DELETE CASCADE is configured on these foreign keys, so clean up
     # dependent rows first to avoid a foreign-key violation on delete.
     await db.execute(delete(GenerationJob).where(GenerationJob.ad_id == ad.id))
+    await db.execute(delete(PostJob).where(PostJob.ad_id == ad.id))
     await db.execute(delete(ScheduledPost).where(ScheduledPost.ad_id == ad.id))
     await db.delete(ad)
     db.add(AuditLog(company_id=user.company_id, user_id=user.id, action="ad.deleted", detail={"ad_id": str(ad_id)}))

@@ -207,10 +207,52 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
     if (platforms.length === 0) return;
     setPosting(true); setErr("");
     try {
+      // Save any caption edits first
       await api(`/ads/${ad.id}`, { method: "PATCH", body: { results: buildResultsForAction() } });
-      await api(`/ads/${ad.id}/post`, { method: "POST", body: { platforms } });
-      onUpdated(); onClose();
-    } catch (e: any) { setErr(e.message || "Could not post"); }
+
+      // Queue the Celery task — returns immediately with job_id
+      const job: any = await api(`/ads/${ad.id}/post`, { method: "POST", body: { platforms } });
+
+      // Poll for completion every 2 seconds
+      let attempts = 0;
+      const maxAttempts = 60; // 2 min timeout
+      while (attempts < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 2000));
+        attempts++;
+        const status: any = await api(`/ads/${ad.id}/post-status/${job.job_id}`);
+
+        if (status.finished) {
+          if (Object.keys(status.failed).length > 0 && status.succeeded.length === 0) {
+            // All failed
+            const msgs = Object.entries(status.failed).map(([p, msg]) => `${p}: ${msg}`).join("; ");
+            setErr(`Failed to post: ${msgs}`);
+          } else if (Object.keys(status.failed).length > 0) {
+            // Partial success
+            const failed = Object.keys(status.failed).join(", ");
+            setErr(`Posted to ${status.succeeded.join(", ")} but failed: ${failed}`);
+            onUpdated();
+            onClose();
+          } else {
+            // All succeeded
+            onUpdated();
+            onClose();
+          }
+          break;
+        }
+
+        // Still running — update button label with progress
+        if (status.succeeded.length > 0) {
+          setErr(`✓ ${status.succeeded.join(", ")} posted… waiting for remaining platforms`);
+        }
+      }
+
+      if (attempts >= maxAttempts) {
+        setErr("Posting is taking longer than expected — check Posting Status in My Ads for updates.");
+        onUpdated();
+      }
+    } catch (e: any) {
+      setErr(e.message || "Could not post");
+    }
     setPosting(false);
   }
 
@@ -432,7 +474,7 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
               disabled={posting || postSelected.size === 0}
               className="ml-auto rounded-full bg-gold-gradient px-5 py-2 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50"
             >
-              {posting ? "Posting…" : `🚀 Post now${postSelected.size > 0 ? ` (${postSelected.size})` : ""}`}
+              {posting ? "Posting… ⏳" : `🚀 Post now${postSelected.size > 0 ? ` (${postSelected.size})` : ""}`}
             </button>
             <button
               onClick={() => setShowSchedule((v) => !v)}

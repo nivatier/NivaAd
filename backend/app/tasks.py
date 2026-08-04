@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
-from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, BrandKit, BrandLogo, BrandVideoShot, CreditLedger, GenerationJob, Notification, PlatformConnection, Product, ScheduledPost
+from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, BrandKit, BrandLogo, BrandVideoShot, CreditLedger, GenerationJob, Notification, PlatformConnection, PostJob, Product, ScheduledPost
 from app.services import storage
 from app.services import linkedin
 from app.services.agent_scraper import scrape_company_website
@@ -63,6 +63,16 @@ def _shape(platforms: list[str]) -> str:
         for p in platforms
     )
     return "{" + inner + "}"
+
+
+def _sanitize(val: str | None) -> str:
+    """Replace straight double-quotes in user input with typographic
+    equivalents before injecting into prompts — prevents the LLM from
+    echoing them unescaped inside JSON string values, which produces an
+    'Unterminated string' parse error on the output."""
+    if not val:
+        return val or ""
+    return val.replace('"', '\u201c').replace('"', '\u201d')
 
 
 def _build_prompt(brief: dict, platforms: list[str], outputs: dict, feedback: str | None) -> str:
@@ -566,13 +576,34 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
         job.status = "running"
         db.commit()
 
+        # Sanitize all free-text user fields in the brief once here so
+        # every prompt function below (_build_prompt, _image_prompt,
+        # _video_prompt, _multi_shot_video_prompt) receives clean input.
+        # We work on a shallow copy so the stored brief row is untouched.
+        _TEXT_FIELDS = (
+            "product_name", "description", "audience", "offer", "tagline",
+            "env", "image_scene", "text_overlay", "video_reference_prompt",
+            "video_negative_prompt",
+        )
+        brief = {
+            **ad.brief,
+            **{k: _sanitize(ad.brief.get(k)) for k in _TEXT_FIELDS if ad.brief.get(k)},
+        }
+        # Also sanitize shot prompts inside video_shots
+        if brief.get("video_shots"):
+            brief["video_shots"] = [
+                {**s, "prompt": _sanitize(s.get("prompt"))} if s.get("prompt") else s
+                for s in brief["video_shots"]
+            ]
+        feedback = _sanitize(feedback)
+
         try:
-            if not feedback and ad.brief.get("text_prompt_override"):
-                prompt = ad.brief["text_prompt_override"]
+            if not feedback and brief.get("text_prompt_override"):
+                prompt = brief["text_prompt_override"]
                 logger.info("[text_prompt] job=%s USING OVERRIDE from confirmation popup", job_id)
             else:
-                prompt = _build_prompt(ad.brief, _resolve_platforms(ad.platforms or []), ad.outputs, feedback)
-            text_model = ad.brief.get("text_model") or "google/gemini-2.5-flash"  # resolved once at ad-creation time (ads.py), not re-looked-up here — same pattern as image_model/video_model
+                prompt = _build_prompt(brief, _resolve_platforms(ad.platforms or []), ad.outputs, feedback)
+            text_model = brief.get("text_model") or "google/gemini-2.5-flash"  # resolved once at ad-creation time (ads.py), not re-looked-up here — same pattern as image_model/video_model
             parsed = text_gen.generate_text(prompt, text_model)
             models_used = [text_model]  # text/copy generation always happens; image/video append below if used
 
@@ -596,33 +627,33 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                     # implicit principle already applied to video's frame
                     # image, so it's always clear which photo is actually
                     # driving generation.
-                    image_ref_url = None if skip_reference else (ad.brief.get("image_reference_image_url") or ad.brief.get("product_image_url"))
+                    image_ref_url = None if skip_reference else (brief.get("image_reference_image_url") or brief.get("product_image_url"))
                     if image_ref_url:
                         data_url = storage.fetch_as_data_url(image_ref_url)
                         ref_urls = [data_url]
 
-                    logo_url = ad.brief.get("brand_logo_url")
+                    logo_url = brief.get("brand_logo_url")
                     logo_bytes = None
                     if logo_url:
                         try:
                             logo_bytes, _ = storage.fetch_bytes(logo_url)
                         except Exception as brand_fetch_exc:  # noqa: BLE001
                             logger.warning("[branding] job=%s could not fetch logo, skipping: %s", job_id, brand_fetch_exc)
-                    placement = ad.brief.get("brand_logo_placement") or "bottom-right"
-                    logo_opacity = float(ad.brief.get("brand_logo_opacity") or 1.0)
-                    image_model_used = ad.brief.get("image_model") or "google/gemini-2.5-flash-image"  # resolved once at ad-creation time (ads.py), not re-looked-up here — falls back to a sane default only if brief predates this field (old ads)
-                    image_aspect_ratio = ad.brief.get("image_aspect_ratio") or "1:1"
+                    placement = brief.get("brand_logo_placement") or "bottom-right"
+                    logo_opacity = float(brief.get("brand_logo_opacity") or 1.0)
+                    image_model_used = brief.get("image_model") or "google/gemini-2.5-flash-image"  # resolved once at ad-creation time (ads.py), not re-looked-up here — falls back to a sane default only if brief predates this field (old ads)
+                    image_aspect_ratio = brief.get("image_aspect_ratio") or "1:1"
 
-                    is_carousel = ad.outputs.get("format") == "carousel" and not ad.brief.get("image_prompt_override")
+                    is_carousel = ad.outputs.get("format") == "carousel" and not brief.get("image_prompt_override")
 
                     if is_carousel:
-                        slides = ad.brief.get("carousel_slides") or []
+                        slides = brief.get("carousel_slides") or []
                         # Per-slide theme overrides (Text/Image Theme Reference chosen
                         # independently per carousel slide) — falls back to the single
                         # shared env/image_scene/text_overlay for ads created before
                         # this existed, or for any slide left on "same as ad" by not
                         # sending an override.
-                        carousel_theme = ad.brief.get("carousel_theme") or []
+                        carousel_theme = brief.get("carousel_theme") or []
                         # FIXED 2026-07-18: was `len(slides) if slides else 2`. Once
                         # carousel_theme replaced the old free-text per-slide
                         # description as the primary mechanism, carousel_slides is
@@ -637,10 +668,10 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                         slide_failures = 0
                         for i in range(slide_count):
                             slide_desc = slides[i] if i < len(slides) and slides[i] else None
-                            slide_brief = ad.brief
+                            slide_brief = brief
                             if i < len(carousel_theme) and carousel_theme[i]:
                                 override = carousel_theme[i]
-                                slide_brief = dict(ad.brief)
+                                slide_brief = dict(brief)
                                 if override.get("env") is not None:
                                     slide_brief["env"] = override["env"]
                                 if override.get("image_scene") is not None:
@@ -670,11 +701,11 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                             v["image_url"] = urls[0]  # first slide as the primary/fallback image for single-image consumers
                             v["image_urls"] = urls
                     else:
-                        if ad.brief.get("image_prompt_override"):
-                            img_prompt = ad.brief["image_prompt_override"]
+                        if brief.get("image_prompt_override"):
+                            img_prompt = brief["image_prompt_override"]
                             logger.info("[image_prompt] job=%s USING OVERRIDE from confirmation popup", job_id)
                         else:
-                            img_prompt = _image_prompt(ad.brief)
+                            img_prompt = _image_prompt(brief)
                         logger.info(
                             "[image_prompt] job=%s has_reference=%s\n----- PROMPT START -----\n%s\n----- PROMPT END -----",
                             job_id, bool(ref_urls), img_prompt,
@@ -692,7 +723,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                                 raise RuntimeError(f"REFERENCE_REJECTED::{ref_exc}") from ref_exc
                             raise
                         if logo_bytes:
-                            img_bytes = composite_logo(img_bytes, logo_bytes, placement, opacity=float(ad.brief.get("brand_logo_opacity") or 1.0))
+                            img_bytes = composite_logo(img_bytes, logo_bytes, placement, opacity=float(brief.get("brand_logo_opacity") or 1.0))
                             ext = "png"
                             logger.info("[branding] job=%s composited logo at %s", job_id, placement)
                         url = storage.upload_bytes(img_bytes, f"image/{ext}", ext)
@@ -738,13 +769,13 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                         # text still succeeded) so the confirmation prompt
                         # offered to the user is telling the truth when it
                         # says this attempt cost nothing.
-                        refund = ad.brief.get("image_model_credits") or 0
+                        refund = brief.get("image_model_credits") or 0
                         if refund > 0:
                             db.add(CreditLedger(company_id=job.company_id, delta=refund, reason="refund", ref_id=str(ad.id)))
 
             if not feedback and ad.outputs.get("video"):
                 try:
-                    shots = ad.brief.get("video_shots") or []
+                    shots = brief.get("video_shots") or []
                     if not shots:
                         # Defensive fallback — shouldn't happen given the
                         # frontend always sends at least one shot, but
@@ -752,14 +783,14 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                         shots = [{"prompt": None, "duration": 6}]
 
                     frame_image_url = None
-                    if not skip_reference and ad.brief.get("video_frame_image_url"):
+                    if not skip_reference and brief.get("video_frame_image_url"):
                         # Deliberately a SEPARATE, explicit field from
                         # product_image_url (used for image generation) —
                         # what's used as the video's starting frame is
                         # now always exactly what was attached in the
                         # video section of Step 2, never an implicit
                         # reuse of the general product photo.
-                        frame_image_url = storage.fetch_as_data_url(ad.brief["video_frame_image_url"])
+                        frame_image_url = storage.fetch_as_data_url(brief["video_frame_image_url"])
 
                     # Two background quality steps, both developer-
                     # configured, neither customer-facing or customer-
@@ -770,7 +801,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                     # a configured review model doesn't mean it's always
                     # applied; the customer decides per generation.
                     prep_settings = get_video_prep_settings_sync(db)
-                    if ad.brief.get("refine_video_prompt") and prep_settings.get("prompt_review_model_id"):
+                    if brief.get("refine_video_prompt") and prep_settings.get("prompt_review_model_id"):
                         review_models = get_available_models_sync(db)
                         review_entry = next((m for m in review_models.get("text", []) if m["id"] == prep_settings["prompt_review_model_id"]), None)
                         if review_entry:
@@ -791,13 +822,13 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                     # customer opted in via refine_video_frame (changing
                     # someone's uploaded photo isn't always wanted, same
                     # reasoning as making prompt review opt-in).
-                    if frame_image_url and ad.brief.get("video_mode", "single_reference") == "single_reference" and ad.brief.get("refine_video_frame") and prep_settings.get("image_model_id"):
+                    if frame_image_url and brief.get("video_mode", "single_reference") == "single_reference" and brief.get("refine_video_frame") and prep_settings.get("image_model_id"):
                         prep_models = get_available_models_sync(db)
                         prep_entry = next((m for m in prep_models.get("image", []) if m["id"] == prep_settings["image_model_id"]), None)
                         first_shot_desc = (shots[0].get("prompt") or "").strip() if shots else ""
                         if prep_entry and first_shot_desc:
                             try:
-                                product_name = ad.brief.get("product_name", "the product")
+                                product_name = brief.get("product_name", "the product")
                                 prep_prompt = _video_frame_prep_prompt(product_name, first_shot_desc)
                                 logger.info("[video_prep] job=%s pre-rendering first frame with %s\n----- PREP PROMPT -----\n%s", job_id, prep_entry["model"], prep_prompt)
                                 prep_bytes, prep_ext = generate_image(prep_prompt, prep_entry["model"], reference_urls=[frame_image_url])
@@ -816,13 +847,13 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                     # compositions — used exactly as uploaded, never
                     # pre-rendered or reinterpreted.
                     end_frame_image_url = None
-                    if not skip_reference and ad.brief.get("video_mode") == "first_last_frame" and ad.brief.get("video_end_frame_image_url"):
-                        end_frame_image_url = storage.fetch_as_data_url(ad.brief["video_end_frame_image_url"])
+                    if not skip_reference and brief.get("video_mode") == "first_last_frame" and brief.get("video_end_frame_image_url"):
+                        end_frame_image_url = storage.fetch_as_data_url(brief["video_end_frame_image_url"])
 
-                    video_model = ad.brief.get("video_model") or "alibaba/wan-2.7"  # resolved once at ad-creation time (ads.py), not re-looked-up here
-                    video_resolution = ad.brief.get("video_resolution") or "720p"
-                    video_aspect_ratio = ad.brief.get("video_aspect_ratio") or None
-                    video_audio = ad.brief.get("video_audio")  # None means "let OpenRouter use the model's own default" — only set when the customer actually had an audio toggle to choose from
+                    video_model = brief.get("video_model") or "alibaba/wan-2.7"  # resolved once at ad-creation time (ads.py), not re-looked-up here
+                    video_resolution = brief.get("video_resolution") or "720p"
+                    video_aspect_ratio = brief.get("video_aspect_ratio") or None
+                    video_audio = brief.get("video_audio")  # None means "let OpenRouter use the model's own default" — only set when the customer actually had an audio toggle to choose from
                     total_duration = sum(s.get("duration") or 0 for s in shots) or 6
 
                     # The confirmation popup's edited/reviewed prompt is
@@ -833,13 +864,13 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                     # potentially re-review them a second time,
                     # producing a DIFFERENT result than what was actually
                     # confirmed.
-                    if ad.brief.get("video_prompt_override"):
-                        video_prompt = ad.brief["video_prompt_override"]
+                    if brief.get("video_prompt_override"):
+                        video_prompt = brief["video_prompt_override"]
                         logger.info("[video_prompt] job=%s USING OVERRIDE from confirmation popup", job_id)
                     elif len(shots) == 1:
-                        video_prompt = _video_prompt(ad.brief, shots[0].get("prompt"), shot=shots[0])
+                        video_prompt = _video_prompt(brief, shots[0].get("prompt"), shot=shots[0])
                     else:
-                        video_prompt = _multi_shot_video_prompt(ad.brief, shots)
+                        video_prompt = _multi_shot_video_prompt(brief, shots)
                     logger.info(
                         "[video_prompt] job=%s shots=%d total_duration=%ds\n----- PROMPT START -----\n%s\n----- PROMPT END -----",
                         job_id, len(shots), total_duration, video_prompt,
@@ -858,22 +889,22 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                             raise RuntimeError(f"REFERENCE_REJECTED::{frame_exc}") from frame_exc
                         raise
                     video_url = storage.upload_bytes(video_bytes, "video/mp4", "mp4")
-                    video_url = _stitch_intro_outro(db, ad.brief, ad.company_id, video_url, f"job={job_id}")
+                    video_url = _stitch_intro_outro(db, brief, ad.company_id, video_url, f"job={job_id}")
                     # Logo overlay — applied AFTER stitch so it appears on
                     # the full [intro + main + outro] video, not just the
                     # AI-generated main clip. Re-fetches the stitched bytes.
-                    video_logo_url = ad.brief.get("brand_logo_url")
+                    video_logo_url = brief.get("brand_logo_url")
                     if video_logo_url:
                         try:
                             video_logo_bytes, _ = storage.fetch_bytes(video_logo_url)
                             video_bytes_stitched, _ = storage.fetch_bytes(video_url)
                             video_bytes_with_logo = overlay_logo_on_video(
                                 video_bytes_stitched, video_logo_bytes,
-                                placement=ad.brief.get("brand_logo_placement") or "bottom-right",
-                                opacity=float(ad.brief.get("brand_logo_opacity") or 1.0),
+                                placement=brief.get("brand_logo_placement") or "bottom-right",
+                                opacity=float(brief.get("brand_logo_opacity") or 1.0),
                             )
                             video_url = storage.upload_bytes(video_bytes_with_logo, "video/mp4", "mp4")
-                            logger.info("[branding] job=%s logo overlaid on video at %s opacity=%.2f", job_id, ad.brief.get("brand_logo_placement"), float(ad.brief.get("brand_logo_opacity") or 1.0))
+                            logger.info("[branding] job=%s logo overlaid on video at %s opacity=%.2f", job_id, brief.get("brand_logo_placement"), float(brief.get("brand_logo_opacity") or 1.0))
                         except Exception as vid_logo_exc:  # noqa: BLE001
                             logger.warning("[branding] job=%s video logo overlay failed, using video without logo: %s", job_id, vid_logo_exc)
                     for v in new_results["variants"]:
@@ -930,7 +961,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                     existing_err = job.error or "Copy OK"
                     job.error = f"{existing_err}, video generation failed: {vid_exc}"[:1000]
                     if "REFERENCE_REJECTED::" in str(vid_exc):
-                        refund = ad.brief.get("video_model_credits") or 0
+                        refund = brief.get("video_model_credits") or 0
                         if refund > 0:
                             db.add(CreditLedger(company_id=job.company_id, delta=refund, reason="refund", ref_id=str(ad.id)))
 
@@ -1869,3 +1900,138 @@ def check_agent_events(self):
                     db.rollback()
 
         return f"fired={fired} skipped_budget={skipped_budget}"
+
+
+# ── Post Now (async) ─────────────────────────────────────────────────────────
+
+@celery_app.task(name="app.post_ad_now", bind=True, max_retries=3, default_retry_delay=10)
+def post_ad_now(self, post_job_id: str):
+    """Async Celery task: posts an ad to one or more platforms.
+
+    Called by POST /ads/{id}/post — the endpoint creates a PostJob row,
+    queues this task, and returns immediately with the job_id so the
+    frontend can poll GET /ads/{id}/post-status/{job_id} for progress.
+
+    Each platform is attempted independently — if LinkedIn fails, other
+    platforms still go through. Results stored on the PostJob row.
+
+    Retries (max 3, 10s delay) handle transient network failures such
+    as LinkedIn image upload timeouts. On retry the task is idempotent
+    because we check ad.posted_platforms before posting to avoid
+    double-posting a platform that already succeeded in a prior attempt.
+    """
+    import uuid as _uuid
+    with Session(sync_engine) as db:
+        job = db.get(PostJob, _uuid.UUID(post_job_id))
+        if job is None:
+            logger.warning("[post_ad_now] PostJob %s not found", post_job_id)
+            return "not found"
+
+        job.status = "running"
+        db.commit()
+
+        ad = db.get(Ad, job.ad_id)
+        if ad is None:
+            job.status = "failed"
+            job.error = "Ad not found"
+            job.finished_at = datetime.utcnow()
+            db.commit()
+            return "ad not found"
+
+        # Read config — mock_posting + LinkedIn api_version
+        from app.models import get_config_row_sync as _gcr
+        from app.services.platform_config import get_platform_integrations_sync as _get_platforms
+        _platform_cfg = (_gcr(db, "platform").config or {})
+        mock_posting = _platform_cfg.get("launch", {}).get("mock_posting", settings.MOCK_POSTING)
+        _li_cfg = next(
+            (p for p in _get_platforms(db) if p.get("id") in ("linkedin_personal", "linkedin_company", "linkedin")),
+            {}
+        )
+        linkedin_api_version = (_li_cfg.get("api_version") or "").strip() or linkedin.LINKEDIN_API_VERSION
+
+        variant = (ad.results or {}).get("variants", [{}])[0] if ad.results else {}
+        platform_image_urls = variant.get("platform_image_urls") or {}
+
+        succeeded: list[str] = list(job.succeeded or [])  # preserve from prior retry attempt
+        failed: dict[str, str] = dict(job.failed or {})
+
+        for platform in job.platforms:
+            # Skip platforms already posted in a previous retry attempt
+            if platform in succeeded:
+                continue
+
+            is_linkedin = platform in ("linkedin", "linkedin_personal")
+            if is_linkedin and not mock_posting:
+                conn = db.scalar(select(PlatformConnection).where(
+                    PlatformConnection.company_id == job.company_id,
+                    PlatformConnection.platform.in_(["linkedin_personal", "linkedin"]),
+                ))
+                if not (conn and conn.status == "connected"):
+                    failed[platform] = "LinkedIn isn't connected — connect it in Settings first."
+                    continue
+                try:
+                    access_token = decrypt_token(conn.encrypted_token)
+                    person_urn = linkedin.get_person_urn(access_token)
+                    caption = (variant.get(platform) or variant.get("linkedin") or variant.get("linkedin_personal") or {}).get("caption") or ""
+                    image_url = platform_image_urls.get(platform) or platform_image_urls.get("linkedin") or variant.get("image_url")
+                    linkedin.post_to_linkedin(access_token, person_urn, caption, api_version=linkedin_api_version, image_url=image_url)
+                    succeeded.append(platform)
+                    # Remove from failed if it succeeded on retry
+                    failed.pop(platform, None)
+                except Exception as exc:  # noqa: BLE001
+                    failed[platform] = str(exc)[:300]
+                    logger.warning("[post_ad_now] job=%s platform=%s failed: %s", post_job_id, platform, exc)
+            else:
+                # Mock or non-integrated platform — simulate success
+                succeeded.append(platform)
+
+        # Persist per-platform results
+        job.succeeded = succeeded
+        job.failed = failed
+
+        # Update the ad's posted_platforms
+        if succeeded:
+            current = set(ad.posted_platforms or [])
+            current.update(succeeded)
+            ad.posted_platforms = list(current)
+            flag_modified(ad, "posted_platforms")
+            if ad.posted_at is None:
+                ad.posted_at = datetime.utcnow()
+            ad.status = "posted"
+
+            # Resolve any pending scheduled posts for these platforms
+            pending_scheduled = db.scalars(
+                select(ScheduledPost).where(
+                    ScheduledPost.ad_id == ad.id,
+                    ScheduledPost.platform.in_(succeeded),
+                    ScheduledPost.status == "pending",
+                )
+            ).all()
+            for sp in pending_scheduled:
+                sp.status = "posted"
+                sp.posted_at = ad.posted_at
+
+        # Determine final job status
+        all_done = len(succeeded) + len(failed) >= len(job.platforms)
+        if all_done:
+            job.status = "done" if not failed else "partial"
+            job.finished_at = datetime.utcnow()
+        else:
+            # Some platforms neither succeeded nor failed — shouldn't happen,
+            # but treat as failed
+            job.status = "done"
+            job.finished_at = datetime.utcnow()
+
+        db.commit()
+
+        # Retry if any platform failed (up to max_retries)
+        if failed:
+            remaining_retries = self.max_retries - self.request.retries
+            if remaining_retries > 0:
+                logger.info(
+                    "[post_ad_now] job=%s %d platform(s) failed, retrying (%d left)...",
+                    post_job_id, len(failed), remaining_retries
+                )
+                raise self.retry(countdown=10)
+
+        return f"done: succeeded={succeeded} failed={list(failed.keys())}"

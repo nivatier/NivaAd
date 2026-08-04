@@ -51,7 +51,7 @@ def smtp_health_check() -> dict:
     try:
         with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
             server.ehlo()
-            if settings.SMTP_USER and settings.SMTP_PASSWORD:
+            if settings.SMTP_USER and settings.SMTP_PASSWORD and settings.ENV != "development":
                 server.starttls()
                 server.ehlo()
                 server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
@@ -94,9 +94,9 @@ def send_email(to: str, subject: str, html_body: str, text_body: str | None = No
     try:
         with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
             server.ehlo()
-            # Use TLS + auth when credentials are provided (production/SES)
-            # Skip in dev where Mailpit doesn't require auth
-            if settings.SMTP_USER and settings.SMTP_PASSWORD:
+            # Use TLS + auth only in production — Mailpit (local dev) doesn't
+            # support STARTTLS and doesn't need auth either.
+            if settings.SMTP_USER and settings.SMTP_PASSWORD and settings.ENV != "development":
                 server.starttls()
                 server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
             server.sendmail(from_addr, [to], msg.as_string())
@@ -106,6 +106,25 @@ def send_email(to: str, subject: str, html_body: str, text_body: str | None = No
         # an invite should still be created even if the email send has a
         # transient problem — the admin can always resend).
         logger.error("[email] FAILED to send '%s' to %s: %s", subject, to, exc)
+
+
+def send_verification_email(to: str, full_name: str, verify_url: str) -> None:
+    subject = "Verify your NivaSpark email address"
+    html = f"""
+    <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+      <h2 style="color: #7c3aed;">Verify your email</h2>
+      <p>Hi {full_name or "there"},</p>
+      <p>Thanks for signing up to NivaSpark! Click the button below to verify your email address and activate your account.</p>
+      <p style="margin: 24px 0;">
+        <a href="{verify_url}" style="background: linear-gradient(135deg,#f5c542,#e8a33d);
+           color: #1a1a1a; padding: 12px 24px; border-radius: 999px; text-decoration: none;
+           font-weight: 600; display: inline-block;">Verify email &amp; get started</a>
+      </p>
+      <p style="color: #888; font-size: 12px;">This link expires in 24 hours. If the button doesn't work, copy this link:<br>{verify_url}</p>
+      <p style="color: #888; font-size: 12px;">If you didn't create a NivaSpark account, you can safely ignore this email.</p>
+    </div>
+    """
+    send_email(to, subject, html, text_body=f"Verify your NivaSpark email: {verify_url}")
 
 
 def send_invite_email(to: str, full_name: str, inviter_name: str, company_name: str, accept_url: str) -> None:

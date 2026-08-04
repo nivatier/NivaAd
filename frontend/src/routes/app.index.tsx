@@ -1176,9 +1176,6 @@ function CreateAd() {
 
   async function postPlatform(platformId: string) {
     setPostedMap((m) => ({ ...m, [platformId]: true }));
-    if (adId) {
-      try { await api(`/ads/${adId}/post`, { method: "POST", body: { platforms: [platformId] } }); } catch { /* non-fatal for the UI, already reflected locally */ }
-    }
   }
   async function postAll() {
     const remaining = chosenPlatforms.filter((p) => !postedMap[p.id]).map((p) => p.id);
@@ -2325,6 +2322,7 @@ function CreateAd() {
                 onPost={() => postPlatform(p.id)}
                 variant={results}
                 brandKit={{ logo_url: brandLogoUrl, logo_placement: brandLogoPlacement, primary_color: brandPrimaryColor }}
+                adId={adId}
                 onEditCaption={(text) => setVariants((vs) => {
                   if (!vs) return vs;
                   const copy = [...vs];

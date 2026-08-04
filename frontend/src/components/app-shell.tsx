@@ -43,7 +43,6 @@ export const NAV: { section: string; items: { to: string; label: string; icon: L
       { to: "/app/brand-kit", label: "Brand Kit", icon: Palette, capability: "view_brand_kit", hintKey: "nav:brand-kit" },
       { to: "/app/connections", label: "Connections", icon: Link2, capability: "admin-only", hintKey: "nav:connections" },
       { to: "/app/moderation", label: "Moderation", icon: ShieldCheck, capability: "admin-only", hintKey: "nav:moderation" },
-      { to: "/app/settings", label: "Settings", icon: SettingsIcon, capability: "view_settings", hintKey: "nav:settings" },
     ],
   },
   {
@@ -291,13 +290,20 @@ function MobileAccountSheet({
             >
               + Buy Credits
             </button>
-            <button
-              onClick={onLogout}
-              className="flex-1 rounded-lg border border-border py-2 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground transition"
+            <Link
+              to="/app/settings"
+              onClick={onClose}
+              className="flex-1 rounded-lg border border-border py-2 text-center text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground transition"
             >
-              Log out
-            </button>
+              Settings
+            </Link>
           </div>
+          <button
+            onClick={onLogout}
+            className="mt-1.5 w-full rounded-lg border border-border py-2 text-[11px] text-muted-foreground hover:border-destructive/40 hover:text-destructive transition"
+          >
+            Log out
+          </button>
         </div>
       </div>
     </>
@@ -435,7 +441,7 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
   );
 
   const CreditsCard = (
-    <div className="relative mx-3 mb-3 overflow-hidden rounded-xl border border-white/[0.09] px-3 py-2.5 bg-card/70 backdrop-blur-xl
+    <div className="relative mx-3 mb-3 overflow-hidden rounded-xl border border-white/[0.09] px-3 py-3.5 bg-card/70 backdrop-blur-xl
       shadow-[0_0_0_1px_oklch(1_0_0_/_0.06),0_4px_24px_-4px_oklch(0_0_0_/_0.4),inset_0_1px_0_oklch(1_0_0_/_0.12),inset_0_-1px_0_oklch(0_0_0_/_0.15)]
       neon-bg">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
@@ -450,14 +456,17 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
         {me?.tier ? me.tier.charAt(0).toUpperCase() + me.tier.slice(1) : "Free"} · {planCredits}/mo
         {credits > planCredits ? " · topped up" : ""}
       </div>
-      <div className="mt-2 flex gap-1.5">
+      <div className="mt-2.5 flex gap-1.5">
         <button onClick={() => setShowBuyCredits(true)} className="flex-1 rounded-lg bg-gold-gradient py-1.5 text-center text-[11px] font-semibold text-background shadow-[var(--shadow-gold)]">
           + Buy
         </button>
-        <button onClick={handleLogout} className="flex-1 rounded-lg border border-border py-1.5 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground">
-          Log out
-        </button>
+        <Link to="/app/settings" className="flex-1 rounded-lg border border-border py-1.5 text-center text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground">
+          Settings
+        </Link>
       </div>
+      <button onClick={handleLogout} className="mt-1.5 w-full rounded-lg border border-border py-1.5 text-[11px] text-muted-foreground hover:border-destructive/40 hover:text-destructive">
+        Log out
+      </button>
     </div>
   );
 

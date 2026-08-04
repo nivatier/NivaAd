@@ -106,14 +106,22 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             stripe_sub = stripe.Subscription.retrieve(obj["subscription"])
             price_id = stripe_sub["items"]["data"][0]["price"]["id"]
             tier, term_months = billing_svc.reverse_lookup(price_id)
+            tier = tier or "starter"
+            term_months = term_months or 1
             db.add(Subscription(
-                company_id=company_id, tier=tier or "starter", term_months=term_months or 1,
+                company_id=company_id, tier=tier, term_months=term_months,
                 status=stripe_sub["status"], monthly_credits=billing_svc.TIER_CREDITS.get(tier, 150),
                 stripe_customer_id=obj.get("customer"), stripe_subscription_id=obj.get("subscription"),
                 cancel_at_period_end=bool(stripe_sub.get("cancel_at_period_end")),
             ))
+            # Grant credits immediately here — invoice.paid may race and arrive
+            # before this Subscription row is committed. Use checkout session id
+            # as ref_id so invoice.paid dedup check avoids double-granting.
+            grant = billing_svc.TIER_CREDITS.get(tier, 150) * term_months
+            checkout_ref = obj.get("id")
+            db.add(CreditLedger(company_id=company_id, delta=grant, reason="plan_grant", ref_id=checkout_ref))
             db.add(AuditLog(company_id=company_id, action="billing.subscription_started",
-                            detail={"tier": tier, "term_months": term_months}))
+                            detail={"tier": tier, "term_months": term_months, "credits_granted": grant}))
         elif obj.get("mode") == "payment" and company_id:
             credits = int((obj.get("metadata") or {}).get("credits", 10))
             db.add(CreditLedger(company_id=company_id, delta=credits, reason="topup", ref_id=obj.get("id")))
@@ -127,14 +135,24 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
                 .order_by(Subscription.created_at.desc())
             )
             if sub:
-                grant = billing_svc.TIER_CREDITS.get(sub.tier, sub.monthly_credits) * sub.term_months
-                db.add(CreditLedger(company_id=sub.company_id, delta=grant, reason="plan_grant", ref_id=obj.get("id")))
+                invoice_ref = obj.get("id")
+                # Dedup: skip if credits were already granted for this invoice ref
+                already_granted = await db.scalar(
+                    select(CreditLedger).where(
+                        CreditLedger.company_id == sub.company_id,
+                        CreditLedger.ref_id == invoice_ref,
+                        CreditLedger.reason == "plan_grant",
+                    )
+                )
+                if not already_granted:
+                    grant = billing_svc.TIER_CREDITS.get(sub.tier, sub.monthly_credits) * sub.term_months
+                    db.add(CreditLedger(company_id=sub.company_id, delta=grant, reason="plan_grant", ref_id=invoice_ref))
+                    db.add(AuditLog(company_id=sub.company_id, action="billing.credits_granted",
+                                    detail={"credits": grant, "term_months": sub.term_months}))
                 period_end = obj.get("lines", {}).get("data", [{}])[0].get("period", {}).get("end")
                 if period_end:
                     sub.current_period_end = datetime.utcfromtimestamp(period_end)
                 sub.status = "active"
-                db.add(AuditLog(company_id=sub.company_id, action="billing.credits_granted",
-                                detail={"credits": grant, "term_months": sub.term_months}))
 
     elif etype == "customer.subscription.updated":
         sub = await db.scalar(

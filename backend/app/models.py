@@ -233,6 +233,23 @@ class GenerationJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class PostJob(Base):
+    """Tracks an async "post now" Celery task — one row per Post Now click.
+    Each row covers all platforms in that click. Results per-platform are
+    stored in the JSON columns so the frontend can poll for granular status."""
+    __tablename__ = "post_jobs"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
+    ad_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ads.id"), index=True)
+    platforms: Mapped[list] = mapped_column(JSON, default=list)          # platforms requested
+    status: Mapped[str] = mapped_column(String(20), default="queued")    # queued|running|done|failed
+    succeeded: Mapped[list] = mapped_column(JSON, default=list)          # platforms posted OK
+    failed: Mapped[dict] = mapped_column(JSON, default=dict)             # {platform: error_msg}
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)       # top-level task error
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Campaign(Base):
     __tablename__ = "campaigns"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)

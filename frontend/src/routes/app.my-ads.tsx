@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { AppShell, EmptyState, Input } from "@/components/app-shell";
 import { RepostModal } from "@/components/repost-modal";
 import { PLATFORMS, RetentionWarning } from "@/components/create-ad-parts";
+import { useConnectedPlatforms } from "@/hooks/use-connected-platforms";
 import { detectedTimeZone, formatInTimeZone } from "@/lib/timezone";
 import { api, type AdListOut, type AdOut, type ProductOut } from "@/lib/api";
 import { useRequireCapability } from "@/hooks/use-require-capability";
@@ -45,6 +46,105 @@ function contentTypeTag(ad: AdOut): { label: string; icon: string } {
   return                           { icon: "📄", label: "Ad" };
 }
 
+// ── Posting Status Modal ──────────────────────────────────────────────────────
+function PostingStatusModal({ ad, onClose }: { ad: AdOut; onClose: () => void }) {
+  const { platforms: allPlatforms } = useConnectedPlatforms();
+
+  // All platforms this ad was created for
+  const adPlatforms = ad.platforms.filter((p) => p !== "default");
+
+  // Posted platforms — could have been posted to platforms not in original creation
+  // (via "Add Platform" feature), so union both sets
+  const allInvolvedIds = Array.from(new Set([...adPlatforms, ...ad.posted_platforms]));
+
+  function getPlatform(id: string) {
+    return allPlatforms.find((p) => p.id === id) ?? PLATFORMS.find((p) => p.id === id) ?? { id, name: id, tag: "?", color: "#6366f1", ratio: "1:1" };
+  }
+
+  const scheduledByPlatform: Record<string, { scheduled_at: string; status: string }> = {};
+  for (const sp of ad.scheduled_posts) {
+    scheduledByPlatform[sp.platform] = { scheduled_at: sp.scheduled_at, status: sp.status };
+  }
+
+  function getStatus(platformId: string): { label: string; color: string; icon: string } {
+    if (ad.posted_platforms.includes(platformId)) {
+      return { label: "Posted", color: "text-emerald-400", icon: "✓" };
+    }
+    if (scheduledByPlatform[platformId]) {
+      const sp = scheduledByPlatform[platformId];
+      if (sp.status === "failed")   return { label: "Schedule failed", color: "text-destructive", icon: "✕" };
+      if (sp.status === "posted")   return { label: "Posted (scheduled)", color: "text-emerald-400", icon: "✓" };
+      return { label: `Scheduled · ${formatInTimeZone(sp.scheduled_at, detectedTimeZone())}`, color: "text-secondary", icon: "🗓" };
+    }
+    if (adPlatforms.includes(platformId)) {
+      return { label: "Not posted yet", color: "text-muted-foreground", icon: "○" };
+    }
+    return { label: "Added later — not posted yet", color: "text-muted-foreground", icon: "○" };
+  }
+
+  const postedCount = ad.posted_platforms.length;
+  const scheduledCount = ad.scheduled_posts.filter((sp) => sp.status === "pending").length;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl border border-border bg-card/95 backdrop-blur-xl">
+
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <div className="text-sm font-semibold text-foreground">Posting status</div>
+            <div className="mt-0.5 text-[11px] text-muted-foreground">
+              {postedCount > 0 && <span className="text-emerald-400">{postedCount} posted</span>}
+              {postedCount > 0 && scheduledCount > 0 && <span className="text-muted-foreground"> · </span>}
+              {scheduledCount > 0 && <span className="text-secondary">{scheduledCount} scheduled</span>}
+              {postedCount === 0 && scheduledCount === 0 && <span>Not posted to any platform yet</span>}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-lg leading-none text-muted-foreground hover:text-foreground">✕</button>
+        </div>
+
+        {/* Platform list */}
+        <div className="p-4 space-y-2">
+          {allInvolvedIds.length === 0 ? (
+            <div className="py-6 text-center text-xs text-muted-foreground">
+              No platforms selected when this ad was created.<br />
+              Open Preview / Repost to add platforms and post.
+            </div>
+          ) : (
+            allInvolvedIds.map((platformId) => {
+              const p = getPlatform(platformId);
+              const status = getStatus(platformId);
+              return (
+                <div key={platformId} className="flex items-center gap-3 rounded-xl border border-border bg-background/40 px-3 py-2.5">
+                  <span className="h-7 w-7 shrink-0 rounded-full flex items-center justify-center text-[10px] font-bold text-slate-950" style={{ background: p.color }}>
+                    {p.tag}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-medium text-foreground">{p.name}</div>
+                    <div className={`text-[10px] ${status.color}`}>{status.icon} {status.label}</div>
+                  </div>
+                  {ad.posted_platforms.includes(platformId) && (
+                    <div className="shrink-0">
+                      <span className="h-5 w-5 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-[9px] text-emerald-400">✓</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Footer */}
+        {ad.posted_at && (
+          <div className="border-t border-border px-5 py-3 text-[11px] text-muted-foreground">
+            First posted {formatInTimeZone(ad.posted_at, detectedTimeZone())}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MyAds() {
   const allowed = useRequireCapability("view_my_ads");
 
@@ -63,6 +163,7 @@ function MyAds() {
   const [retentionMonths, setRetentionMonths] = useState<number | null>(null);
   const [postRetentionMonths, setPostRetentionMonths] = useState<number | null>(null);
   const [repostAd, setRepostAd] = useState<AdOut | null>(null);
+  const [postingStatusAd, setPostingStatusAd] = useState<AdOut | null>(null);
   const [confirmDeleteAd, setConfirmDeleteAd] = useState<AdOut | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -300,6 +401,9 @@ function MyAds() {
                         👁 Preview / Repost
                       </button>
                     )}
+                    <button onClick={() => setPostingStatusAd(ad)} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:border-secondary/40 hover:text-secondary">
+                      📡 Posting Status
+                    </button>
                     <button onClick={() => setConfirmDeleteAd(ad)} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:border-destructive/40 hover:text-destructive">
                       🗑 Delete
                     </button>
@@ -324,6 +428,10 @@ function MyAds() {
 
       {repostAd && (
         <RepostModal ad={repostAd} onClose={() => setRepostAd(null)} onUpdated={load} />
+      )}
+
+      {postingStatusAd && (
+        <PostingStatusModal ad={postingStatusAd} onClose={() => setPostingStatusAd(null)} />
       )}
 
       {confirmDeleteAd && (

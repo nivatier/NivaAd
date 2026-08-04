@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { api, getTokens } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
+import { useTheme } from "@/components/theme-toggle";
 
 export const Route = createFileRoute("/pricing")({
   component: Pricing,
@@ -63,10 +64,14 @@ const TERMS = [
 ];
 
 function Pricing() {
-  const { isAuthed } = useAuth();
+  const { isAuthed, me } = useAuth();
+  const { theme } = useTheme(); // ensures html.dark / html.light class is applied on this standalone page
+  const isDark = theme === "dark";
   const [term, setTerm] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  const currentTier = me?.tier ?? null; // "free" | "starter" | "pro" | null
 
   async function choose(tierKey: string) {
     if (!isAuthed) return;
@@ -86,7 +91,7 @@ function Pricing() {
   const selectedTerm = TERMS[term];
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen text-foreground">
       <div className="mx-auto max-w-5xl px-4 py-12">
 
         {/* Header */}
@@ -94,8 +99,7 @@ function Pricing() {
           <Link to="/" className="flex items-center gap-2.5">
             <img src="/logo-icon.png" alt="NivaSpark icon" className="h-9 w-9 shrink-0 object-contain" />
             <div className="leading-tight min-w-0">
-              <img src="/logo-wording-dark.png" alt="NivaSpark" className="hidden dark:block h-7 object-contain object-left" />
-              <img src="/logo-wording-light.png" alt="NivaSpark" className="block dark:hidden h-7 object-contain object-left" />
+              <img src={isDark ? "/logo-wording-dark.png" : "/logo-wording-light.png"} alt="NivaSpark" className="h-7 object-contain object-left" />
               <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Powered by Nivatier</div>
             </div>
           </Link>
@@ -142,8 +146,13 @@ function Pricing() {
         <div className="mt-10 grid gap-4 md:grid-cols-3">
 
           {/* Free plan */}
-          <div className="rounded-2xl border border-border bg-card/60 p-6 flex flex-col">
-            <div className="font-display text-xl font-bold text-foreground">Free</div>
+          <div className={`rounded-2xl border p-6 flex flex-col ${currentTier === "free" ? "border-primary bg-primary/5" : "border-border bg-card/60"}`}>
+            <div className="flex items-center gap-2">
+              <div className="font-display text-xl font-bold text-foreground">Free</div>
+              {currentTier === "free" && (
+                <span className="rounded-full bg-primary/15 border border-primary/40 px-2 py-0.5 text-[10px] font-semibold text-primary">Your plan</span>
+              )}
+            </div>
             <div className="mt-3 font-display text-4xl font-bold text-foreground">
               $0<span className="text-sm font-normal text-muted-foreground">/mo</span>
             </div>
@@ -159,9 +168,15 @@ function Pricing() {
               <li className="text-muted-foreground/50">✗ Team seats</li>
             </ul>
             {isAuthed ? (
-              <Link to="/app" className="mt-6 block w-full rounded-full border border-border py-2.5 text-center text-sm text-foreground hover:border-primary/40">
-                Continue on Free
-              </Link>
+              currentTier === "free" ? (
+                <Link to="/app" className="mt-6 block w-full rounded-full border border-primary/40 bg-primary/5 py-2.5 text-center text-sm text-primary font-medium">
+                  ✓ Current plan
+                </Link>
+              ) : (
+                <Link to="/app" className="mt-6 block w-full rounded-full border border-border py-2.5 text-center text-sm text-muted-foreground hover:border-primary/40">
+                  Continue on Free
+                </Link>
+              )
             ) : (
               <Link to="/signup" className="mt-6 block w-full rounded-full border border-border py-2.5 text-center text-sm text-foreground hover:border-primary/40">
                 Get started free
@@ -173,18 +188,27 @@ function Pricing() {
           {TIERS.map((tier) => {
             const monthlyPrice = tier.prices[selectedTerm.m as keyof typeof tier.prices];
             const totalCharged = tier.totals[selectedTerm.m as keyof typeof tier.totals];
+            const isCurrent = currentTier === tier.key;
+            const isDowngrade = currentTier === "pro" && tier.key === "starter";
             return (
               <div
                 key={tier.key}
                 className={`rounded-2xl border p-6 flex flex-col ${
-                  tier.hot
+                  isCurrent
+                    ? "border-primary bg-primary/5 shadow-[0_0_0_1px_oklch(0.66_0.26_305_/_0.15),0_8px_32px_-4px_oklch(0.66_0.26_305_/_0.20)]"
+                    : tier.hot
                     ? "border-primary bg-primary/5 shadow-[0_0_0_1px_oklch(0.66_0.26_305_/_0.15),0_8px_32px_-4px_oklch(0.66_0.26_305_/_0.20)]"
                     : "border-border bg-card/60"
                 }`}
               >
-                {tier.hot && (
-                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-primary">Most popular</div>
-                )}
+                <div className="flex items-center gap-2">
+                  {tier.hot && !isCurrent && (
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-primary">Most popular</div>
+                  )}
+                  {isCurrent && (
+                    <span className="rounded-full bg-primary/15 border border-primary/40 px-2 py-0.5 text-[10px] font-semibold text-primary">Your plan</span>
+                  )}
+                </div>
                 <div className="font-display text-xl font-bold text-foreground">{tier.name}</div>
                 <div className="mt-3 font-display text-4xl font-bold text-foreground">
                   ${monthlyPrice.toFixed(2).replace(/\.00$/, "")}
@@ -207,17 +231,33 @@ function Pricing() {
                   ))}
                 </ul>
                 {isAuthed ? (
-                  <button
-                    disabled={busy}
-                    onClick={() => choose(tier.key)}
-                    className={`mt-6 w-full rounded-full py-2.5 text-sm font-semibold disabled:opacity-50 transition ${
-                      tier.hot
-                        ? "bg-gold-gradient text-background shadow-[var(--shadow-gold)]"
-                        : "border border-border text-foreground hover:border-primary/40"
-                    }`}
-                  >
-                    {busy ? "Redirecting…" : tier.cta}
-                  </button>
+                  isCurrent ? (
+                    <Link
+                      to="/app/settings"
+                      className={`mt-6 block w-full rounded-full border border-primary/40 bg-primary/5 py-2.5 text-center text-sm text-primary font-medium`}
+                    >
+                      ✓ Current plan — Manage
+                    </Link>
+                  ) : isDowngrade ? (
+                    <Link
+                      to="/app/settings"
+                      className="mt-6 block w-full rounded-full border border-border py-2.5 text-center text-sm text-muted-foreground hover:border-primary/40"
+                    >
+                      Downgrade — manage in Settings
+                    </Link>
+                  ) : (
+                    <button
+                      disabled={busy}
+                      onClick={() => choose(tier.key)}
+                      className={`mt-6 w-full rounded-full py-2.5 text-sm font-semibold disabled:opacity-50 transition ${
+                        tier.hot
+                          ? "bg-gold-gradient text-background shadow-[var(--shadow-gold)]"
+                          : "border border-border text-foreground hover:border-primary/40"
+                      }`}
+                    >
+                      {busy ? "Redirecting…" : currentTier === "free" ? tier.cta : `Upgrade to ${tier.name}`}
+                    </button>
+                  )
                 ) : (
                   <Link
                     to="/signup"

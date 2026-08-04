@@ -507,6 +507,22 @@ def _seed_image_theme_editor() -> dict:
         "Minimalist studio background, seamless neutral backdrop (soft grey or white), soft even top lighting "
         "with a subtle shadow beneath the product, clean and professional product-photography look."
     )
+    text_style["Nature / Outdoor"] = (
+        "Natural outdoor setting — lush greenery or open landscape in the background, soft golden-hour or "
+        "diffused daylight, fresh and airy mood, gentle natural shadows, background softly out of focus."
+    )
+    text_style["Summer / Bright"] = (
+        "Bright summer scene — vivid blue sky or sun-drenched beach backdrop, warm golden sunlight, "
+        "vibrant cheerful colours, energetic and uplifting mood."
+    )
+    text_style["Luxury / Premium"] = (
+        "Premium luxury setting — dark rich backdrop with dramatic spot lighting on the product, "
+        "deep jewel tones, subtle reflective surface beneath, sophisticated and aspirational mood."
+    )
+    text_style["Urban / Street"] = (
+        "Urban street environment — gritty city backdrop with concrete textures or architectural elements, "
+        "dynamic low-angle composition, bold contrasting light and shadow, modern energetic mood."
+    )
     text_style["Neon / Cyberpunk"] = (
         "Dynamic neon night-city scene — the product floating/suspended mid-air over a dark asphalt street, "
         "streaked motion-blur light trails in electric blue, magenta and purple racing past in the background, "

@@ -50,7 +50,16 @@ async function rawRequest(path: string, opts: { method?: string; body?: unknown;
     /* empty body */
   }
   if (!res.ok) {
-    const msg = data?.detail ? (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) : `Request failed (${res.status})`;
+    const msg = data?.detail
+      ? typeof data.detail === "string"
+        ? data.detail
+        : Array.isArray(data.detail)
+          ? data.detail.map((e: any) => {
+              const field = Array.isArray(e.loc) ? e.loc.filter((l: any) => l !== "body").join(" → ") : "";
+              return field ? `${field}: ${e.msg}` : e.msg;
+            }).join(". ")
+          : JSON.stringify(data.detail)
+      : `Request failed (${res.status})`;
     throw new ApiError(msg, res.status);
   }
   return data;
@@ -79,7 +88,14 @@ async function rawDownload(path: string, token?: string): Promise<Blob> {
     let msg = `Request failed (${res.status})`;
     try {
       const data = await res.json();
-      if (data?.detail) msg = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+      if (data?.detail) msg = typeof data.detail === "string"
+        ? data.detail
+        : Array.isArray(data.detail)
+          ? data.detail.map((e: any) => {
+              const field = Array.isArray(e.loc) ? e.loc.filter((l: any) => l !== "body").join(" → ") : "";
+              return field ? `${field}: ${e.msg}` : e.msg;
+            }).join(". ")
+          : JSON.stringify(data.detail);
     } catch { /* not JSON */ }
     throw new ApiError(msg, res.status);
   }
@@ -175,9 +191,16 @@ export type TeamUserOut = { id: string; email: string; full_name: string; role: 
 
 export const authApi = {
   async register(payload: { company_name: string; email: string; password: string; full_name?: string; accept_aup: boolean }) {
-    const tokens = await rawRequest("/auth/register", { method: "POST", body: payload });
+    // Register now returns { message } — no tokens until email is verified
+    return rawRequest("/auth/register", { method: "POST", body: payload }) as Promise<{ message: string }>;
+  },
+  async verifyEmail(token: string) {
+    const tokens = await rawRequest(`/auth/verify-email?token=${encodeURIComponent(token)}`, { method: "GET" });
     setTokens(tokens);
     return tokens as Tokens;
+  },
+  async resendVerification(payload: { email: string; password: string }) {
+    return rawRequest("/auth/resend-verification", { method: "POST", body: payload }) as Promise<{ message: string }>;
   },
   async login(payload: { email: string; password: string }) {
     const tokens = await rawRequest("/auth/login", { method: "POST", body: payload });

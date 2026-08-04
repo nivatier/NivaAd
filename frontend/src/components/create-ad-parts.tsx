@@ -357,6 +357,135 @@ export function PostedViewModal({
  * shows the full post (text + media combined via PostPreviewModal), so
  * you can always see exactly what a platform's post will actually look
  * like even though editing is now split by output type. */
+
+/** Full-screen overlay that appears when posting to a platform —
+ * shows live phase (sending → platform processing → success/error)
+ * and auto-dismisses 2 s after success. */
+function PostingStatusModal({
+  platform,
+  phase,
+  error,
+  onClose,
+}: {
+  platform: Platform;
+  phase: "sending" | "waiting" | "success" | "error";
+  error: string;
+  onClose: () => void;
+}) {
+  const steps: { key: typeof phase; label: string }[] = [
+    { key: "sending",  label: "Sending to server" },
+    { key: "waiting",  label: `Publishing to ${platform.name}` },
+    { key: "success",  label: "Posted successfully!" },
+  ];
+  const currentIdx = phase === "error"
+    ? steps.findIndex((s) => s.key === "waiting")
+    : steps.findIndex((s) => s.key === phase);
+
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div
+        className="relative w-[340px] rounded-2xl border border-border bg-card p-6 shadow-2xl"
+        style={{ boxShadow: "0 0 0 1px oklch(1 0 0 / 0.08), inset 0 1px 0 oklch(1 0 0 / 0.12)" }}
+      >
+        {/* Platform badge */}
+        <div className="flex items-center gap-3 mb-5">
+          <span
+            className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-slate-950 shrink-0"
+            style={{ background: platform.color }}
+          >
+            {platform.tag}
+          </span>
+          <div>
+            <div className="text-sm font-semibold text-foreground">
+              {phase === "success" ? "Posted!" : phase === "error" ? "Post failed" : "Posting…"}
+            </div>
+            <div className="text-[11px] text-muted-foreground">{platform.name}</div>
+          </div>
+          {(phase === "success" || phase === "error") && (
+            <button
+              onClick={onClose}
+              className="ml-auto text-muted-foreground hover:text-foreground text-lg leading-none"
+            >✕</button>
+          )}
+        </div>
+
+        {/* Step list */}
+        <div className="space-y-3">
+          {steps.map((step, i) => {
+            const isDone = i < currentIdx || phase === "success";
+            const isActive = i === currentIdx && phase !== "success" && phase !== "error";
+            const isError = phase === "error" && i === currentIdx;
+            return (
+              <div key={step.key} className="flex items-center gap-3">
+                {/* Icon */}
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-[11px] font-bold transition-all ${
+                  isDone
+                    ? "bg-emerald-500/20 border border-emerald-500/50 text-emerald-400"
+                    : isError
+                    ? "bg-destructive/20 border border-destructive/50 text-destructive"
+                    : isActive
+                    ? "bg-primary/20 border border-primary/50"
+                    : "bg-muted/20 border border-border text-muted-foreground/40"
+                }`}>
+                  {isDone ? (
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : isError ? (
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  ) : isActive ? (
+                    <svg className="w-3 h-3 animate-spin text-primary" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                  ) : (
+                    <span className="text-[10px]">{i + 1}</span>
+                  )}
+                </div>
+                {/* Label */}
+                <span className={`text-xs transition-all ${
+                  isDone ? "text-emerald-400" :
+                  isError ? "text-destructive" :
+                  isActive ? "text-foreground font-medium" :
+                  "text-muted-foreground/40"
+                }`}>
+                  {i === currentIdx && phase === "error" ? `Failed: ${error || "Unknown error"}` : step.label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Success tick big */}
+        {phase === "success" && (
+          <div className="mt-5 flex flex-col items-center gap-1">
+            <div className="w-12 h-12 rounded-full bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center">
+              <svg className="w-6 h-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <span className="text-xs text-emerald-400 font-medium">Closing in a moment…</span>
+          </div>
+        )}
+
+        {/* Error retry */}
+        {phase === "error" && (
+          <div className="mt-4 flex justify-end">
+            <button
+              onClick={onClose}
+              className="rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground hover:border-primary/40"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function PlatformPreviewCard({
   platform,
   result,
@@ -369,6 +498,7 @@ export function PlatformPreviewCard({
   onEditCaption,
   variant,
   brandKit,
+  adId,
 }: {
   platform: Platform;
   result: PlatformResult | undefined;
@@ -381,10 +511,14 @@ export function PlatformPreviewCard({
   onEditCaption: (text: string) => void;
   variant?: Record<string, any>;
   brandKit?: BrandKitPreview | null;
+  adId?: string | null;
 }) {
   const [showPreview, setShowPreview] = useState(false);
-  const [showPostedView, setShowPostedView] = useState(false);
   const [detectedRatio, setDetectedRatio] = useState<string | null>(null);
+  const [posting, setPosting] = useState(false);
+  const [postModalOpen, setPostModalOpen] = useState(false);
+  const [postPhase, setPostPhase] = useState<"sending" | "waiting" | "success" | "error">("sending");
+  const [postError, setPostError] = useState("");
   const handleVideoDimensions = useCallback((w: number, h: number) => {
     setDetectedRatio(`${w}/${h}`);
   }, []);
@@ -392,6 +526,44 @@ export function PlatformPreviewCard({
   const thumbStyle: React.CSSProperties = detectedRatio
     ? { aspectRatio: detectedRatio, maxHeight: "12rem" }
     : { height: "10rem" };
+
+  async function handlePost() {
+    setPosting(true);
+    setPostError("");
+    setPostPhase("sending");
+    setPostModalOpen(true);
+    onPost(); // optimistic update in parent
+    if (adId) {
+      try {
+        const { api } = await import("@/lib/api");
+        const { job_id } = await api(`/ads/${adId}/post`, { method: "POST", body: { platforms: [platform.id] } });
+        setPostPhase("waiting");
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          const job = await api(`/ads/${adId}/post-status/${job_id}`);
+          if (job.status === "done" || job.status === "failed") {
+            if (job.status === "failed") {
+              const errMsg = job.failed?.[platform.id] || job.error || "Post failed";
+              setPostError(errMsg);
+              setPostPhase("error");
+            } else {
+              setPostPhase("success");
+              setTimeout(() => setPostModalOpen(false), 2000);
+            }
+            break;
+          }
+        }
+      } catch (e: any) {
+        setPostError(e.message || "Post failed");
+        setPostPhase("error");
+      }
+    } else {
+      setPostPhase("success");
+      setTimeout(() => setPostModalOpen(false), 2000);
+    }
+    setPosting(false);
+  }
+
   return (
     <div className="rounded-2xl border border-border bg-card/60 p-4 flex flex-col gap-3">
       <div className="flex items-center justify-between">
@@ -406,9 +578,8 @@ export function PlatformPreviewCard({
             </span>
           )}
           {variant && (imageUrl || videoUrl) && (
-            <button onClick={() => setShowPostedView(true)} className="rounded-full border border-secondary/50 px-2.5 py-0.5 text-[10px] text-secondary hover:bg-secondary/10">📲 Posted view</button>
+            <button onClick={() => setShowPreview(true)} className="rounded-full border border-border px-2.5 py-0.5 text-[10px] text-muted-foreground hover:border-primary/40 hover:text-primary">👁 Preview</button>
           )}
-          <button onClick={() => setShowPreview(true)} className="rounded-full border border-border px-2.5 py-0.5 text-[10px] text-muted-foreground hover:border-primary/40 hover:text-primary">👁 Preview</button>
         </div>
       </div>
 
@@ -437,13 +608,20 @@ export function PlatformPreviewCard({
       {posted ? (
         <div className="text-center text-xs text-emerald-400 border border-emerald-500/40 bg-emerald-500/5 rounded-full py-2">✓ Posted to {platform.name}</div>
       ) : (
-        <button onClick={onPost} className="text-xs font-semibold rounded-full py-2 bg-gold-gradient text-background">Post to {platform.name}</button>
+        <button onClick={handlePost} disabled={posting} className="text-xs font-semibold rounded-full py-2 bg-gold-gradient text-background disabled:opacity-60">
+          {posting ? "Posting…" : `Post to ${platform.name}`}
+        </button>
       )}
-      {showPreview && (
-        <PostPreviewModal platform={platform} result={result} imageUrl={imageUrl} imageUrls={imageUrls} videoUrl={videoUrl} companyName={companyName} onClose={() => setShowPreview(false)} />
+      {showPreview && variant && (
+        <PostedViewModal platform={platform} variant={variant} brandKit={brandKit ?? null} onClose={() => setShowPreview(false)} />
       )}
-      {showPostedView && variant && (
-        <PostedViewModal platform={platform} variant={variant} brandKit={brandKit ?? null} onClose={() => setShowPostedView(false)} />
+      {postModalOpen && (
+        <PostingStatusModal
+          platform={platform}
+          phase={postPhase}
+          error={postError}
+          onClose={() => setPostModalOpen(false)}
+        />
       )}
     </div>
   );

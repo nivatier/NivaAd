@@ -19,6 +19,29 @@ from app.config import settings
 CHAT_URL = f"{settings.OPENROUTER_BASE_URL}/chat/completions"
 
 
+def _extract_json(text: str) -> dict:
+    """Extract the first valid JSON object from a model response.
+    Handles markdown fences, leading/trailing prose, and partial wrapping.
+    Raises json.JSONDecodeError if nothing parseable is found."""
+    # Strip common markdown fences
+    text = text.replace("```json", "").replace("```", "").strip()
+    # Try the whole thing first (fast path — most responses are clean)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Find the outermost {...} block and try that
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            pass
+    # Re-raise with the original text so the caller can log it
+    raise json.JSONDecodeError("No valid JSON object found in model response", text, 0)
+
+
 def generate_text(prompt: str, model: str) -> dict:
     """Sends one prompt, expects the model to return JSON (optionally
     wrapped in markdown code fences, which every prompt in this app
@@ -46,7 +69,7 @@ def generate_text(prompt: str, model: str) -> dict:
     if not choices:
         raise RuntimeError(f"OpenRouter returned no choices: {data}")
     text = choices[0].get("message", {}).get("content", "")
-    return json.loads(text.replace("```json", "").replace("```", "").strip())
+    return _extract_json(text)
 
 
 def analyze_image_with_vision(image_url: str, prompt: str, model: str) -> dict:
@@ -84,4 +107,4 @@ def analyze_image_with_vision(image_url: str, prompt: str, model: str) -> dict:
     if not choices:
         raise RuntimeError(f"OpenRouter returned no choices: {data}")
     text = choices[0].get("message", {}).get("content", "")
-    return json.loads(text.replace("```json", "").replace("```", "").strip())
+    return _extract_json(text)

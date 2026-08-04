@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
@@ -17,10 +18,35 @@ from app.services.capabilities import capabilities_for_user
 from app.security import (
     create_access_token, create_refresh_token, decode_token, hash_password, verify_password,
 )
+import jwt
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 FREE_PLAN_CREDITS = 3
+
+VERIFY_TOKEN_MINUTES = 60 * 24  # 24 hours
+
+
+def _make_verify_token(user_id: str) -> str:
+    payload = {
+        "sub": user_id,
+        "type": "email_verify",
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=VERIFY_TOKEN_MINUTES),
+    }
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+
+def _decode_verify_token(token: str) -> str:
+    """Returns user_id or raises HTTPException."""
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(400, "Verification link has expired. Please register again.")
+    except jwt.PyJWTError:
+        raise HTTPException(400, "Invalid verification link.")
+    if payload.get("type") != "email_verify":
+        raise HTTPException(400, "Invalid verification link.")
+    return payload["sub"]
 
 
 # ── Launch config helpers (stored in ModelConfig singleton, "launch" key) ────
@@ -47,7 +73,7 @@ async def registration_status(db: AsyncSession = Depends(get_db)):
     return {"open": cfg.get("registration_open", settings.REGISTRATION_OPEN)}
 
 
-@router.post("/register", response_model=TokenOut, status_code=201)
+@router.post("/register", status_code=201)
 async def register(data: RegisterIn, db: AsyncSession = Depends(get_db)):
     if not data.accept_aup:
         raise HTTPException(400, "You must accept the Terms of Service and Acceptable Use Policy")
@@ -60,6 +86,8 @@ async def register(data: RegisterIn, db: AsyncSession = Depends(get_db)):
 
     existing = await db.scalar(select(User).where(User.email == data.email.lower()))
     if existing:
+        if existing.status == "pending":
+            raise HTTPException(409, "PENDING_VERIFICATION: An account with this email is awaiting email verification. Please check your inbox or resend the verification email.")
         raise HTTPException(409, "An account with this email already exists")
 
     company = Company(name=data.company_name)
@@ -72,9 +100,11 @@ async def register(data: RegisterIn, db: AsyncSession = Depends(get_db)):
         password_hash=hash_password(data.password),
         full_name=data.full_name,
         role="admin",
-        status="active",
+        status="pending",          # blocked until email verified
+        email_verified=False,
     )
     db.add(user)
+    await db.flush()  # need user.id for the token
 
     db.add(Subscription(company_id=company.id, tier="free", monthly_credits=FREE_PLAN_CREDITS))
     db.add(CreditLedger(company_id=company.id, delta=FREE_PLAN_CREDITS, reason="plan_grant"))
@@ -83,10 +113,18 @@ async def register(data: RegisterIn, db: AsyncSession = Depends(get_db)):
                     detail={"email": data.email.lower()}))
     await db.commit()
 
-    return TokenOut(
-        access_token=create_access_token(str(user.id), str(company.id), user.role),
-        refresh_token=create_refresh_token(str(user.id)),
-    )
+    # Send verification email (non-blocking — error is logged, not raised)
+    verify_token = _make_verify_token(str(user.id))
+    verify_url = f"{settings.FRONTEND_URL}/verify-email?token={verify_token}"
+    try:
+        from app.services import email as email_svc
+        import asyncio
+        await asyncio.to_thread(email_svc.send_verification_email, data.email.lower(), data.full_name, verify_url)
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).error("[auth] Failed to send verification email to %s: %s", data.email.lower(), exc)
+
+    return {"message": "Account created. Please check your email to verify your address before logging in."}
 
 
 @router.post("/login", response_model=TokenOut)
@@ -99,6 +137,8 @@ async def login(data: LoginIn, db: AsyncSession = Depends(get_db)):
     # which emails exist or are mid-invite.
     if user is None or user.password_hash is None or not verify_password(data.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
+    if user.status == "pending":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Please verify your email address before logging in. Check your inbox for the verification link.")
     if user.status != "active":
         raise HTTPException(status.HTTP_403_FORBIDDEN, f"Account is {user.status}")
 
@@ -109,6 +149,97 @@ async def login(data: LoginIn, db: AsyncSession = Depends(get_db)):
         access_token=create_access_token(str(user.id), str(user.company_id), user.role),
         refresh_token=create_refresh_token(str(user.id)),
     )
+
+
+@router.get("/verify-email", response_model=TokenOut)
+async def verify_email(token: str, db: AsyncSession = Depends(get_db)):
+    """Called when the user clicks the link in their verification email.
+    Activates the account and returns tokens so the frontend can log them
+    straight in — no second login step needed."""
+    user_id = _decode_verify_token(token)
+    user = await db.get(User, uuid.UUID(user_id))
+    if user is None:
+        raise HTTPException(404, "Account not found.")
+    if user.status == "active" and user.email_verified:
+        # Already verified — just log them in again (idempotent)
+        return TokenOut(
+            access_token=create_access_token(str(user.id), str(user.company_id), user.role),
+            refresh_token=create_refresh_token(str(user.id)),
+        )
+    if user.status != "pending":
+        raise HTTPException(400, "This account cannot be verified.")
+    user.status = "active"
+    user.email_verified = True
+    db.add(AuditLog(company_id=user.company_id, user_id=user.id, action="user.email_verified"))
+    await db.commit()
+    return TokenOut(
+        access_token=create_access_token(str(user.id), str(user.company_id), user.role),
+        refresh_token=create_refresh_token(str(user.id)),
+    )
+
+
+RESEND_COOLDOWN_SECONDS = 60
+RESEND_MAX_PER_HOUR = 5
+
+
+def _resend_rate_check(email: str) -> tuple[bool, int]:
+    """Returns (allowed, seconds_remaining).
+    Uses Redis with two keys per email:
+    - verify:cooldown:{email} — expires after RESEND_COOLDOWN_SECONDS
+    - verify:count:{email}   — expires after 1 hour, incremented each send
+    """
+    try:
+        import redis as redis_lib
+        r = redis_lib.from_url(settings.REDIS_URL, decode_responses=True)
+        cooldown_key = f"verify:cooldown:{email}"
+        count_key = f"verify:count:{email}"
+
+        # Check cooldown
+        ttl = r.ttl(cooldown_key)
+        if ttl > 0:
+            return False, ttl
+
+        # Check hourly cap
+        count = int(r.get(count_key) or 0)
+        if count >= RESEND_MAX_PER_HOUR:
+            hour_ttl = r.ttl(count_key)
+            return False, max(hour_ttl, 1)
+
+        # Record this send
+        pipe = r.pipeline()
+        pipe.set(cooldown_key, "1", ex=RESEND_COOLDOWN_SECONDS)
+        pipe.incr(count_key)
+        pipe.expire(count_key, 3600)
+        pipe.execute()
+        return True, 0
+    except Exception:
+        # Redis unavailable — allow the send rather than block the user
+        return True, 0
+
+
+@router.post("/resend-verification")
+async def resend_verification(data: LoginIn, db: AsyncSession = Depends(get_db)):
+    """Lets a pending user request a new verification email if theirs expired.
+    Rate limited: 60 s cooldown, max 5 per hour."""
+    email = data.email.lower()
+    user = await db.scalar(select(User).where(User.email == email))
+
+    if user and user.status == "pending" and user.password_hash and verify_password(data.password, user.password_hash):
+        allowed, seconds_left = _resend_rate_check(email)
+        if not allowed:
+            raise HTTPException(429, f"Please wait {seconds_left} seconds before requesting another verification email.")
+
+        verify_token = _make_verify_token(str(user.id))
+        verify_url = f"{settings.FRONTEND_URL}/verify-email?token={verify_token}"
+        try:
+            from app.services import email as email_svc
+            import asyncio
+            await asyncio.to_thread(email_svc.send_verification_email, email, user.full_name, verify_url)
+        except Exception:
+            pass
+
+    # Same response whether found or not — don't reveal account existence
+    return {"message": "If that account exists and is pending verification, a new link has been sent."}
 
 
 @router.get("/invite/{token}", response_model=InviteCheckOut)

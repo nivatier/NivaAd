@@ -858,6 +858,17 @@ class PostAdIn(BaseModel):
     platforms: list[str] = Field(default_factory=list)
 
 
+class PostJobOut(BaseModel):
+    """Returned immediately by POST /ads/{id}/post — poll
+    GET /ads/{id}/post-status/{job_id} for per-platform results."""
+    job_id: uuid.UUID
+    status: str             # queued|running|done|partial|failed
+    platforms: list[str]    # platforms requested
+    succeeded: list[str]    # platforms posted so far
+    failed: dict[str, str]  # {platform: error_msg}
+    finished: bool
+
+
 class AdScheduledPostOut(BaseModel):
     """One platform's pending schedule for an ad — lets My Ads show and
     manage each platform's schedule individually (cancel one without
