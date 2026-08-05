@@ -423,6 +423,22 @@ function AdGenerationsPanel({
 function CreateAd() {
   const { me, refresh } = useAuth();
   const [step, setStep] = useState(1);
+  const [billingSuccess, setBillingSuccess] = useState(false);
+
+  // Handle ?billing=success redirect from Stripe checkout
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("billing") === "success") {
+      setBillingSuccess(true);
+      sessionStorage.removeItem("pendingPlan");
+      // Refresh me so sidebar shows updated plan and credits
+      refresh();
+      // Clean the URL
+      window.history.replaceState({}, "", window.location.pathname);
+      // Auto-hide after 5s
+      setTimeout(() => setBillingSuccess(false), 5000);
+    }
+  }, []);
 
   // Brief
   const [productName, setProductName] = useState("");
@@ -1213,6 +1229,16 @@ function CreateAd() {
         />
       }
     >
+      {billingSuccess && (
+        <div className="mb-4 flex items-center gap-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3">
+          <span className="text-lg">🎉</span>
+          <div className="flex-1">
+            <div className="text-sm font-semibold text-emerald-400">Welcome to your new plan!</div>
+            <div className="text-xs text-muted-foreground mt-0.5">Your credits and features have been activated. Start creating your first ad.</div>
+          </div>
+          <button onClick={() => setBillingSuccess(false)} className="text-muted-foreground hover:text-foreground text-sm">✕</button>
+        </div>
+      )}
       <div className="mb-8 flex flex-wrap items-center gap-2">
         {STEPS.map((s, i) => (
           <div key={s} className="flex items-center gap-2">

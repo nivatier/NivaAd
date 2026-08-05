@@ -326,6 +326,7 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
         tier=sub.tier if sub else "free",
         credits=float(credits or 0),
         plan_credits=plan_credits,
+        term_months=sub.term_months if sub else 1,
         current_period_end=sub.current_period_end if sub else None,
         cancel_at_period_end=sub.cancel_at_period_end if sub else False,
         capabilities=caps,

@@ -65,6 +65,30 @@ async function rawRequest(path: string, opts: { method?: string; body?: unknown;
   return data;
 }
 
+/** Single in-flight refresh promise — prevents multiple simultaneous
+ * requests from each trying to refresh the token independently, which
+ * causes the pattern: 401 → refresh → 401 → refresh → loop. */
+let _refreshPromise: Promise<Tokens> | null = null;
+
+async function _refreshOnce(): Promise<Tokens> {
+  if (_refreshPromise) return _refreshPromise;
+  const tokens = getTokens();
+  if (!tokens?.refresh_token) throw new ApiError("No refresh token", 401);
+  _refreshPromise = rawRequest("/auth/refresh", {
+    method: "POST",
+    body: { refresh_token: tokens.refresh_token },
+  }).then((fresh: Tokens) => {
+    setTokens(fresh);
+    _refreshPromise = null;
+    return fresh;
+  }).catch((err) => {
+    _refreshPromise = null;
+    clearTokens();
+    throw err;
+  });
+  return _refreshPromise;
+}
+
 /** Authenticated request with one automatic refresh-and-retry on 401. */
 export async function api(path: string, opts: { method?: string; body?: unknown } = {}) {
   const tokens = getTokens();
@@ -72,8 +96,7 @@ export async function api(path: string, opts: { method?: string; body?: unknown 
     return await rawRequest(path, { ...opts, token: tokens?.access_token });
   } catch (err) {
     if (err instanceof ApiError && err.status === 401 && tokens?.refresh_token) {
-      const fresh = await rawRequest("/auth/refresh", { method: "POST", body: { refresh_token: tokens.refresh_token } });
-      setTokens(fresh);
+      const fresh = await _refreshOnce();
       return await rawRequest(path, { ...opts, token: fresh.access_token });
     }
     throw err;
@@ -111,8 +134,7 @@ export async function apiDownload(path: string): Promise<Blob> {
     return await rawDownload(path, tokens?.access_token);
   } catch (err) {
     if (err instanceof ApiError && err.status === 401 && tokens?.refresh_token) {
-      const fresh = await rawRequest("/auth/refresh", { method: "POST", body: { refresh_token: tokens.refresh_token } });
-      setTokens(fresh);
+      const fresh = await _refreshOnce();
       return await rawDownload(path, fresh.access_token);
     }
     throw err;
@@ -180,6 +202,7 @@ export type MeOut = {
   tier: string;
   credits: number;
   plan_credits: number;  // monthly credit allowance for this tier — use this, never hardcode TIER_MONTHLY
+  term_months: number;   // subscription term length in months (1, 3, 6, or 12)
   current_period_end: string | null;
   cancel_at_period_end: boolean;
   capabilities: Record<string, boolean>;

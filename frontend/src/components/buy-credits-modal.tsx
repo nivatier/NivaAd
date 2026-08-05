@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
+const MIN_CREDITS = 50;
+const MAX_CREDITS = 10000;
+
 // Credit presets — each represents a number of credits to purchase.
 // At $0.10/credit these are $5, $10, $15, $30, $50, $100 respectively.
 // The actual price shown is always derived from the backend value, never hardcoded.
@@ -19,7 +22,7 @@ export function BuyCreditsModal({ onClose }: { onClose: () => void }) {
   }, []);
 
   function setClamped(n: number) {
-    setCredits(Math.max(1, Math.min(10000, Math.round(n))));
+    setCredits(Math.max(MIN_CREDITS, Math.min(MAX_CREDITS, Math.round(n))));
   }
 
   async function checkout() {
@@ -61,10 +64,10 @@ export function BuyCreditsModal({ onClose }: { onClose: () => void }) {
           <button onClick={() => setClamped(credits - 50)} className="grid h-9 w-9 place-items-center rounded-full border border-border text-lg text-foreground hover:border-primary/40">−</button>
           <input
             type="number"
-            min={1}
-            max={10000}
+            min={MIN_CREDITS}
+            max={MAX_CREDITS}
             value={credits}
-            onChange={(e) => setClamped(Number(e.target.value) || 1)}
+            onChange={(e) => setClamped(Number(e.target.value) || MIN_CREDITS)}
             className="w-24 rounded-lg border border-input bg-input/40 px-3 py-2 text-center text-lg font-semibold text-foreground focus:border-primary focus:outline-none"
           />
           <button onClick={() => setClamped(credits + 50)} className="grid h-9 w-9 place-items-center rounded-full border border-border text-lg text-foreground hover:border-primary/40">＋</button>

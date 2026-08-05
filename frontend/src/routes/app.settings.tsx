@@ -8,7 +8,7 @@ import { useRequireCapability } from "@/hooks/use-require-capability";
 
 export const Route = createFileRoute("/app/settings")({
   component: Settings,
-  head: () => ({ meta: [{ title: "Settings — NivaSpark" }] }),
+  head: () => ({ meta: [{ title: "Plan & Billing — NivaSpark" }] }),
 });
 
 const TIER_LABEL: Record<string, string> = { free: "Free", starter: "Starter", growth: "Growth (legacy)", pro: "Pro" };
@@ -144,8 +144,22 @@ function Settings() {
 
   const tier = me?.tier ?? "free";
   const isPaid = tier !== "free";
+  const termMonths = me?.term_months ?? 1;
   const periodEnd = me?.current_period_end ? new Date(me.current_period_end) : null;
   const cancelScheduled = !!me?.cancel_at_period_end;
+  const credits = me?.credits ?? 0;
+  const planCredits = me?.plan_credits ?? 0;
+  const creditsUsed = Math.max(0, planCredits - credits);
+  const creditsPct = planCredits > 0 ? Math.min(100, (creditsUsed / planCredits) * 100) : 0;
+
+  const TERM_LABEL: Record<number, string> = { 1: "Monthly", 3: "3-month", 6: "6-month", 12: "Annual" };
+  const TIER_PRICES: Record<string, Record<number, number>> = {
+    starter: { 1: 17.00, 3: 48.45, 6: 91.80, 12: 179.52 },
+    pro:     { 1: 29.00, 3: 82.65, 6: 156.60, 12: 299.00 },
+  };
+  const nextChargeAmount = isPaid && tier in TIER_PRICES
+    ? TIER_PRICES[tier][termMonths] ?? null
+    : null;
 
   async function openPortal() {
     setErr(""); setBusy(true);
@@ -156,7 +170,7 @@ function Settings() {
   }
 
   async function cancelPlan() {
-    if (!confirm(`Cancel your ${TIER_LABEL[tier]} plan? You'll keep access until ${periodEnd ? periodEnd.toLocaleDateString() : "the end of your current period"}, then move to the Free plan.`)) return;
+    if (!confirm(`Cancel your ${TIER_LABEL[tier] ?? tier} plan? You'll keep access until ${periodEnd ? periodEnd.toLocaleDateString() : "the end of your current period"}, then move to the Free plan.`)) return;
     setErr(""); setBusy(true);
     try {
       await api("/billing/cancel", { method: "POST" });
@@ -174,39 +188,101 @@ function Settings() {
     setBusy(false);
   }
 
-  if (!allowed) return null; // redirecting away — this role can't view this page (checked after all hooks, per Rules of Hooks)
+  if (!allowed) return null;
 
   return (
-    <AppShell eyebrow="Setup" title="Settings">
+    <AppShell eyebrow="Setup" title="Plan & Billing">
       <div className="grid max-w-3xl gap-6">
         <Panel>
-          <div className="mb-1 text-sm font-semibold text-foreground">💳 Plan & billing</div>
-          <p className="text-xs text-muted-foreground">
-            Current plan: <span className="text-primary">{TIER_LABEL[tier]}</span> · {(() => { const c = me?.credits ?? 0; return Number.isInteger(c) ? c : c.toFixed(2).replace(/\.?0+$/, ""); })()} credits available
-          </p>
-          {isPaid && periodEnd && (
-            cancelScheduled ? (
-              <p className="mt-1 text-xs text-amber-400">⚠ Cancels on {periodEnd.toLocaleDateString()} — you'll then move to the Free plan.</p>
-            ) : (
-              <p className="mt-1 text-xs text-muted-foreground">Renews on {periodEnd.toLocaleDateString()}</p>
-            )
+          <div className="mb-3 text-sm font-semibold text-foreground">💳 Plan & Billing</div>
+
+          {/* Plan details grid */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-xl border border-border bg-background/40 px-3 py-3">
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Plan</div>
+              <div className="text-sm font-bold text-primary">{TIER_LABEL[tier] ?? tier}</div>
+              {isPaid && <div className="text-[10px] text-muted-foreground mt-0.5">{TERM_LABEL[termMonths] ?? `${termMonths}-month`}</div>}
+            </div>
+
+            <div className="rounded-xl border border-border bg-background/40 px-3 py-3">
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Status</div>
+              {cancelScheduled ? (
+                <div className="text-sm font-bold text-amber-400">Cancelling</div>
+              ) : (
+                <div className="text-sm font-bold text-emerald-400">Active</div>
+              )}
+              {isPaid && periodEnd && (
+                <div className="text-[10px] text-muted-foreground mt-0.5">
+                  {cancelScheduled ? `Ends ${periodEnd.toLocaleDateString()}` : `Renews ${periodEnd.toLocaleDateString()}`}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-border bg-background/40 px-3 py-3">
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Next charge</div>
+              {isPaid && nextChargeAmount && periodEnd && !cancelScheduled ? (
+                <>
+                  <div className="text-sm font-bold text-foreground">${nextChargeAmount.toFixed(2)}</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">{periodEnd.toLocaleDateString()}</div>
+                </>
+              ) : (
+                <div className="text-sm font-bold text-muted-foreground">{cancelScheduled ? "None" : "—"}</div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-border bg-background/40 px-3 py-3">
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Credits</div>
+              <div className="text-sm font-bold text-foreground">
+                {Number.isInteger(credits) ? credits : credits.toFixed(2).replace(/\.?0+$/, "")}
+                <span className="text-[10px] font-normal text-muted-foreground"> / {planCredits}</span>
+              </div>
+              <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted">
+                <div className="h-full bg-neon-gradient transition-all" style={{ width: `${100 - creditsPct}%` }} />
+              </div>
+            </div>
+          </div>
+
+          {/* Cancellation warning */}
+          {cancelScheduled && periodEnd && (
+            <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
+              ⚠ Your plan cancels on {periodEnd.toLocaleDateString()} — you'll move to the Free plan after that date.
+            </div>
           )}
+
+          {/* Action buttons */}
           <div className="mt-4 flex flex-wrap gap-2">
-            <a href="/pricing" className="rounded-full border border-border px-4 py-2 text-xs hover:border-primary/40">Change plan</a>
-            <button onClick={() => setShowBuyCredits(true)} className="rounded-full bg-gold-gradient px-4 py-2 text-xs font-semibold text-background shadow-[var(--shadow-gold)]">
-              + Buy credits
+            <a href="/pricing" className="rounded-full border border-border px-4 py-2 text-xs hover:border-primary/40">
+              {isPaid ? "Change plan" : "Upgrade"}
+            </a>
+            {isPaid && (
+              <button onClick={() => setShowBuyCredits(true)}
+                className="rounded-full bg-gold-gradient px-4 py-2 text-xs font-semibold text-background shadow-[var(--shadow-gold)]">
+                + Buy credits
+              </button>
+            )}
+            <button disabled={busy} onClick={openPortal}
+              className="rounded-full border border-border px-4 py-2 text-xs hover:border-primary/40 disabled:opacity-50">
+              🧾 Invoices & payment method
             </button>
-            <button disabled={busy} onClick={openPortal} className="rounded-full border border-border px-4 py-2 text-xs hover:border-primary/40 disabled:opacity-50">🧾 Manage billing / invoices</button>
             {isPaid && (
               cancelScheduled ? (
-                <button disabled={busy} onClick={resumePlan} className="rounded-full border border-emerald-500/40 px-4 py-2 text-xs text-emerald-400 disabled:opacity-50">↺ Resume plan</button>
+                <button disabled={busy} onClick={resumePlan}
+                  className="rounded-full border border-emerald-500/40 px-4 py-2 text-xs text-emerald-400 hover:bg-emerald-500/5 disabled:opacity-50">
+                  ↺ Resume plan
+                </button>
               ) : (
-                <button disabled={busy} onClick={cancelPlan} className="rounded-full border border-destructive/40 px-4 py-2 text-xs text-destructive disabled:opacity-50">Cancel plan</button>
+                <button disabled={busy} onClick={cancelPlan}
+                  className="rounded-full border border-destructive/40 px-4 py-2 text-xs text-destructive hover:bg-destructive/5 disabled:opacity-50">
+                  Cancel plan
+                </button>
               )
             )}
           </div>
+
           {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
-          <p className="mt-4 text-xs text-muted-foreground">Payments run through Stripe (sandbox/test mode). Manage billing opens Stripe's own portal for invoices and payment method.</p>
+          <p className="mt-3 text-[10px] text-muted-foreground">
+            Payments processed securely by Stripe · {tier === "free" ? "No active subscription" : `${TERM_LABEL[termMonths] ?? termMonths + "-month"} ${TIER_LABEL[tier]} plan`} · All prices in USD
+          </p>
         </Panel>
 
         <AgentNivaSettingsPanel />

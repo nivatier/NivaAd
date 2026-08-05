@@ -18,6 +18,53 @@ logger = logging.getLogger("nivaad.webhooks")
 FREE_PLAN_CREDITS = 3
 
 
+async def _expire_plan_credits(db: AsyncSession, company_id) -> float:
+    """Expire (zero out) any remaining plan credits for a company.
+
+    Calculates the current plan-credit balance (sum of plan_grant ledger
+    rows minus usage) and if positive, inserts a negative adjustment row
+    to zero it out.  Top-up credits (reason='topup') are intentionally
+    excluded — those never expire.
+
+    Returns the amount of credits expired (0.0 if nothing to expire).
+    """
+    from sqlalchemy import func as _func
+    from app.models import AdCredit as _AC  # noqa: F401 — only used if model exists
+
+    # Sum all plan_grant credits granted
+    granted = await db.scalar(
+        select(_func.coalesce(_func.sum(CreditLedger.delta), 0))
+        .where(CreditLedger.company_id == company_id, CreditLedger.reason == "plan_grant")
+    ) or 0
+
+    # Sum all usage (negative deltas across all reasons)
+    total_used = await db.scalar(
+        select(_func.coalesce(_func.sum(CreditLedger.delta), 0))
+        .where(CreditLedger.company_id == company_id, CreditLedger.delta < 0)
+    ) or 0
+
+    # Sum top-up credits separately so we don't expire them
+    topup_granted = await db.scalar(
+        select(_func.coalesce(_func.sum(CreditLedger.delta), 0))
+        .where(CreditLedger.company_id == company_id, CreditLedger.reason == "topup")
+    ) or 0
+
+    # Plan balance = total credits - total used - topup credits
+    # (topup credits are consumed first by convention in the credit system)
+    plan_balance = float(granted) + float(total_used) - float(topup_granted)
+    # Clamp — never expire more than what's there
+    to_expire = max(0.0, plan_balance)
+
+    if to_expire > 0:
+        db.add(CreditLedger(
+            company_id=company_id,
+            delta=-to_expire,
+            reason="plan_expiry",
+        ))
+
+    return to_expire
+
+
 async def _already_processed(db: AsyncSession, event_id: str) -> bool:
     rows = (await db.scalars(
         select(AuditLog).where(AuditLog.action == "stripe.webhook")
@@ -108,26 +155,47 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             tier, term_months = billing_svc.reverse_lookup(price_id)
             tier = tier or "starter"
             term_months = term_months or 1
+            monthly_credits = billing_svc.TIER_CREDITS.get(tier, 150)
+            # current_period_end is on the Stripe subscription object
+            cpe = stripe_sub.get("current_period_end")
             db.add(Subscription(
                 company_id=company_id, tier=tier, term_months=term_months,
-                status=stripe_sub["status"], monthly_credits=billing_svc.TIER_CREDITS.get(tier, 150),
-                stripe_customer_id=obj.get("customer"), stripe_subscription_id=obj.get("subscription"),
+                status=stripe_sub["status"], monthly_credits=monthly_credits,
+                stripe_customer_id=obj.get("customer"),
+                stripe_subscription_id=obj.get("subscription"),
                 cancel_at_period_end=bool(stripe_sub.get("cancel_at_period_end")),
+                current_period_end=datetime.utcfromtimestamp(cpe) if cpe else None,
             ))
-            # Grant credits immediately here — invoice.paid may race and arrive
-            # before this Subscription row is committed. Use checkout session id
-            # as ref_id so invoice.paid dedup check avoids double-granting.
-            grant = billing_svc.TIER_CREDITS.get(tier, 150) * term_months
+            # Grant ONE month of credits only — use-it-or-lose-it monthly model.
+            # Expire any remaining plan credits from a previous plan first.
             checkout_ref = obj.get("id")
-            db.add(CreditLedger(company_id=company_id, delta=grant, reason="plan_grant", ref_id=checkout_ref))
-            db.add(AuditLog(company_id=company_id, action="billing.subscription_started",
-                            detail={"tier": tier, "term_months": term_months, "credits_granted": grant}))
+            existing_sub = await db.scalar(
+                select(Subscription).where(
+                    Subscription.company_id == company_id,
+                    Subscription.stripe_subscription_id != obj.get("subscription"),
+                    Subscription.tier.in_(["starter", "pro"]),
+                ).order_by(Subscription.created_at.desc())
+            )
+            if existing_sub:
+                await _expire_plan_credits(db, company_id)
+            db.add(CreditLedger(
+                company_id=company_id, delta=monthly_credits,
+                reason="plan_grant", ref_id=checkout_ref,
+            ))
+            db.add(AuditLog(
+                company_id=company_id, action="billing.subscription_started",
+                detail={"tier": tier, "term_months": term_months, "credits_granted": monthly_credits},
+            ))
         elif obj.get("mode") == "payment" and company_id:
             credits = int((obj.get("metadata") or {}).get("credits", 10))
             db.add(CreditLedger(company_id=company_id, delta=credits, reason="topup", ref_id=obj.get("id")))
             db.add(AuditLog(company_id=company_id, action="billing.topup", detail={"credits": credits}))
 
     elif etype == "invoice.paid":
+        # Only handle monthly plan renewals here — multi-month and annual plans
+        # get their monthly credit resets from the daily beat task instead,
+        # since Stripe only fires invoice.paid once per billing period (which
+        # for annual plans is once a year, not monthly).
         stripe_sub_id = obj.get("subscription")
         if stripe_sub_id:
             sub = await db.scalar(
@@ -136,23 +204,33 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             )
             if sub:
                 invoice_ref = obj.get("id")
-                # Dedup: skip if credits were already granted for this invoice ref
-                already_granted = await db.scalar(
-                    select(CreditLedger).where(
-                        CreditLedger.company_id == sub.company_id,
-                        CreditLedger.ref_id == invoice_ref,
-                        CreditLedger.reason == "plan_grant",
-                    )
-                )
-                if not already_granted:
-                    grant = billing_svc.TIER_CREDITS.get(sub.tier, sub.monthly_credits) * sub.term_months
-                    db.add(CreditLedger(company_id=sub.company_id, delta=grant, reason="plan_grant", ref_id=invoice_ref))
-                    db.add(AuditLog(company_id=sub.company_id, action="billing.credits_granted",
-                                    detail={"credits": grant, "term_months": sub.term_months}))
                 period_end = obj.get("lines", {}).get("data", [{}])[0].get("period", {}).get("end")
                 if period_end:
                     sub.current_period_end = datetime.utcfromtimestamp(period_end)
                 sub.status = "active"
+
+                # For monthly plans only: expire unused plan credits and grant fresh ones.
+                # Multi-month/annual handled by reset_monthly_credits beat task.
+                if sub.term_months == 1:
+                    already_granted = await db.scalar(
+                        select(CreditLedger).where(
+                            CreditLedger.company_id == sub.company_id,
+                            CreditLedger.ref_id == invoice_ref,
+                            CreditLedger.reason == "plan_grant",
+                        )
+                    )
+                    if not already_granted:
+                        # Expire unused plan credits (use-it-or-lose-it)
+                        unused = await _expire_plan_credits(db, sub.company_id)
+                        monthly = billing_svc.TIER_CREDITS.get(sub.tier, sub.monthly_credits)
+                        db.add(CreditLedger(
+                            company_id=sub.company_id, delta=monthly,
+                            reason="plan_grant", ref_id=invoice_ref,
+                        ))
+                        db.add(AuditLog(
+                            company_id=sub.company_id, action="billing.monthly_credits_reset",
+                            detail={"credits_granted": monthly, "credits_expired": unused},
+                        ))
 
     elif etype == "customer.subscription.updated":
         sub = await db.scalar(
@@ -160,13 +238,52 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             .order_by(Subscription.created_at.desc())
         )
         if sub:
+            old_tier = sub.tier
+            old_term = sub.term_months
+
+            # Sync tier/price if Stripe shows a different price (e.g. after upgrade)
+            items = obj.get("items", {}).get("data", [])
+            if items:
+                price_id = items[0].get("price", {}).get("id")
+                if price_id:
+                    tier, term_months = billing_svc.reverse_lookup(price_id)
+                    if tier and tier != sub.tier:
+                        sub.tier = tier
+                        sub.monthly_credits = billing_svc.TIER_CREDITS.get(tier, sub.monthly_credits)
+                    if term_months and term_months != sub.term_months:
+                        sub.term_months = term_months
             sub.status = obj["status"]
             sub.cancel_at_period_end = bool(obj.get("cancel_at_period_end"))
             cpe = obj.get("current_period_end")
             if cpe:
                 sub.current_period_end = datetime.utcfromtimestamp(cpe)
-            db.add(AuditLog(company_id=sub.company_id, action="billing.subscription_updated",
-                            detail={"status": sub.status, "cancel_at_period_end": sub.cancel_at_period_end}))
+
+            # If tier upgraded — expire old plan credits and grant new monthly allowance
+            new_tier = sub.tier
+            new_monthly = billing_svc.TIER_CREDITS.get(new_tier, sub.monthly_credits)
+            old_monthly = billing_svc.TIER_CREDITS.get(old_tier, 0)
+            TIER_RANK = {"free": 0, "starter": 1, "pro": 2}
+            if TIER_RANK.get(new_tier, 0) > TIER_RANK.get(old_tier, 0):
+                # Expire unused plan credits from old plan
+                expired = await _expire_plan_credits(db, sub.company_id)
+                # Grant fresh monthly credits for new plan
+                db.add(CreditLedger(
+                    company_id=sub.company_id,
+                    delta=new_monthly,
+                    reason="plan_grant",
+                ))
+                db.add(AuditLog(
+                    company_id=sub.company_id, action="billing.upgrade_credits_reset",
+                    detail={
+                        "old_tier": old_tier, "new_tier": new_tier,
+                        "credits_expired": expired, "credits_granted": new_monthly,
+                    },
+                ))
+
+            db.add(AuditLog(
+                company_id=sub.company_id, action="billing.subscription_updated",
+                detail={"status": sub.status, "tier": sub.tier, "cancel_at_period_end": sub.cancel_at_period_end},
+            ))
 
     elif etype == "customer.subscription.deleted":
         # The paid period is over and Stripe has finalized the cancellation.

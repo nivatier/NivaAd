@@ -2,10 +2,18 @@
 and price lookup.
 
 Design: Stripe is the source of truth for billing state. We react to
-webhooks rather than trusting the client-side redirect. Credits are
-granted on invoice.paid (fires for the first payment AND every renewal),
-NOT on checkout.session.completed — Stripe's own billing cycle drives
-recurring credit grants with no extra scheduler needed.
+webhooks rather than trusting the client-side redirect.
+
+Credit grant strategy (use-it-or-lose-it monthly resets):
+- On new subscription (checkout.session.completed): grant one month's
+  credits only.
+- On monthly plan renewal (invoice.paid): expire unused plan credits,
+  grant fresh monthly credits.
+- On annual/multi-month plans: Stripe fires invoice.paid once per year,
+  so a daily Celery beat task handles monthly resets by checking each
+  subscription's anniversary day.
+- Top-up credits (purchased via "+ Buy") are tagged reason='topup' and
+  are NEVER expired — they persist until used.
 
 Price IDs are stored in the Developer > Settings > Platform config table
 at runtime (no redeploy needed to change them), falling back to
@@ -19,7 +27,7 @@ from app.config import settings
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-TIER_CREDITS = {"starter": 150, "pro": 500}
+TIER_CREDITS = {"starter": 150, "pro": 290}
 # Growth tier retired — archived in Stripe, no new subscriptions.
 # Free plan credits are defined as FREE_PLAN_CREDITS in auth.py / webhooks.py.
 
@@ -101,19 +109,30 @@ def _safe_return_path(path: str | None) -> str:
     return path
 
 
-def create_checkout_session(company_id: str, email: str, tier: str, term_months: int, return_to: str | None = None):
+def create_checkout_session(
+    company_id: str,
+    email: str,
+    tier: str,
+    term_months: int,
+    return_to: str | None = None,
+    stripe_customer_id: str | None = None,
+):
     price_id = price_id_for(tier, term_months)
     path = _safe_return_path(return_to)
-    return stripe.checkout.Session.create(
+    kwargs: dict = dict(
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
         client_reference_id=company_id,
-        customer_email=email,
         metadata={"company_id": company_id, "tier": tier, "term_months": str(term_months)},
-        allow_promotion_codes=True,   # enables promo/coupon code box at checkout
+        allow_promotion_codes=True,
         success_url=f"{settings.FRONTEND_URL}{path}?billing=success",
         cancel_url=f"{settings.FRONTEND_URL}{path}?billing=canceled",
     )
+    if stripe_customer_id:
+        kwargs["customer"] = stripe_customer_id   # link to existing customer, skip email step
+    else:
+        kwargs["customer_email"] = email
+    return stripe.checkout.Session.create(**kwargs)
 
 
 def create_topup_session(company_id: str, email: str, credits: int, return_to: str | None = None):
@@ -142,11 +161,65 @@ def create_portal_session(stripe_customer_id: str, return_to: str | None = None)
     )
 
 
+def create_portal_upgrade_session(
+    stripe_customer_id: str,
+    stripe_subscription_id: str,
+    tier: str,
+    term_months: int,
+    return_to: str | None = None,
+):
+    """Opens the Stripe Customer Portal pre-navigated to the plan change
+    confirmation for the specified tier/term. Stripe shows the prorated
+    amount due today on their own hosted page — fully trusted by the customer.
+    Falls back to the generic portal if the flow isn't supported.
+    Note: return_url does NOT include ?billing=success because the portal
+    fires it on both confirm AND cancel — we can't distinguish here."""
+    path = _safe_return_path(return_to)
+    price_id = price_id_for(tier, term_months)
+    try:
+        return stripe.billing_portal.Session.create(
+            customer=stripe_customer_id,
+            return_url=f"{settings.FRONTEND_URL}{path}",  # no ?billing=success
+            flow_data={
+                "type": "subscription_update_confirm",
+                "subscription_update_confirm": {
+                    "subscription": stripe_subscription_id,
+                    "items": [{"id": stripe.Subscription.retrieve(
+                        stripe_subscription_id
+                    )["items"]["data"][0]["id"], "price": price_id, "quantity": 1}],
+                },
+            },
+        )
+    except Exception:
+        # Fall back to generic portal if flow_data not supported
+        return create_portal_session(stripe_customer_id, return_to)
+
+
 def cancel_at_period_end(stripe_subscription_id: str):
     """Schedules cancellation for the end of the current paid period —
     the customer keeps access and their plan until then, matching
     'cancel now, drop to Free once the paid period is used up'."""
     return stripe.Subscription.modify(stripe_subscription_id, cancel_at_period_end=True)
+
+
+def upgrade_subscription(stripe_subscription_id: str, tier: str, term_months: int):
+    """Upgrade or switch an existing Stripe subscription in place.
+
+    - Switches to the new price immediately (billing_cycle_anchor='now')
+    - Prorates the unused value of the old plan as a credit on the first
+      invoice of the new plan (proration_behavior='create_prorations')
+    - Returns the modified Stripe Subscription object
+    """
+    price_id = price_id_for(tier, term_months)
+    stripe_sub = stripe.Subscription.retrieve(stripe_subscription_id)
+    item_id = stripe_sub["items"]["data"][0]["id"]
+    return stripe.Subscription.modify(
+        stripe_subscription_id,
+        items=[{"id": item_id, "price": price_id}],
+        proration_behavior="create_prorations",
+        billing_cycle_anchor="now",
+        metadata={"tier": tier, "term_months": str(term_months)},
+    )
 
 
 def resume_subscription(stripe_subscription_id: str):

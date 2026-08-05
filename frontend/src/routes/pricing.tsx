@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { api, getTokens } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
@@ -11,14 +11,16 @@ export const Route = createFileRoute("/pricing")({
 
 // Prices match Stripe exactly — update via Developer > Settings if they change.
 // Discounts: 3mo −5%, 6mo −10%, 12mo −15% (kept conservative to protect margins).
+const TIER_RANK: Record<string, number> = { free: 0, starter: 1, pro: 2 };
+
 const TIERS = [
   {
     key: "starter",
     name: "Starter",
     // Monthly base price per term (total ÷ months)
-    prices: { 1: 17.00, 3: 16.15, 6: 15.30, 12: 14.45 },
+    prices: { 1: 17.00, 3: 16.15, 6: 15.30, 12: 14.96 },
     // Total charged per period in Stripe
-    totals: { 1: 17.00, 3: 48.45, 6: 91.80, 12: 173.40 },
+    totals: { 1: 17.00, 3: 48.45, 6: 91.80, 12: 179.52 },
     credits: 150,
     hot: false,
     feats: [
@@ -34,17 +36,17 @@ const TIERS = [
       { text: "Credit top-ups" },
       { text: "Admin (test mode)" },
     ],
-    cta: "Start with Starter",
+    cta: "Get started",
   },
   {
     key: "pro",
     name: "Pro",
-    prices: { 1: 59.00, 3: 56.05, 6: 53.10, 12: 55.75 },  // 12mo = $669/12 = $55.75 (~$999 total, rounded)
-    totals: { 1: 59.00, 3: 168.15, 6: 318.60, 12: 999.00 },
-    credits: 500,
+    prices: { 1: 29.00, 3: 27.55, 6: 26.10, 12: 24.92 },  // 12mo effective = $299/12 = $24.92
+    totals: { 1: 29.00, 3: 82.65, 6: 156.60, 12: 299.00 },
+    credits: 290,
     hot: true,
     feats: [
-      { text: "500 credits / month", highlight: true },
+      { text: "290 credits / month", highlight: true },
       { text: "Everything in Starter" },
       { text: "Analytics" },
       { text: "Team seats (2 members)" },
@@ -60,18 +62,28 @@ const TERMS = [
   { m: 1,  label: "Monthly",   badge: null },
   { m: 3,  label: "3 months",  badge: "−5%" },
   { m: 6,  label: "6 months",  badge: "−10%" },
-  { m: 12, label: "Annual",    badge: "−15%" },
+  { m: 12, label: "Annual",    badge: "−12%" },
 ];
 
 function Pricing() {
   const { isAuthed, me } = useAuth();
-  const { theme } = useTheme(); // ensures html.dark / html.light class is applied on this standalone page
+  const navigate = useNavigate();
+  const { theme } = useTheme();
+
+  function storePlanAndSignup(tier: string, term: number) {
+    sessionStorage.setItem("pendingPlan", JSON.stringify({ tier, term }));
+    navigate({ to: "/signup" });
+  }
   const isDark = theme === "dark";
   const [term, setTerm] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-
-  const currentTier = me?.tier ?? null; // "free" | "starter" | "pro" | null
+  const currentTier = me?.tier ?? null;
+  const currentTermMonths = me?.term_months ?? 1;
+  const cancelScheduled = !!me?.cancel_at_period_end;
+  const periodEnd = me?.current_period_end ? new Date(me.current_period_end) : null;
+  const periodEnded = !isAuthed || cancelScheduled || (periodEnd && periodEnd < new Date());
+  // After term ends or cancel scheduled — treat as free to pick any plan
 
   async function choose(tierKey: string) {
     if (!isAuthed) return;
@@ -79,11 +91,17 @@ function Pricing() {
     try {
       const res = await api("/billing/checkout", {
         method: "POST",
-        body: { tier: tierKey, term_months: TERMS[term].m, return_to: window.location.pathname },
+        body: { tier: tierKey, term_months: TERMS[term].m, return_to: "/app" },
       });
       window.location.href = res.url;
     } catch (e: any) {
-      setErr(e.message || "Could not start checkout");
+      const msg: string = e.message || "Could not start checkout";
+      // Show downgrade message more clearly
+      if (msg.includes("DOWNGRADE:")) {
+        setErr("To downgrade your plan or shorten your term, use the 'Manage billing' button in Settings → it will handle this correctly through Stripe.");
+      } else {
+        setErr(msg);
+      }
       setBusy(false);
     }
   }
@@ -115,29 +133,35 @@ function Pricing() {
           Simple plans, <span className="text-gold-gradient">no surprise charges</span>
         </h1>
         <p className="mt-2 text-center text-sm text-muted-foreground">
-          Every generation shows its credit cost before you click. 1 credit = $0.10. Cancel anytime.
+          Every generation shows its credit cost before you click.
         </p>
 
         {/* Term toggle */}
-        <div className="mt-8 flex justify-center gap-2 flex-wrap">
-          {TERMS.map((t, i) => (
-            <button
-              key={t.m}
-              onClick={() => setTerm(i)}
-              className={`relative rounded-full border px-4 py-2 text-sm transition ${
-                term === i
-                  ? "border-primary bg-primary/10 text-primary"
-                  : "border-border text-muted-foreground hover:border-primary/40"
-              }`}
-            >
-              {t.label}
-              {t.badge && (
-                <span className="ml-1.5 rounded-full bg-gold-gradient px-1.5 py-0.5 text-[10px] font-semibold text-background">
-                  {t.badge}
-                </span>
-              )}
-            </button>
-          ))}
+        <div className="mt-8 flex justify-center">
+          <div className="flex rounded-2xl border border-border bg-card/60 backdrop-blur-sm p-1.5 gap-1">
+            {TERMS.map((t, i) => (
+              <button
+                key={t.m}
+                onClick={() => setTerm(i)}
+                className={`relative rounded-xl px-5 py-2.5 text-sm font-medium transition-all ${
+                  term === i
+                    ? "bg-primary text-white shadow-[0_2px_12px_oklch(0.66_0.26_305_/_0.35)]"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                }`}
+              >
+                <span>{t.label}</span>
+                {t.badge && (
+                  <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                    term === i
+                      ? "bg-white/20 text-white"
+                      : "bg-gold-gradient text-background"
+                  }`}>
+                    {t.badge}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
 
         {err && <div className="mt-4 text-center text-xs text-destructive">{err}</div>}
@@ -188,8 +212,14 @@ function Pricing() {
           {TIERS.map((tier) => {
             const monthlyPrice = tier.prices[selectedTerm.m as keyof typeof tier.prices];
             const totalCharged = tier.totals[selectedTerm.m as keyof typeof tier.totals];
-            const isCurrent = currentTier === tier.key;
-            const isDowngrade = currentTier === "pro" && tier.key === "starter";
+            const isCurrent = !periodEnded && currentTier === tier.key && selectedTerm.m === currentTermMonths;
+            const isTierDowngrade = !periodEnded && TIER_RANK[tier.key as keyof typeof TIER_RANK] < TIER_RANK[(currentTier ?? "free") as keyof typeof TIER_RANK];
+            const isTermDowngrade = (
+              !periodEnded &&
+              TIER_RANK[tier.key as keyof typeof TIER_RANK] >= TIER_RANK[(currentTier ?? "free") as keyof typeof TIER_RANK]
+              && selectedTerm.m < currentTermMonths
+            );
+            const isDowngrade = isTierDowngrade || isTermDowngrade;
             return (
               <div
                 key={tier.key}
@@ -243,7 +273,7 @@ function Pricing() {
                       to="/app/settings"
                       className="mt-6 block w-full rounded-full border border-border py-2.5 text-center text-sm text-muted-foreground hover:border-primary/40"
                     >
-                      Downgrade — manage in Settings
+                      {isTierDowngrade ? "Downgrade" : "Shorter term"} — manage in Settings
                     </Link>
                   ) : (
                     <button
@@ -252,23 +282,23 @@ function Pricing() {
                       className={`mt-6 w-full rounded-full py-2.5 text-sm font-semibold disabled:opacity-50 transition ${
                         tier.hot
                           ? "bg-gold-gradient text-background shadow-[var(--shadow-gold)]"
-                          : "border border-border text-foreground hover:border-primary/40"
+                          : "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-[0_4px_16px_oklch(0.72_0.18_165_/_0.40)]"
                       }`}
                     >
-                      {busy ? "Redirecting…" : currentTier === "free" ? tier.cta : `Upgrade to ${tier.name}`}
+                      {busy ? "Redirecting…" : currentTier === "free" || periodEnded ? tier.cta : currentTier === tier.key ? `Switch to ${selectedTerm.label}` : `Upgrade to ${tier.name}`}
                     </button>
                   )
                 ) : (
-                  <Link
-                    to="/signup"
-                    className={`mt-6 block w-full rounded-full py-2.5 text-center text-sm font-semibold ${
+                  <button
+                    onClick={() => storePlanAndSignup(tier.key, selectedTerm.m)}
+                    className={`mt-6 w-full rounded-full py-2.5 text-center text-sm font-semibold ${
                       tier.hot
                         ? "bg-gold-gradient text-background shadow-[var(--shadow-gold)]"
-                        : "border border-border text-foreground hover:border-primary/40"
+                        : "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-[0_4px_16px_oklch(0.72_0.18_165_/_0.40)]"
                     }`}
                   >
                     {tier.cta}
-                  </Link>
+                  </button>
                 )}
               </div>
             );
@@ -302,6 +332,7 @@ function Pricing() {
           All prices in USD · VAT/tax may apply · Payments processed securely by Stripe · Cancel anytime, no lock-in
         </p>
       </div>
+
     </div>
   );
 }

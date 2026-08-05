@@ -495,7 +495,7 @@ function ScrollHero({ onRegister }: { onRegister: () => void }) {
                   boxShadow: "0 4px 20px oklch(0.72 0.22 45 / 0.5)",
                 }}
               >
-                Create your first ad — free
+                Create your first ad — free →
               </button>
               <Link
                 to="/pricing"
@@ -1125,9 +1125,8 @@ function SignupPopup({ onSignup }: { onSignup: () => void }) {
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) dismiss(); }}>
       <DialogPortal>
-        {/* Heavier backdrop blur so the glass card pops */}
-        <DialogOverlay className="bg-black/50 backdrop-blur-md" />
-        <DialogPrimitive.Content className="fixed left-[50%] top-[50%] z-[110] w-full max-w-md -translate-x-1/2 -translate-y-1/2 focus:outline-none px-4">
+        {/* No overlay — popup floats over scrollable content */}
+        <DialogPrimitive.Content className="fixed bottom-6 right-6 z-[110] w-full max-w-sm focus:outline-none">
 
           {/* ── Glass card ── */}
           <div
@@ -1201,7 +1200,7 @@ function SignupPopup({ onSignup }: { onSignup: () => void }) {
 
               {/* Sub-copy */}
               <p className="mt-3 text-sm leading-relaxed" style={{ color: "oklch(0.80 0.01 280)" }}>
-                One product brief. Ready-to-post ads with copy, image and video — for Instagram, LinkedIn, TikTok, Facebook, X and Threads. In seconds.
+                One product brief. Ready-to-post ads with copy, image and video to your preferred social media accounts in seconds.
               </p>
 
               {/* Social proof pill */}
@@ -1226,7 +1225,7 @@ function SignupPopup({ onSignup }: { onSignup: () => void }) {
                   boxShadow: "0 4px 24px oklch(0.72 0.22 45 / 0.50), inset 0 1px 0 oklch(1 0 0 / 0.25)",
                 }}
               >
-                Start free — create your first ad →
+                🚀 Register now and create your first ad free
               </button>
 
               {/* Dismiss */}

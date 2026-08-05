@@ -43,6 +43,7 @@ export function LoginModal({
   const [regPassword, setRegPassword] = useState("");
   const [aup, setAup] = useState(false);
   const [resendBusy, setResendBusy] = useState(false);
+  const [legalModal, setLegalModal] = useState<"terms" | "aup" | null>(null);
   const [resendMsg, setResendMsg] = useState("");
   const [resendCooldown, setResendCooldown] = useState(0); // seconds remaining
 
@@ -119,6 +120,7 @@ export function LoginModal({
   const inputCls = "w-full rounded-lg border border-input bg-input/40 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/70 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary";
 
   return (
+    <>
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="glow-border w-full max-w-md rounded-2xl border border-border bg-card/90 p-8 backdrop-blur-xl">
 
@@ -231,7 +233,11 @@ export function LoginModal({
                       onChange={(e) => setRegPassword(e.target.value)} className={inputCls} />
                     <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
                       <input type="checkbox" checked={aup} onChange={(e) => setAup(e.target.checked)} className="mt-0.5 shrink-0" />
-                      <span>I accept the <span className="text-primary">Terms of Service</span> and <span className="text-primary">Acceptable Use Policy</span>.</span>
+                      <span>I accept the{" "}
+                      <button type="button" onClick={() => setLegalModal("terms")} className="text-primary underline underline-offset-2 hover:opacity-80">Terms of Service</button>
+                      {" "}and{" "}
+                      <button type="button" onClick={() => setLegalModal("aup")} className="text-primary underline underline-offset-2 hover:opacity-80">Acceptable Use Policy</button>.
+                    </span>
                     </label>
                     {err && <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">{err}</div>}
                     <button type="submit" disabled={busy || !aup}
@@ -250,5 +256,43 @@ export function LoginModal({
         )}
       </div>
     </div>
+
+    {/* Legal modals */}
+    {legalModal && (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-4" onClick={() => setLegalModal(null)}>
+        <div onClick={e => e.stopPropagation()} className="w-full max-w-lg rounded-2xl border border-border bg-card/95 p-6 backdrop-blur-xl max-h-[80vh] overflow-y-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-display text-lg font-bold text-foreground">
+              {legalModal === "terms" ? "Terms of Service" : "Acceptable Use Policy"}
+            </h2>
+            <button onClick={() => setLegalModal(null)} className="text-muted-foreground hover:text-foreground text-lg">✕</button>
+          </div>
+          {legalModal === "terms" ? (
+            <div className="text-sm text-muted-foreground space-y-3 leading-relaxed">
+              <p><strong className="text-foreground">1. Acceptance</strong><br />By registering for NivaSpark, you agree to these Terms of Service.</p>
+              <p><strong className="text-foreground">2. Use of Service</strong><br />NivaSpark provides AI-powered ad generation tools for lawful business purposes only.</p>
+              <p><strong className="text-foreground">3. Credits & Billing</strong><br />Credits are the billing unit for AI generations. Unused monthly plan credits expire at month end. Top-up credits never expire. Payments via Stripe.</p>
+              <p><strong className="text-foreground">4. Content Ownership</strong><br />You retain ownership of content you provide. AI-generated content is licensed to you for commercial use.</p>
+              <p><strong className="text-foreground">5. Termination</strong><br />We reserve the right to suspend accounts that violate these terms.</p>
+              <p><strong className="text-foreground">6. Governing Law</strong><br />Governed by the laws of the United Arab Emirates.</p>
+              <p className="text-xs">Last updated: August 2026 · Nivatier, Expo City Dubai</p>
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground space-y-3 leading-relaxed">
+              <p><strong className="text-foreground">1. Permitted Use</strong><br />NivaSpark may only be used to create legitimate marketing content for real products and services.</p>
+              <p><strong className="text-foreground">2. Prohibited Content</strong><br />No misleading, harmful, illegal, or spam content. No violation of third-party IP rights.</p>
+              <p><strong className="text-foreground">3. Platform Connections</strong><br />You must comply with each connected social platform's own terms. You are responsible for all published content.</p>
+              <p><strong className="text-foreground">4. AI-Generated Content</strong><br />Review all AI-generated content before publishing.</p>
+              <p><strong className="text-foreground">5. Enforcement</strong><br />Violations may result in immediate account suspension without refund.</p>
+              <p className="text-xs">Last updated: August 2026 · Nivatier, Expo City Dubai</p>
+            </div>
+          )}
+          <button onClick={() => setLegalModal(null)} className="mt-5 w-full rounded-full bg-primary/10 border border-primary/30 py-2 text-sm text-primary hover:bg-primary/20">
+            Close
+          </button>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

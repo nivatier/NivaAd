@@ -756,6 +756,7 @@ class MeOut(BaseModel):
     tier: str
     credits: float  # live balance in 0.25 steps
     plan_credits: int  # monthly allowance for this tier — sent from backend so frontend never hardcodes tier→credits mapping
+    term_months: int = 1  # subscription term length in months
     current_period_end: datetime | None = None
     cancel_at_period_end: bool = False
     capabilities: dict[str, bool] = Field(default_factory=dict)  # resolved for THIS user's role — admin gets everything True

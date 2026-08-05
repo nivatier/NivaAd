@@ -2035,3 +2035,126 @@ def post_ad_now(self, post_job_id: str):
                 raise self.retry(countdown=10)
 
         return f"done: succeeded={succeeded} failed={list(failed.keys())}"
+
+
+@celery_app.task(name="app.reset_monthly_credits", bind=True)
+def reset_monthly_credits(self):
+    """Daily beat task — resets plan credits for subscribers whose monthly
+    anniversary falls on today.
+
+    Covers multi-month (3, 6) and annual (12) plans that Stripe only invoices
+    once per term, so invoice.paid cannot drive monthly resets for them.
+    Monthly plans (term_months=1) are handled by the invoice.paid webhook.
+
+    Anniversary logic:
+    - Sub started Aug 15 → resets on the 15th of every month.
+    - Sub started Jan 31 → resets on the last day of shorter months
+      (e.g. Feb 28/29, Apr 30).
+    """
+    import calendar
+    from datetime import date, datetime
+    from sqlalchemy import func, select as _select
+    from app.database import sync_engine
+    from app.models import AuditLog, CreditLedger, Subscription
+    from app.services import billing as billing_svc
+    from sqlalchemy.orm import Session
+
+    today = date.today()
+
+    with Session(sync_engine) as db:
+        # Find all active non-monthly paid subscriptions
+        subs = db.scalars(
+            _select(Subscription).where(
+                Subscription.status == "active",
+                Subscription.tier.in_(["starter", "pro"]),
+                Subscription.term_months > 1,
+                Subscription.stripe_subscription_id.isnot(None),
+            )
+        ).all()
+
+        reset_count = 0
+        for sub in subs:
+            # Calculate the anniversary day for this month
+            sub_day = sub.created_at.day
+            last_day = calendar.monthrange(today.year, today.month)[1]
+            anniversary_day = min(sub_day, last_day)
+
+            if today.day != anniversary_day:
+                continue
+
+            # Skip if we already reset this sub this month
+            month_start = datetime(today.year, today.month, 1)
+            already_reset = db.scalar(
+                _select(CreditLedger).where(
+                    CreditLedger.company_id == sub.company_id,
+                    CreditLedger.reason == "plan_grant",
+                    CreditLedger.created_at >= month_start,
+                )
+            )
+            if already_reset:
+                logger.info(
+                    "[reset_monthly_credits] skipping company=%s — already reset this month",
+                    sub.company_id,
+                )
+                continue
+
+            # Expire unused plan credits (use-it-or-lose-it)
+            granted = db.scalar(
+                _select(func.coalesce(func.sum(CreditLedger.delta), 0))
+                .where(
+                    CreditLedger.company_id == sub.company_id,
+                    CreditLedger.reason == "plan_grant",
+                )
+            ) or 0
+            total_used = db.scalar(
+                _select(func.coalesce(func.sum(CreditLedger.delta), 0))
+                .where(
+                    CreditLedger.company_id == sub.company_id,
+                    CreditLedger.delta < 0,
+                )
+            ) or 0
+            topup_granted = db.scalar(
+                _select(func.coalesce(func.sum(CreditLedger.delta), 0))
+                .where(
+                    CreditLedger.company_id == sub.company_id,
+                    CreditLedger.reason == "topup",
+                )
+            ) or 0
+
+            plan_balance = float(granted) + float(total_used) - float(topup_granted)
+            to_expire = max(0.0, plan_balance)
+
+            if to_expire > 0:
+                db.add(CreditLedger(
+                    company_id=sub.company_id,
+                    delta=-to_expire,
+                    reason="plan_expiry",
+                ))
+
+            # Grant fresh monthly credits
+            monthly = billing_svc.TIER_CREDITS.get(sub.tier, sub.monthly_credits)
+            db.add(CreditLedger(
+                company_id=sub.company_id,
+                delta=monthly,
+                reason="plan_grant",
+            ))
+            db.add(AuditLog(
+                company_id=sub.company_id,
+                action="billing.monthly_credits_reset",
+                detail={
+                    "tier": sub.tier,
+                    "credits_granted": monthly,
+                    "credits_expired": to_expire,
+                    "anniversary_day": anniversary_day,
+                },
+            ))
+
+            logger.info(
+                "[reset_monthly_credits] company=%s tier=%s expired=%.2f granted=%d",
+                sub.company_id, sub.tier, to_expire, monthly,
+            )
+            reset_count += 1
+
+        db.commit()
+
+    return f"reset_monthly_credits: {reset_count} subscription(s) reset on {today}"

@@ -295,7 +295,7 @@ function MobileAccountSheet({
               onClick={onClose}
               className="flex-1 rounded-lg border border-border py-2 text-center text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground transition"
             >
-              Settings
+              Plan & Billing
             </Link>
           </div>
           <button
@@ -311,6 +311,71 @@ function MobileAccountSheet({
 }
 
 // ---------- Main AppShell ----------
+/** Shown when a user signed up after clicking a paid plan on the pricing page.
+ * Reads the stored plan from sessionStorage and prompts them to upgrade. */
+function UpgradeBanner() {
+  const [pending, setPending] = useState<{ tier: string; term: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const { me } = useAuth();
+
+  useEffect(() => {
+    if (!me) return;
+    // Only show if user is on free plan
+    if (me.tier && me.tier !== "free") {
+      sessionStorage.removeItem("pendingPlan");
+      return;
+    }
+    try {
+      const stored = sessionStorage.getItem("pendingPlan");
+      if (stored) setPending(JSON.parse(stored));
+    } catch { /* ignore */ }
+  }, [me]);
+
+  if (!pending) return null;
+
+  async function upgrade() {
+    setBusy(true);
+    try {
+      const { api } = await import("@/lib/api");
+      const res = await api("/billing/checkout", {
+        method: "POST",
+        body: { tier: pending!.tier, term_months: pending!.term, return_to: "/app" },
+      });
+      sessionStorage.removeItem("pendingPlan");
+      window.location.href = res.url;
+    } catch {
+      setBusy(false);
+    }
+  }
+
+  function dismiss() {
+    sessionStorage.removeItem("pendingPlan");
+    setPending(null);
+  }
+
+  const tierLabel = pending.tier.charAt(0).toUpperCase() + pending.tier.slice(1);
+  const termLabel = pending.term === 1 ? "monthly" : pending.term === 12 ? "yearly" : `${pending.term}-month`;
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5 text-sm"
+      style={{ background: "linear-gradient(135deg, oklch(0.85 0.18 52 / 0.15), oklch(0.72 0.22 45 / 0.10))", borderBottom: "1px solid oklch(0.85 0.18 52 / 0.3)" }}>
+      <span className="text-[13px]">🎯</span>
+      <span className="flex-1 text-foreground text-xs">
+        You chose the <span className="font-semibold text-primary">{tierLabel} ({termLabel})</span> plan. Complete your upgrade to unlock all features.
+      </span>
+      <button
+        onClick={upgrade}
+        disabled={busy}
+        className="rounded-full bg-gold-gradient px-3 py-1 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-60 shrink-0"
+      >
+        {busy ? "Loading…" : "Upgrade now →"}
+      </button>
+      <button onClick={dismiss} className="text-muted-foreground hover:text-foreground text-sm leading-none shrink-0">✕</button>
+    </div>
+  );
+}
+
+
 export function AppShell({ title, eyebrow, children, rightPanel }: { title: ReactNode; eyebrow?: ReactNode; children: ReactNode; rightPanel?: ReactNode }) {
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const navigate = useNavigate();
@@ -461,7 +526,7 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
           + Buy
         </button>
         <Link to="/app/settings" className="flex-1 rounded-lg border border-border py-1.5 text-center text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground">
-          Settings
+          Plan & Billing
         </Link>
       </div>
       <button onClick={handleLogout} className="mt-1.5 w-full rounded-lg border border-border py-1.5 text-[11px] text-muted-foreground hover:border-destructive/40 hover:text-destructive">
@@ -509,6 +574,7 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
 
       {/* ── Main ── */}
       <main className="flex-1 min-w-0">
+        <UpgradeBanner />
 
         {/* Mobile top bar — compact */}
         <div className="sticky top-0 z-30 flex items-center gap-3 px-4 py-2 lg:hidden"

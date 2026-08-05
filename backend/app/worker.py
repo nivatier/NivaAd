@@ -74,6 +74,10 @@ celery_app.conf.update(
             "task": "app.check_agent_events",
             "schedule": crontab(hour=5, minute=0),  # once daily at 5 AM UTC — checks every enabled recurring event for whether today is (month/day - lead_days), i.e. whether it's time to generate this year's ad
         },
+        "reset-monthly-credits": {
+            "task": "app.reset_monthly_credits",
+            "schedule": crontab(hour=0, minute=30),  # 00:30 UTC daily — checks all active multi-month/annual subs for their monthly anniversary and resets plan credits
+        },
     },
 )
 
