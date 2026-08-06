@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { AppShell, Panel, Field, Input, Chip } from "@/components/app-shell";
 import { PLATFORMS, estimateCost, PlatformPreviewCard, PromptConfirmModal, type AdVariant } from "@/components/create-ad-parts";
+import { PostingProgressModal } from "@/components/posting-progress-modal";
 import { RepostModal } from "@/components/repost-modal";
 
 /** Shown in the preview when no platform is connected/selected. */
@@ -447,6 +448,7 @@ function CreateAd() {
   const [offer, setOffer] = useState("");
   const [goal, setGoal] = useState("Drive sales");
   const [tone, setTone] = useState("Professional");
+  const [copyDirections, setCopyDirections] = useState("");
   const [videoFrameImage, setVideoFrameImage] = useState<string | null>(null);
   const [videoMode, setVideoMode] = useState<"single_reference" | "first_last_frame">("single_reference");
   const [videoEndFrameImage, setVideoEndFrameImage] = useState<string | null>(null);
@@ -585,6 +587,7 @@ function CreateAd() {
   const [busy, setBusy] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
   const [warning, setWarning] = useState("");
   const [referenceRejectedMsg, setReferenceRejectedMsg] = useState("");
   const [retentionMonths, setRetentionMonths] = useState<number | null>(null);
@@ -596,6 +599,7 @@ function CreateAd() {
   const [variants, setVariants] = useState<AdVariant[] | null>(null);
   const [activeVariant, setActiveVariant] = useState(0);
   const [postedMap, setPostedMap] = useState<Record<string, boolean>>({});
+  const [postJob, setPostJob] = useState<{ jobId: string; platforms: typeof PLATFORMS } | null>(null);
   const [refineText, setRefineText] = useState("");
   const [imageEditText, setImageEditText] = useState("");
   const [showSchedule, setShowSchedule] = useState(false);
@@ -791,7 +795,7 @@ function CreateAd() {
 
   function resetWizard() {
     setStep(1); setProductName(""); setAudience(""); setDescription(""); setOffer("");
-    setGoal("Drive sales"); setTone("Professional"); setVideoFrameImage(null); setImageReferenceImage(null);
+    setGoal("Drive sales"); setTone("Professional"); setVideoFrameImage(null); setImageReferenceImage(null); setCopyDirections("");
     setSelectedTextStyle(null); setSelectedTextCategory(null); setEnvDesc(""); setImageScene("");
     setAdId(null); setVariants(null); setPostedMap({}); setBlocked(false); setWarning(""); setErrorMsg("");
     setSelectedProductId(null);
@@ -809,7 +813,7 @@ function CreateAd() {
   // unlike resetWizard() which abandons the whole in-progress ad.
   function clearBrief() {
     setProductName(""); setAudience(""); setDescription(""); setOffer("");
-    setGoal("Drive sales"); setTone("Professional"); setVideoFrameImage(null); setImageReferenceImage(null);
+    setGoal("Drive sales"); setTone("Professional"); setVideoFrameImage(null); setImageReferenceImage(null); setCopyDirections("");
     setSelectedTextStyle(null); setSelectedTextCategory(null); setEnvDesc(""); setImageScene(""); setSelectedProductId(null);
     setSlideThemes([]); setActiveSlide(0);
   }
@@ -881,6 +885,26 @@ function CreateAd() {
       // The product library's photo is an already-hosted URL, not base64 —
       // imageReferenceImage can hold either; submission logic below tells them apart.
       if (p.image_url) setImageReferenceImage(p.image_url);
+      // Translate voice + reference_style from Agent Niva into plain English directions
+      if (p.voice || p.reference_style || p.source_url) {
+        const voiceMap: Record<string, string> = {
+          we: "Write using 'We' and 'Our' to refer to the company.",
+          i: "Write in first-person using 'I' and 'My' — founder voice.",
+          neutral: "Use neutral third-person language — refer to 'the brand'.",
+          you: "Address the reader directly using 'You' and 'Your'.",
+        };
+        const parts: string[] = [];
+        if (p.voice && p.voice !== "neutral") parts.push(voiceMap[p.voice] || "");
+        if (p.reference_style && p.reference_style !== "none" && p.source_url) {
+          const domain = p.source_url.replace(/https?:\/\/(www\.)?/, "").split("/")[0];
+          const domainLabel = domain.charAt(0).toUpperCase() + domain.slice(1);
+          if (p.reference_style === "start") parts.push(`Begin the copy with "Courtesy ${domainLabel} —".`);
+          if (p.reference_style === "end") parts.push(`End the copy with "— Courtesy ${domainLabel}".`);
+        }
+        if (parts.length > 0) setCopyDirections(parts.join(" "));
+      }
+      // Direct copy_directions string wins if provided (pre-built by caller)
+      if (p.copy_directions) setCopyDirections(p.copy_directions);
     } catch { /* ignore malformed prefill */ }
   }, []);
 
@@ -1000,6 +1024,7 @@ function CreateAd() {
         method: "POST",
         body: {
           product_name: productName, description, audience, offer, goal, tone,
+          copy_directions: copyDirections.trim() || null,
           env: imageReferenceImage ? envDesc : null,
           image_scene: !imageReferenceImage && imageScene ? imageScene : null,
           text_overlay: imageTextOverlay,
@@ -1010,7 +1035,7 @@ function CreateAd() {
           format, variations,
           carousel_slides: null,
           video_shots: outputs.video ? videoShots.map((s) => ({
-            prompt: s.prompt,
+            prompt: s.prompt?.trim() || "",
             duration: s.duration,
             voiceover_text: s.voiceoverText?.trim() || null,
             text_overlays: (s.textOverlays || []).filter((o: any) => o.text?.trim()).map((o: any) => ({
@@ -1056,6 +1081,7 @@ function CreateAd() {
           method: "POST",
           body: {
             product_name: productName, description, audience, offer, goal, tone,
+            copy_directions: copyDirections.trim() || null,
             env: imageReferenceImage ? envDesc : null,
             image_scene: !imageReferenceImage && imageScene ? imageScene : null,
             text_overlay: imageTextOverlay,
@@ -1069,7 +1095,7 @@ function CreateAd() {
             carousel_slides: null,
             carousel_theme: format === "carousel" ? buildCarouselTheme() : null,
             video_shots: outputs.video ? videoShots.map((s) => ({
-              prompt: s.prompt,
+              prompt: s.prompt?.trim() || "",
               duration: s.duration,
               voiceover_text: s.voiceoverText?.trim() || null,
               text_overlays: (s.textOverlays || []).filter((o) => o.text.trim()).map((o) => ({
@@ -1191,13 +1217,24 @@ function CreateAd() {
   }
 
   async function postPlatform(platformId: string) {
-    setPostedMap((m) => ({ ...m, [platformId]: true }));
+    if (!adId) return;
+    try {
+      const job: any = await api(`/ads/${adId}/post`, { method: "POST", body: { platforms: [platformId] } });
+      const platform = PLATFORMS.find((p) => p.id === platformId);
+      if (platform) setPostJob({ jobId: job.job_id, platforms: [platform] });
+    } catch (e: any) {
+      setErrorMsg(e.message || "Could not post");
+    }
   }
   async function postAll() {
-    const remaining = chosenPlatforms.filter((p) => !postedMap[p.id]).map((p) => p.id);
-    remaining.forEach((id) => setPostedMap((m) => ({ ...m, [id]: true })));
-    if (adId && remaining.length > 0) {
-      try { await api(`/ads/${adId}/post`, { method: "POST", body: { platforms: remaining } }); } catch { /* non-fatal */ }
+    if (!adId) return;
+    const remaining = chosenPlatforms.filter((p) => !postedMap[p.id]);
+    if (remaining.length === 0) return;
+    try {
+      const job: any = await api(`/ads/${adId}/post`, { method: "POST", body: { platforms: remaining.map((p) => p.id) } });
+      setPostJob({ jobId: job.job_id, platforms: remaining });
+    } catch (e: any) {
+      setErrorMsg(e.message || "Could not post");
     }
   }
 
@@ -1261,10 +1298,41 @@ function CreateAd() {
           <button onClick={() => setBlocked(false)} className="mt-3 rounded-full border border-border px-4 py-1.5 text-xs">Edit brief</button>
         </Panel>
       )}
+      {/* ── Generation error modal ── */}
       {errorMsg && !blocked && (
-        <Panel className="mb-6 border-destructive/40 bg-destructive/5">
-          <div className="text-destructive text-sm">{errorMsg}</div>
-        </Panel>
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4"
+          style={{ background: "oklch(0 0 0 / 0.55)", backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)" }}>
+          <div className="relative w-full max-w-sm rounded-2xl overflow-hidden"
+            style={{
+              background: "oklch(0.14 0.02 280 / 0.97)",
+              border: "1px solid oklch(0.50 0.20 25 / 0.40)",
+              boxShadow: "0 0 0 1px oklch(0.50 0.20 25 / 0.15), 0 32px 80px -12px oklch(0 0 0 / 0.70), inset 0 1px 0 oklch(1 0 0 / 0.08)",
+            }}>
+            {/* Red top accent */}
+            <div className="h-[2px] w-full" style={{ background: "linear-gradient(90deg, transparent, oklch(0.60 0.22 25 / 0.9), transparent)" }} />
+            <div className="px-6 py-6">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="shrink-0 mt-0.5 grid h-8 w-8 place-items-center rounded-full"
+                  style={{ background: "oklch(0.50 0.20 25 / 0.15)", border: "1px solid oklch(0.50 0.20 25 / 0.35)" }}>
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" style={{ color: "oklch(0.70 0.20 25)" }}>
+                    <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="text-sm font-semibold mb-1" style={{ color: "oklch(0.92 0.05 280)" }}>Generation failed</div>
+                  <div className="text-xs leading-relaxed" style={{ color: "oklch(0.68 0.03 280)" }}>{errorMsg}</div>
+                </div>
+              </div>
+              <button
+                onClick={() => setErrorMsg("")}
+                className="w-full rounded-full py-2.5 text-sm font-semibold transition-opacity hover:opacity-90"
+                style={{ background: "linear-gradient(135deg, oklch(0.55 0.22 25), oklch(0.45 0.20 25))", color: "white" }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {step === 1 && !blocked && (
@@ -1357,6 +1425,20 @@ function CreateAd() {
                           {TONES.map((t) => <Chip key={t} active={tone === t} onClick={() => setTone(t)}>{t}</Chip>)}
                         </div>
                       </div>
+                      <Field
+                        label="Copy directions"
+                        hint="Optional — tell the AI how to write the copy. e.g. 'Use We and Our. Courtesy BBC.com at the start.' Pre-filled automatically from Agent Niva."
+                      >
+                        <textarea
+                          rows={2}
+                          maxLength={400}
+                          placeholder="e.g. Use 'We'. Keep it under 50 words. Courtesy BBC.com at the start."
+                          value={copyDirections}
+                          onChange={(e) => setCopyDirections(e.target.value)}
+                          className="w-full rounded-lg border border-input bg-input/40 p-3 text-sm text-foreground placeholder:text-muted-foreground/70 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                        />
+                        <div className="mt-1 text-right text-[10px] text-muted-foreground">{copyDirections.length}/400</div>
+                      </Field>
                     </div>
                   </div>
                 </div>
@@ -2456,6 +2538,74 @@ function CreateAd() {
           retentionMonths={retentionMonths} postRetentionMonths={postRetentionMonths}
         />
       )}
+      {/* ── Posting progress modal ── */}
+      {postJob && adId && (
+        <PostingProgressModal
+          adId={adId}
+          jobId={postJob.jobId}
+          platforms={postJob.platforms}
+          onDone={(succeeded, failed) => {
+            setPostJob(null);
+            setPostedMap((m) => {
+              const next = { ...m };
+              succeeded.forEach((id) => { next[id] = true; });
+              return next;
+            });
+            if (Object.keys(failed).length > 0 && succeeded.length === 0) {
+              setErrorMsg(`Posting failed: ${Object.values(failed).join("; ")}`);
+            } else if (Object.keys(failed).length > 0) {
+              setErrorMsg(`Posted to ${succeeded.join(", ")}. Failed: ${Object.keys(failed).join(", ")}`);
+            }
+          }}
+        />
+      )}
+      {/* ── Mobile: floating history button + bottom sheet ── */}
+      <div className="xl:hidden">
+        <button
+          onClick={() => setShowHistory(true)}
+          className="fixed bottom-[76px] right-4 z-30 flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold shadow-lg transition hover:opacity-90"
+          style={{
+            background: "var(--glass-sidebar)",
+            backdropFilter: "var(--glass-blur-sidebar)",
+            WebkitBackdropFilter: "var(--glass-blur-sidebar)",
+            border: "1px solid var(--glass-panel-border)",
+            boxShadow: "var(--glass-sidebar-shadow)",
+            color: "oklch(0.85 0.18 52)",
+          }}
+        >
+          🕐 History
+          {genEntries.some((e) => e.status === "generating") && (
+            <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+          )}
+        </button>
+        {showHistory && (
+          <>
+            <div className="fixed inset-0 z-40" style={{ background: "oklch(0 0 0 / 0.45)" }}
+              onClick={() => setShowHistory(false)} />
+            <div className="fixed left-3 right-3 z-50 rounded-2xl overflow-hidden"
+              style={{
+                bottom: "calc(60px + env(safe-area-inset-bottom, 0px) + 8px)",
+                background: "var(--glass-sidebar)",
+                backdropFilter: "var(--glass-blur-sidebar)",
+                WebkitBackdropFilter: "var(--glass-blur-sidebar)",
+                border: "1px solid var(--glass-panel-border)",
+                boxShadow: "var(--glass-sidebar-shadow), 0 -8px 40px oklch(0 0 0 / 0.30)",
+                maxHeight: "65vh",
+              }}>
+              <div className="flex justify-center pt-2.5 pb-1">
+                <div className="h-1 w-8 rounded-full bg-white/20" />
+              </div>
+              <div className="px-4 pb-2 flex items-center justify-between">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Ad Generations</div>
+                <button onClick={() => setShowHistory(false)} className="text-muted-foreground hover:text-foreground text-sm">✕</button>
+              </div>
+              <div className="overflow-y-auto" style={{ maxHeight: "calc(65vh - 80px)" }}>
+                <AdGenerationsPanel entries={genEntries} activeAdId={adId} />
+              </div>
+            </div>
+          </>
+        )}
+      </div>
     </AppShell>
   );
 }

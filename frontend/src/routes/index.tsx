@@ -1126,11 +1126,11 @@ function SignupPopup({ onSignup }: { onSignup: () => void }) {
     <Dialog open={open} onOpenChange={(v) => { if (!v) dismiss(); }}>
       <DialogPortal>
         {/* No overlay — popup floats over scrollable content */}
-        <DialogPrimitive.Content className="fixed bottom-6 right-6 z-[110] w-full max-w-sm focus:outline-none">
+        <DialogPrimitive.Content className="fixed z-[110] focus:outline-none bottom-0 left-0 right-0 px-3 pb-4 sm:inset-0 sm:flex sm:items-center sm:justify-center sm:p-6">
 
           {/* ── Glass card ── */}
           <div
-            className="relative overflow-hidden rounded-3xl"
+            className="relative overflow-hidden rounded-2xl sm:rounded-3xl w-full sm:max-w-sm"
             style={{
               /* Frosted glass layer */
               background: "oklch(1 0 0 / 0.06)",
@@ -1149,7 +1149,7 @@ function SignupPopup({ onSignup }: { onSignup: () => void }) {
             }}
           >
             {/* Animated colour wash behind the glass */}
-            <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden rounded-3xl">
+            <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden rounded-2xl sm:rounded-3xl">
               <div
                 className="absolute -inset-[50%] animate-aurora-a"
                 style={{ background: "radial-gradient(55% 65% at 15% 35%, oklch(0.85 0.2 200 / 0.28), transparent 70%)", opacity: 0.9 }}
@@ -1171,7 +1171,7 @@ function SignupPopup({ onSignup }: { onSignup: () => void }) {
               style={{ background: "linear-gradient(90deg, transparent 0%, oklch(0.85 0.18 52 / 0.9) 30%, oklch(0.72 0.22 45 / 0.9) 70%, transparent 100%)" }}
             />
 
-            <div className="px-8 py-8">
+            <div className="px-5 py-5 sm:px-8 sm:py-8">
               {/* Close */}
               <DialogPrimitive.Close
                 onClick={dismiss}
@@ -1183,15 +1183,15 @@ function SignupPopup({ onSignup }: { onSignup: () => void }) {
               </DialogPrimitive.Close>
 
               {/* Logo */}
-              <div className="flex items-center gap-2.5 mb-6">
-                <img src="/logo-icon.png" alt="NivaSpark" className="h-8 w-8 object-contain" />
-                <img src="/logo-wording-dark.png" alt="NivaSpark" className="hidden dark:block h-6 object-contain object-left" />
-                <img src="/logo-wording-light.png" alt="NivaSpark" className="block dark:hidden h-6 object-contain object-left" />
+              <div className="flex items-center justify-center gap-2 mb-4 sm:gap-2.5 sm:mb-6">
+                <img src="/logo-icon.png" alt="NivaSpark" className="h-7 w-7 sm:h-8 sm:w-8 object-contain" />
+                <img src="/logo-wording-dark.png" alt="NivaSpark" className="hidden dark:block h-5 sm:h-6 object-contain object-left" />
+                <img src="/logo-wording-light.png" alt="NivaSpark" className="block dark:hidden h-5 sm:h-6 object-contain object-left" />
               </div>
 
               {/* Hook headline */}
               <h2
-                className="font-display text-2xl font-bold leading-tight tracking-tight"
+                className="font-display text-xl sm:text-2xl font-bold leading-tight tracking-tight text-center"
                 style={{ color: "oklch(0.97 0.01 280)" }}
               >
                 Stop making ads<br />
@@ -1199,13 +1199,14 @@ function SignupPopup({ onSignup }: { onSignup: () => void }) {
               </h2>
 
               {/* Sub-copy */}
-              <p className="mt-3 text-sm leading-relaxed" style={{ color: "oklch(0.80 0.01 280)" }}>
-                One product brief. Ready-to-post ads with copy, image and video to your preferred social media accounts in seconds.
+              <p className="mt-2 sm:mt-3 text-xs sm:text-sm leading-relaxed text-center" style={{ color: "oklch(0.80 0.01 280)" }}>
+                One product brief. Ready-to-post ads with copy, image and video — in seconds.
               </p>
 
               {/* Social proof pill */}
+              <div className="mt-3 sm:mt-4 flex justify-center">
               <div
-                className="mt-4 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-medium"
+                className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium"
                 style={{
                   background: "oklch(0.85 0.18 52 / 0.12)",
                   border: "1px solid oklch(0.85 0.18 52 / 0.35)",
@@ -1213,25 +1214,26 @@ function SignupPopup({ onSignup }: { onSignup: () => void }) {
                 }}
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Free plan · no card required · start in 60 seconds
+                Free plan · no card required · 60 seconds to start
+              </div>
               </div>
 
               {/* CTA */}
               <button
                 onClick={handleSignup}
-                className="mt-6 w-full rounded-full py-3.5 text-sm font-semibold text-black transition-opacity hover:opacity-90"
+                className="mt-4 sm:mt-6 w-full rounded-full py-3 sm:py-3.5 text-sm font-semibold text-black transition-opacity hover:opacity-90"
                 style={{
                   background: "linear-gradient(135deg, oklch(0.88 0.18 52), oklch(0.74 0.22 45))",
                   boxShadow: "0 4px 24px oklch(0.72 0.22 45 / 0.50), inset 0 1px 0 oklch(1 0 0 / 0.25)",
                 }}
               >
-                🚀 Register now and create your first ad free
+                🚀 Register free — create your first ad
               </button>
 
               {/* Dismiss */}
               <button
                 onClick={dismiss}
-                className="mt-3 w-full text-center text-xs transition-colors"
+                className="mt-2.5 w-full text-center text-xs transition-colors"
                 style={{ color: "oklch(0.60 0.01 280)" }}
                 onMouseEnter={e => (e.currentTarget.style.color = "oklch(0.80 0.01 280)")}
                 onMouseLeave={e => (e.currentTarget.style.color = "oklch(0.60 0.01 280)")}

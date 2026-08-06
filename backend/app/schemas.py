@@ -699,7 +699,12 @@ class PlatformIntegrationOut(BaseModel):
     built: bool = False
     video_ratio: str = "1:1"
     api_url: str | None = None
-    api_version: str | None = None  # e.g. "202501" for LinkedIn — overrides the hardcoded default in the integration service; format is platform-specific (YYYYMM for LinkedIn)
+    api_version: str | None = None
+    authorize_url: str | None = None    # OAuth authorization page URL
+    token_url: str | None = None        # OAuth token exchange URL
+    userinfo_url: str | None = None     # user identity / person URN endpoint
+    images_url: str | None = None       # image upload initialize endpoint
+    videos_url: str | None = None       # video upload initialize endpoint
 
 
 class AddPlatformIntegrationIn(BaseModel):
@@ -712,6 +717,11 @@ class AddPlatformIntegrationIn(BaseModel):
     video_ratio: str = "1:1"
     api_url: str | None = None
     api_version: str | None = Field(default=None, max_length=20)
+    authorize_url: str | None = None
+    token_url: str | None = None
+    userinfo_url: str | None = None
+    images_url: str | None = None
+    videos_url: str | None = None
 
 
 class UpdatePlatformIntegrationIn(BaseModel):
@@ -723,7 +733,12 @@ class UpdatePlatformIntegrationIn(BaseModel):
     enabled: bool | None = None
     video_ratio: str | None = None
     api_url: str | None = None
-    api_version: str | None = Field(default=None, max_length=20)  # set to override the platform's default API version (e.g. "202501" for LinkedIn)
+    api_version: str | None = Field(default=None, max_length=20)
+    authorize_url: str | None = None
+    token_url: str | None = None
+    userinfo_url: str | None = None
+    images_url: str | None = None
+    videos_url: str | None = None
 
 
 class CompanyPlatformOut(BaseModel):
@@ -779,7 +794,7 @@ class VideoShotTextOverlayIn(BaseModel):
 
 
 class VideoShotIn(BaseModel):
-    prompt: str = Field(min_length=1, max_length=2000)
+    prompt: str = Field(default="", max_length=2000)  # empty = auto-derive from ad brief at generation time
     duration: int = Field(ge=1, le=60)  # outer sanity bound only — REAL enforcement is against the company's active video tier's min_duration/max_duration, done in the endpoint (services/credits.py: DEFAULT_MODEL_CFG), not here
     voiceover_text: str | None = None  # per-shot spoken narration / voice-over — burned in as audio via TTS after generation if the model/pipeline supports it; stored on the brief so the task can read it
     text_overlays: list[VideoShotTextOverlayIn] = Field(default_factory=list)  # zero or more timed text blocks burned in via ffmpeg after generation (same pipeline as brand-shot overlay_text in reframe.add_text_overlay)
@@ -802,6 +817,7 @@ class AdCreateIn(BaseModel):
     offer: str = ""
     goal: str = "Drive sales"
     tone: str = "Professional"
+    copy_directions: str | None = None  # optional voice/persona/source instructions e.g. "Use We. Courtesy BBC.com at start."
     env: str | None = None
     image_scene: str | None = None
     text_overlay: str | None = None  # positioned text (headline/badge/body etc.) from an Image Theme Reference pick — kept separate from env/image_scene so the prompt builder only renders it once
@@ -930,6 +946,7 @@ class PromptPreviewIn(BaseModel):
     offer: str = ""
     goal: str = "Drive sales"
     tone: str = "Professional"
+    copy_directions: str | None = None  # mirrors AdCreateIn — voice/persona/source instructions
     env: str | None = None
     image_scene: str | None = None
     text_overlay: str | None = None  # see AdCreateIn.text_overlay
@@ -1328,6 +1345,20 @@ class AgentScrapeJobOut(BaseModel):
         return str(v)
 
 
+class RecommendationPatchIn(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+    description: str | None = None
+    platforms: list[str] | None = None
+    product_id: uuid.UUID | None = None
+    voice: str | None = Field(default=None, pattern="^(we|i|neutral|you)$")
+    reference_style: str | None = Field(default=None, pattern="^(none|start|end)$")
+
+
+class RecommendationRegenerateIn(BaseModel):
+    voice: str = Field(default="neutral", pattern="^(we|i|neutral|you)$")
+    reference_style: str = Field(default="none", pattern="^(none|start|end)$")
+
+
 class AgentRecommendationOut(BaseModel):
     id: str
     source_url: str
@@ -1336,6 +1367,9 @@ class AgentRecommendationOut(BaseModel):
     description: str
     audience: str = ""
     platforms: list[str]
+    voice: str | None = None
+    reference_style: str | None = None
+    product_id: str | None = None
     created_ad_id: str | None = None
     created_at: datetime
 

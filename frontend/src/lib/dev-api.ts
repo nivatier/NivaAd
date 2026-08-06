@@ -104,7 +104,7 @@ export type CompanyAdminOut = {
 export type DeveloperModel = { id: string; label: string; model: string; credits: number; min_duration?: number; max_duration?: number; duration_options?: number[]; resolutions?: string[]; supports_audio?: boolean; supports_last_frame?: boolean; price_per_second_usd?: number; enabled?: boolean; pricing?: Record<string, unknown> | null; aspect_ratios?: string[] | null };
 export type DeveloperModelsOut = { text: DeveloperModel[]; image: DeveloperModel[]; video: DeveloperModel[] };
 export type OpenRouterCatalogModel = { slug: string; name: string; description?: string; price_per_second_usd?: number; price_per_image_usd?: number; resolutions?: string[]; max_duration?: number };
-export type PlatformIntegration = { id: string; label: string; client_id: string; has_secret: boolean; scope?: string; redirect_uri?: string; enabled: boolean; built: boolean; video_ratio: string; api_url?: string | null; api_version?: string | null };
+export type PlatformIntegration = { id: string; label: string; client_id: string; has_secret: boolean; scope?: string; redirect_uri?: string; enabled: boolean; built: boolean; video_ratio: string; api_url?: string | null; api_version?: string | null; authorize_url?: string | null; token_url?: string | null; userinfo_url?: string | null; images_url?: string | null; videos_url?: string | null };
 export type GuardrailRuleOut = { id: string; phrase: string; created_at: string };
 
 export type DeveloperTeamUser = { id: string; email: string; full_name: string; permissions: Record<string, boolean>; status: string; created_at: string };

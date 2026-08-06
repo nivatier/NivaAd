@@ -76,55 +76,79 @@ def _sanitize(val: str | None) -> str:
 
 
 def _build_prompt(brief: dict, platforms: list[str], outputs: dict, feedback: str | None) -> str:
+    import json as _json
     platforms = _resolve_platforms(platforms)
     fmt = outputs.get("format", "single")
     variations = outputs.get("variations", 1)
     is_default = platforms == ["default"]
-    styles = "; ".join(f"{p}: {PLATFORM_STYLE.get(p, 'platform-appropriate')}" for p in platforms)
-    base = (
-        "You are an expert social media ad copywriter and creative reviewer. "
-        f"Product: {brief.get('product_name')}. Description: {brief.get('description')}. "
-        f"Target audience: {brief.get('audience') or 'general consumers'}. "
-        f"Offer: {brief.get('offer') or 'none'}. Campaign goal: {brief.get('goal')}. "
-        f"Tone: {brief.get('tone')}. "
-    )
+
+    # Structured brief object — LLMs parse named fields more reliably
+    # than a single concatenated sentence, so we present the brief as JSON
+    # and give the task and output schema in the same message.
+    brief_obj: dict = {
+        "product_name": brief.get("product_name"),
+        "description": brief.get("description"),
+        "target_audience": brief.get("audience") or "general consumers",
+        "campaign_goal": brief.get("goal"),
+        "tone": brief.get("tone"),
+    }
+    if brief.get("offer"):
+        brief_obj["offer"] = brief["offer"]
     scene = brief.get("env") or brief.get("image_scene")
     if scene:
-        base += f"The ad image's scene/environment: {scene}. "
+        brief_obj["image_scene"] = scene
     if brief.get("tagline"):
-        base += f'Weave in the brand tagline naturally: "{brief["tagline"]}". '
+        brief_obj["brand_tagline"] = brief["tagline"]
+    if brief.get("copy_directions"):
+        brief_obj["copy_directions"] = brief["copy_directions"]
     if fmt == "carousel":
-        base += "Format: 3-slide carousel — the caption should tease a swipe. "
+        brief_obj["format"] = "carousel — caption must tease a swipe to see the next slide"
+
+    platform_styles = {p: PLATFORM_STYLE.get(p, "platform-appropriate") for p in platforms}
+
     if is_default:
-        # No platform was selected — write one general-purpose caption stored
-        # under the literal key "default" so the frontend can reliably find it.
-        # Explicitly naming the key in the instruction stops LLMs from
-        # substituting real platform names (facebook, instagram, etc.) instead.
-        base += (
-            'Write one versatile, platform-agnostic ad caption suitable for any social media channel. '
-            'Also rate the copy 0-100 for predicted engagement (score) and give one concrete improvement tip. '
-            'Respond ONLY with raw JSON using EXACTLY the key "default" — no other key name, '
-            'no markdown fences: {"default": {"caption": "...", "hashtags": ["#.."], "score": 85, "tip": "..."}}'
+        task = (
+            "Write ONE versatile, platform-agnostic social media ad caption. "
+            "Rate the copy 0-100 for predicted engagement and give one concrete improvement tip."
         )
-        return base
-    base += (
-        f"Write ad copy for these platforms, adapted per platform ({styles}). "
-        "For each platform also rate the copy 0-100 for predicted engagement (score) "
-        "and give one concrete improvement tip. "
-    )
+        output_schema = '{"default": {"caption": "...", "hashtags": ["#tag"], "score": 85, "tip": "one short tip"}}'
+        return (
+            "You are an expert social media ad copywriter.\n\n"
+            f"## Brief\n```json\n{_json.dumps(brief_obj, indent=2, ensure_ascii=False)}\n```\n\n"
+            f"## Task\n{task}\n\n"
+            f"## Output\nRespond with ONLY this raw JSON, no markdown fences, no prose:\n{output_schema}"
+        )
+
     if feedback:
-        base += f'The customer requested these changes: "{feedback}". Apply them. '
-        base += f"Respond ONLY with raw JSON, no markdown fences: {_shape(platforms)}"
+        task = (
+            f'The customer requested these changes: "{feedback}". '
+            "Rewrite the ad copy applying those changes exactly, keeping the same platform structure."
+        )
     elif variations == 3:
-        s = _shape(platforms)
-        base += (
-            "Produce 3 distinct creative angles. "
-            f'Respond ONLY with raw JSON, no markdown fences: {{"variants":[{s},{s},{s}]}}'
+        task = (
+            "Write 3 distinct creative angles for each platform, each with a different hook or audience slice. "
+            f"Platform writing styles: {_json.dumps(platform_styles)}."
         )
     else:
-        base += f"Respond ONLY with raw JSON, no markdown fences: {_shape(platforms)}"
-    return base
+        task = (
+            "Write ad copy for each platform below, adapting style per platform. "
+            f"Platform writing styles: {_json.dumps(platform_styles)}."
+        )
 
+    if variations == 3:
+        s = _shape(platforms)
+        output_schema = f'{{"variants":[{s},{s},{s}]}}'
+    else:
+        output_schema = _shape(platforms)
+
+    return (
+        "You are an expert social media ad copywriter.\n\n"
+        f"## Brief\n```json\n{_json.dumps(brief_obj, indent=2, ensure_ascii=False)}\n```\n\n"
+        f"## Task\n{task}\n"
+        "For each platform also rate the copy 0-100 for predicted engagement (score) "
+        "and give one concrete improvement tip.\n\n"
+        f"## Output\nRespond with ONLY this raw JSON, no markdown fences, no prose:\n{output_schema}"
+    )
 
 def _video_prompt(brief: dict, shot_description: str | None = None, shot: dict | None = None) -> str:
     """Builds a structured JSON prompt for a single-shot video generation.
@@ -240,73 +264,85 @@ def _multi_shot_video_prompt(brief: dict, shots: list[dict]) -> str:
 
 
 def _image_prompt(brief: dict, slide_description: str | None = None) -> str:
-    """slide_description, when given (carousel mode), is blended into the
-    scene for THIS specific slide — every slide still shows the same
-    product (from the reference photo, if one was given), just staged
-    differently. Omitted entirely for single-image ads (default None),
-    so existing behavior is unchanged.
+    """Builds a structured JSON prompt for image generation.
 
-    FIXED 2026-07-13: was checking brief["product_image_url"], which
-    stopped being populated once the dedicated image_reference_image
-    field was introduced (Create Ad's Steps 1-3 merge) — every ad
-    created since then had its reference photo correctly sent to the
-    actual generation call, but the PROMPT TEXT itself silently fell
-    back to the no-reference wording, ignoring that a photo was
-    attached. Checks image_reference_image_url first now, matching
-    exactly what the real API call uses, falling back to
-    product_image_url only for ads created before that field existed."""
+    Presenting the brief as a JSON object and the task as a separate
+    section helps LLMs cleanly separate 'what the product is' from
+    'what the image should look like', reducing hallucinated product
+    details and improving scene-accuracy.
+
+    slide_description (carousel mode) stages the same product differently
+    per slide — omitted for single-image ads.
+    """
+    import json as _json
+
     product = brief.get("product_name", "the product")
     overlay = (brief.get("text_overlay") or "").strip()
-    overlay_line = (
-        f"- Also render this text directly on the image, exactly as written, positioned as described: {overlay}\n"
-        if overlay else ""
-    )
+    reference_url = brief.get("image_reference_image_url") or brief.get("product_image_url")
+
+    # Build the brief object the LLM sees
+    brief_obj: dict = {
+        "product_name": product,
+        "description": brief.get("description", ""),
+    }
+    if overlay:
+        brief_obj["text_overlay"] = (
+            f"{overlay} — render this text EXACTLY as written directly on the image, "
+            "positioned and styled as described"
+        )
+
     style_tail = (
         "High-end commercial ad photography style, sharp focus, no watermark."
         if overlay else
         "High-end commercial ad photography style, sharp focus, no text overlay, no watermark."
     )
-    reference_url = brief.get("image_reference_image_url") or brief.get("product_image_url")
+
     if reference_url:
-        base_scene = brief.get("env") or "a clean, professional studio setting with soft natural lighting"
-        scene = f"{base_scene}. Specifically for this shot: {slide_description}" if slide_description else base_scene
+        scene_base = brief.get("env") or "a clean, professional studio setting with soft natural lighting"
+        scene = f"{scene_base}. Specifically for this shot: {slide_description}" if slide_description else scene_base
+        brief_obj["reference_photo"] = "PROVIDED — the exact product shown in the reference image"
+        brief_obj["target_scene"] = scene
+
+        task_obj = {
+            "task": "background_replacement_around_fixed_subject",
+            "instructions": [
+                "Extract the product from the reference photo EXACTLY as shown — identical shape, colour, texture, proportions, and any visible branding or labels.",
+                f"Place this UNCHANGED product into the target scene: '{scene}'.",
+                "Replace the ENTIRE background and environment — do not keep any part of the original reference photo's background.",
+                "Add realistic lighting, shadows, and reflections consistent with the new environment so the product looks physically present in that scene.",
+                "Ensure the ENTIRE product is fully visible within the frame with clear margin on all sides — do not crop or cut off any edge.",
+                style_tail,
+            ],
+        }
         return (
-            "TASK: Photo composition / background replacement around a FIXED, UNCHANGED subject — NOT a new "
-            "product, NOT a reimagined product, and NOT a light edit either.\n"
-            f"You are given one reference photo of a real product ({product}). Treat that exact product as fixed "
-            "material to be relocated, not redesigned: extract it precisely as shown — identical shape, color, "
-            "texture, proportions, and any visible branding or labels must carry over exactly.\n"
-            f"Your job is to place THIS SAME, UNCHANGED product into a new setting: \"{scene}\". Everything about "
-            "the product stays identical to the reference photo; only what surrounds it changes.\n"
-            "Requirements:\n"
-            f"- The ENTIRE background and environment must become: {scene}. Do not reuse or keep any part of the "
-            "original reference photo's background, surface, or setting — replace all of it.\n"
-            "- The product itself must look identical to the reference (do not redesign, recolor, or restyle it) — "
-            "this is the same physical object appearing in a different location, not a new photograph of a similar item.\n"
-            "- Add realistic lighting, shadows, and reflections consistent with the new environment so the "
-            "product looks physically present in that scene, not pasted on top of it.\n"
-            "- This is a full scene generation task around a fixed subject, similar to professional product "
-            "photography composited on location.\n"
-            "- FRAMING: the ENTIRE product must be fully visible within the frame, with clear margin on all "
-            "sides — do not crop, cut off, or zoom in past any edge of the product. Compose the shot wider "
-            "rather than tighter if in doubt; a fully visible product matters more than a dramatic close-up.\n"
-            f"{overlay_line}"
-            f"{style_tail}"
+            "## Brief\n"
+            f"```json\n{_json.dumps(brief_obj, indent=2, ensure_ascii=False)}\n```\n\n"
+            "## Task\n"
+            f"```json\n{_json.dumps(task_obj, indent=2, ensure_ascii=False)}\n```"
         )
     else:
-        p = f"Professional advertising photograph for a product called \"{product}\". "
-        p += f"{brief.get('description', '')} "
+        # No reference photo — text-to-image generation
         if slide_description:
-            p += f"For this specific image: {slide_description}. "
+            brief_obj["slide_scene"] = slide_description
         elif brief.get("image_scene"):
-            p += f"Desired background, environment and style: {brief['image_scene']}. "
+            brief_obj["scene"] = brief["image_scene"]
         else:
-            p += "Setting: clean studio background, soft professional lighting. "
-        p += "Compose the shot so the ENTIRE product is fully visible with clear margin on all sides — do not crop or cut off any part of it. "
-        if overlay:
-            p += f"Also render this text directly on the image, exactly as written, positioned as described: {overlay} "
-        p += style_tail
-        return p
+            brief_obj["scene"] = "clean studio background, soft professional lighting"
+
+        task_obj = {
+            "task": "product_advertisement_photograph",
+            "instructions": [
+                "Generate a professional advertising photograph matching the brief above.",
+                "Compose the shot so the ENTIRE product is fully visible with clear margin on all sides — do not crop or cut off any part of it.",
+                style_tail,
+            ],
+        }
+        return (
+            "## Brief\n"
+            f"```json\n{_json.dumps(brief_obj, indent=2, ensure_ascii=False)}\n```\n\n"
+            "## Task\n"
+            f"```json\n{_json.dumps(task_obj, indent=2, ensure_ascii=False)}\n```"
+        )
 
 
 def _video_frame_prep_prompt(product: str, scene_description: str) -> str:
@@ -583,7 +619,7 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
         _TEXT_FIELDS = (
             "product_name", "description", "audience", "offer", "tagline",
             "env", "image_scene", "text_overlay", "video_reference_prompt",
-            "video_negative_prompt",
+            "video_negative_prompt", "copy_directions",
         )
         brief = {
             **ad.brief,
@@ -1359,7 +1395,9 @@ def fire_due_scheduled_posts():
                     caption = (variant.get("linkedin") or variant.get("linkedin_personal") or {}).get("caption") or ""
                     platform_image_urls = variant.get("platform_image_urls") or {}
                     image_url = platform_image_urls.get(sp.platform) or platform_image_urls.get("linkedin") or variant.get("image_url")
-                    linkedin.post_to_linkedin(access_token, person_urn, caption, api_version=linkedin_api_version, image_url=image_url)
+                    platform_video_urls = variant.get("platform_video_urls") or {}
+                    video_url = platform_video_urls.get(sp.platform) or platform_video_urls.get("linkedin") or variant.get("video_url")
+                    linkedin.post_to_linkedin(access_token, person_urn, caption, api_version=linkedin_api_version, image_url=image_url, video_url=video_url)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("[schedule] scheduled_post=%s LinkedIn post failed: %s", sp.id, exc)
                     sp.status = "failed"
@@ -1953,6 +1991,7 @@ def post_ad_now(self, post_job_id: str):
         platform_image_urls = variant.get("platform_image_urls") or {}
 
         succeeded: list[str] = list(job.succeeded or [])  # preserve from prior retry attempt
+        permanent_failures: set[str] = set()  # 4xx errors — no retry
         failed: dict[str, str] = dict(job.failed or {})
 
         for platform in job.platforms:
@@ -1974,12 +2013,21 @@ def post_ad_now(self, post_job_id: str):
                     person_urn = linkedin.get_person_urn(access_token)
                     caption = (variant.get(platform) or variant.get("linkedin") or variant.get("linkedin_personal") or {}).get("caption") or ""
                     image_url = platform_image_urls.get(platform) or platform_image_urls.get("linkedin") or variant.get("image_url")
-                    linkedin.post_to_linkedin(access_token, person_urn, caption, api_version=linkedin_api_version, image_url=image_url)
+                    platform_video_urls = variant.get("platform_video_urls") or {}
+                    video_url = platform_video_urls.get(platform) or platform_video_urls.get("linkedin") or variant.get("video_url")
+                    logger.info("[post_ad_now] job=%s linkedin posting: image_url=%s video_url=%s", post_job_id, image_url, video_url)
+                    linkedin.post_to_linkedin(access_token, person_urn, caption, api_version=linkedin_api_version, image_url=image_url, video_url=video_url)
                     succeeded.append(platform)
                     # Remove from failed if it succeeded on retry
                     failed.pop(platform, None)
                 except Exception as exc:  # noqa: BLE001
-                    failed[platform] = str(exc)[:300]
+                    err_str = str(exc)[:300]
+                    failed[platform] = err_str
+                    # Mark 4xx errors as permanent — no point retrying duplicate posts,
+                    # bad requests, or auth failures (only 5xx / network errors should retry).
+                    err_lower = err_str.lower()
+                    if any(code in err_lower for code in ("422", "400", "401", "403", "duplicate", "bad request")):
+                        permanent_failures.add(platform)
                     logger.warning("[post_ad_now] job=%s platform=%s failed: %s", post_job_id, platform, exc)
             else:
                 # Mock or non-integrated platform — simulate success
@@ -2024,15 +2072,18 @@ def post_ad_now(self, post_job_id: str):
 
         db.commit()
 
-        # Retry if any platform failed (up to max_retries)
-        if failed:
+        # Only retry transient failures (5xx / network) — not permanent 4xx errors.
+        transient_failures = {p: m for p, m in failed.items() if p not in permanent_failures}
+        if transient_failures:
             remaining_retries = self.max_retries - self.request.retries
             if remaining_retries > 0:
                 logger.info(
-                    "[post_ad_now] job=%s %d platform(s) failed, retrying (%d left)...",
-                    post_job_id, len(failed), remaining_retries
+                    "[post_ad_now] job=%s %d platform(s) failed transiently, retrying (%d left)...",
+                    post_job_id, len(transient_failures), remaining_retries
                 )
                 raise self.retry(countdown=10)
+        if permanent_failures:
+            logger.warning("[post_ad_now] job=%s permanent failures (not retrying): %s", post_job_id, dict({p: failed[p] for p in permanent_failures}))
 
         return f"done: succeeded={succeeded} failed={list(failed.keys())}"
 
@@ -2054,7 +2105,6 @@ def reset_monthly_credits(self):
     import calendar
     from datetime import date, datetime
     from sqlalchemy import func, select as _select
-    from app.database import sync_engine
     from app.models import AuditLog, CreditLedger, Subscription
     from app.services import billing as billing_svc
     from sqlalchemy.orm import Session

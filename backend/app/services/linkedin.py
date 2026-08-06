@@ -26,6 +26,7 @@ TOKEN_URL       = "https://www.linkedin.com/oauth/v2/accessToken"
 USERINFO_URL    = "https://api.linkedin.com/v2/userinfo"
 POSTS_URL       = "https://api.linkedin.com/rest/posts"
 IMAGES_URL      = "https://api.linkedin.com/rest/images"
+VIDEOS_URL      = "https://api.linkedin.com/rest/videos"
 
 LINKEDIN_API_VERSION = "202501"  # YYYYMM fallback — override via Developer > Platforms > API Version
 # Active versions as of mid-2025: 202501, 202504, 202607
@@ -59,6 +60,31 @@ def _get_api_version(db=None) -> str:
     return (p.get("api_version") or "").strip() or LINKEDIN_API_VERSION
 
 
+def _get_authorize_url(db=None) -> str:
+    p = _get_linkedin_platform(db)
+    return p.get("authorize_url") or AUTHORIZE_URL
+
+
+def _get_token_url(db=None) -> str:
+    p = _get_linkedin_platform(db)
+    return p.get("token_url") or TOKEN_URL
+
+
+def _get_userinfo_url(db=None) -> str:
+    p = _get_linkedin_platform(db)
+    return p.get("userinfo_url") or USERINFO_URL
+
+
+def _get_images_url(db=None) -> str:
+    p = _get_linkedin_platform(db)
+    return p.get("images_url") or IMAGES_URL
+
+
+def _get_videos_url(db=None) -> str:
+    p = _get_linkedin_platform(db)
+    return p.get("videos_url") or VIDEOS_URL
+
+
 def _headers(access_token: str, version: str) -> dict:
     return {
         "Authorization": f"Bearer {access_token}",
@@ -78,13 +104,13 @@ def get_authorize_url(client_id: str, redirect_uri: str, scope: str, state: str)
         "state": state,
         "scope": scope or DEFAULT_SCOPE,
     }
-    return f"{AUTHORIZE_URL}?{urllib.parse.urlencode(params)}"
+    return f"{_get_authorize_url()}?{urllib.parse.urlencode(params)}"
 
 
 def exchange_code_for_token(code: str, client_id: str, client_secret: str, redirect_uri: str) -> dict:
     """Returns {access_token, expires_in, refresh_token?}."""
     resp = httpx.post(
-        TOKEN_URL,
+        _get_token_url(),
         data={
             "grant_type": "authorization_code",
             "code": code,
@@ -100,9 +126,9 @@ def exchange_code_for_token(code: str, client_id: str, client_secret: str, redir
     return resp.json()
 
 
-def get_person_urn(access_token: str) -> str:
+def get_person_urn(access_token: str, db=None) -> str:
     """OpenID Connect userinfo — 'sub' is used as the person's URN."""
-    resp = httpx.get(USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"}, timeout=20)
+    resp = httpx.get(_get_userinfo_url(db), headers={"Authorization": f"Bearer {access_token}"}, timeout=20)
     if resp.status_code >= 400:
         raise RuntimeError(f"LinkedIn userinfo {resp.status_code}: {resp.text[:400]}")
     sub = resp.json().get("sub")
@@ -146,7 +172,7 @@ def upload_image_to_linkedin(
 
     # Step 2 — initialize upload
     init_resp = httpx.post(
-        f"{IMAGES_URL}?action=initializeUpload",
+        f"{_get_images_url()}?action=initializeUpload",
         headers=hdrs,
         json={"initializeUploadRequest": {"owner": author_urn}},
         timeout=30,
@@ -175,6 +201,112 @@ def upload_image_to_linkedin(
     return image_urn
 
 
+# ── Video upload ─────────────────────────────────────────────────────────────
+
+def upload_video_to_linkedin(
+    access_token: str,
+    author_urn: str,
+    video_url: str,
+    version: str,
+) -> str:
+    """Download video from our S3/R2 storage and upload to LinkedIn.
+
+    Returns the LinkedIn video URN (e.g. urn:li:video:...) which is then
+    referenced in the post body's content.media block.
+
+    LinkedIn video upload flow (4 steps):
+      1. POST /rest/videos?action=initializeUpload  → uploadInstructions + video URN
+      2. PUT video bytes to each upload URL (chunked if >4MB)
+      3. POST /rest/videos?action=finalizeUpload    → confirms upload complete
+      4. Post using the video URN
+
+    Chunk size: LinkedIn requires chunks ≤ 4MB. We split automatically.
+    """
+    import logging
+    logger = logging.getLogger("nivaad.linkedin")
+
+    from app.services.storage import fetch_bytes as _fetch_bytes
+
+    # Step 1 — fetch video bytes from internal S3 storage
+    try:
+        video_bytes, content_type = _fetch_bytes(video_url)
+    except Exception as exc:
+        raise RuntimeError(f"Could not read video from storage: {exc}") from exc
+
+    file_size = len(video_bytes)
+    logger.info("[linkedin] video size=%d bytes content_type=%s", file_size, content_type)
+
+    hdrs = _headers(access_token, version)
+
+    # Step 2 — initialize upload
+    init_resp = httpx.post(
+        f"{_get_videos_url()}?action=initializeUpload",
+        headers=hdrs,
+        json={
+            "initializeUploadRequest": {
+                "owner": author_urn,
+                "fileSizeBytes": file_size,
+                "uploadCaptions": False,
+                "uploadThumbnail": False,
+            }
+        },
+        timeout=30,
+    )
+    if init_resp.status_code >= 400:
+        raise RuntimeError(f"LinkedIn video initializeUpload {init_resp.status_code}: {init_resp.text[:600]}")
+
+    logger.info("[linkedin] video initializeUpload response: %s", init_resp.text[:400])
+    init_data = init_resp.json().get("value", {})
+    video_urn = init_data.get("video")
+    upload_instructions = init_data.get("uploadInstructions", [])
+
+    if not video_urn or not upload_instructions:
+        raise RuntimeError(f"LinkedIn video initializeUpload returned unexpected shape: {init_resp.text[:400]}")
+
+    logger.info("[linkedin] video URN=%s chunks=%d", video_urn, len(upload_instructions))
+
+    # Step 3 — PUT each chunk to its upload URL
+    etags = []
+    for instruction in upload_instructions:
+        upload_url = instruction.get("uploadUrl")
+        first_byte = instruction.get("firstByte", 0)
+        last_byte = instruction.get("lastByte", file_size - 1)
+        chunk = video_bytes[first_byte: last_byte + 1]
+
+        put_resp = httpx.put(
+            upload_url,
+            content=chunk,
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=300,  # large chunks can take time
+        )
+        if put_resp.status_code not in (200, 201):
+            raise RuntimeError(f"LinkedIn video chunk PUT {put_resp.status_code}: {put_resp.text[:400]}")
+
+        etag = put_resp.headers.get("ETag") or put_resp.headers.get("etag") or ""
+        etags.append({"firstByte": first_byte, "lastByte": last_byte, "uploadedPartId": etag})
+        logger.info("[linkedin] chunk bytes=%d-%d uploaded etag=%s", first_byte, last_byte, etag)
+
+    # Step 4 — finalize upload
+    finalize_resp = httpx.post(
+        f"{_get_videos_url()}?action=finalizeUpload",
+        headers=hdrs,
+        json={
+            "finalizeUploadRequest": {
+                "video": video_urn,
+                "uploadToken": "",
+                "uploadedPartIds": [e["uploadedPartId"] for e in etags],
+            }
+        },
+        timeout=60,
+    )
+    logger.info("[linkedin] video finalizeUpload response status=%d body=%s", finalize_resp.status_code, finalize_resp.text[:400])
+    if finalize_resp.status_code >= 400:
+        raise RuntimeError(f"LinkedIn video finalizeUpload {finalize_resp.status_code}: {finalize_resp.text[:600]}")
+
+    logger.info("[linkedin] video upload finalized → %s", video_urn)
+    return video_urn
+
+
 # ── Post ──────────────────────────────────────────────────────────────────────
 
 def post_to_linkedin(
@@ -184,12 +316,12 @@ def post_to_linkedin(
     db=None,
     api_version: str | None = None,
     image_url: str | None = None,
+    video_url: str | None = None,
 ) -> str:
-    """Post text (+ optional image) to LinkedIn. Returns the new post's URN.
+    """Post text (+ optional image or video) to LinkedIn. Returns the new post URN.
 
-    If image_url is provided, runs the 3-step LinkedIn image upload flow
-    and attaches the image to the post. Falls back to text-only if the
-    image upload fails (logs a warning rather than aborting the whole post).
+    Media priority: video_url > image_url > text-only.
+    Upload failures fall back to text-only (logs a warning).
 
     Pass api_version explicitly (preferred when called from async context)
     or db (sync Session only) to override LINKEDIN_API_VERSION default.
@@ -200,15 +332,26 @@ def post_to_linkedin(
     version = (api_version or "").strip() or _get_api_version(db)
     hdrs = _headers(access_token, version)
 
-    # ── Image upload (optional) ───────────────────────────────────────
-    image_urn: str | None = None
-    if image_url:
+    media_urn: str | None = None
+    media_type: str | None = None  # "image" or "video"
+
+    # ── Video upload (takes priority over image) ──────────────────────
+    if video_url:
+        # Let video upload exceptions propagate — this surfaces the real
+        # error in the task log and marks the post as failed rather than
+        # silently falling back to text-only and reporting success.
+        media_urn = upload_video_to_linkedin(access_token, author_urn, video_url, version)
+        media_type = "video"
+        logger.info("[linkedin] video uploaded → %s", media_urn)
+
+    # ── Image upload (only if no video) ──────────────────────────────
+    elif image_url:
         try:
-            image_urn = upload_image_to_linkedin(access_token, author_urn, image_url, version)
-            logger.info("[linkedin] image uploaded → %s", image_urn)
+            media_urn = upload_image_to_linkedin(access_token, author_urn, image_url, version)
+            media_type = "image"
+            logger.info("[linkedin] image uploaded → %s", media_urn)
         except Exception as exc:
             logger.warning("[linkedin] image upload failed, posting text-only: %s", exc)
-            image_urn = None
 
     # ── Build post body ───────────────────────────────────────────────
     body: dict = {
@@ -224,13 +367,23 @@ def post_to_linkedin(
         "isReshareDisabledByAuthor": False,
     }
 
-    if image_urn:
-        body["content"] = {
-            "media": {
-                "altText": "Ad image",
-                "id": image_urn,
+    if media_urn:
+        if media_type == "video":
+            # For video URNs LinkedIn infers the media category automatically
+            # from the URN — do NOT include altText or any category override,
+            # as that triggers "field override not supported for category" (400).
+            body["content"] = {
+                "media": {
+                    "id": media_urn,
+                }
             }
-        }
+        else:
+            body["content"] = {
+                "media": {
+                    "altText": "Ad image",
+                    "id": media_urn,
+                }
+            }
 
     posts_url = _get_posts_url(db)
     resp = httpx.post(posts_url, headers=hdrs, json=body, timeout=30)

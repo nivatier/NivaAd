@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { AppShell, Panel } from "@/components/app-shell";
 import { api } from "@/lib/api";
 import { useRequireCapability } from "@/hooks/use-require-capability";
+import { useAuth } from "@/hooks/use-auth";
+import { FreePlanUpsellModal } from "@/components/free-plan-upsell-modal";
 
 export const Route = createFileRoute("/app/connections")({
   component: Connections,
@@ -38,6 +40,9 @@ function Connections() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [ratioSaving, setRatioSaving] = useState<string | null>(null);
+  const { me } = useAuth();
+  const isFree = !me?.tier || me.tier === "free";
+  const [showUpsell, setShowUpsell] = useState(false);
 
   async function saveRatio(platformId: string, ratio: string) {
     setAvailable((cur) => ({ ...cur, [platformId]: { ...cur[platformId], video_ratio: ratio } }));
@@ -148,7 +153,22 @@ function Connections() {
                         {!built && <div className="text-[11px] text-muted-foreground">Coming soon</div>}
                       </div>
                     </div>
-                    {built ? (
+                    {/* Free users: linkedin_personal is fully functional;
+                        every other platform shows the lock/upsell regardless
+                        of whether the integration is built yet. */}
+                    {isFree && c.platform !== "linkedin_personal" ? (
+                      <button
+                        onClick={() => setShowUpsell(true)}
+                        className="rounded-full px-3 py-1 text-xs font-semibold transition-opacity hover:opacity-80"
+                        style={{
+                          background: "linear-gradient(135deg, oklch(0.85 0.18 52 / 0.15), oklch(0.72 0.22 45 / 0.12))",
+                          border: "1px solid oklch(0.85 0.18 52 / 0.40)",
+                          color: "oklch(0.88 0.18 52)",
+                        }}
+                      >
+                        🔒 Unlock to connect
+                      </button>
+                    ) : built ? (
                       isConnected ? (
                         <button disabled={busy === c.platform} onClick={() => disconnect(c.platform)} className="rounded-full border border-destructive/40 px-3 py-1 text-xs text-destructive disabled:opacity-50">
                           {busy === c.platform ? "…" : "Disconnect"}
@@ -168,6 +188,7 @@ function Connections() {
           )}
         </Panel>
       </div>
+      {showUpsell && <FreePlanUpsellModal forceOpen onClose={() => setShowUpsell(false)} />}
     </AppShell>
   );
 }

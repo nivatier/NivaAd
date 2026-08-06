@@ -1,5 +1,7 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type React from "react";
+import { RepostModal } from "@/components/repost-modal";
+import { api, type AdOut } from "@/lib/api";
 
 export type Platform = { id: string; name: string; color: string; tag: string; ratio: string };
 
@@ -486,6 +488,50 @@ function PostingStatusModal({
   );
 }
 
+/** Loads an ad by ID then renders the full RepostModal — same experience
+ * as My Ads. Used by the "👁 Preview" button on the step-3 result cards. */
+function AdPreviewModal({ adId, onClose }: { adId: string; onClose: () => void }) {
+  const [ad, setAd] = useState<AdOut | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    api(`/ads/${adId}`).then((data) => {
+      if (!cancelled) { setAd(data); setLoading(false); }
+    }).catch((e: any) => {
+      if (!cancelled) { setErr(e.message || "Could not load ad"); setLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [adId]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  if (loading) return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <svg className="h-8 w-8 animate-spin text-primary" fill="none" viewBox="0 0 24 24">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+      </svg>
+    </div>
+  );
+
+  if (err || !ad) return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="rounded-2xl border border-border bg-card p-6 text-center">
+        <div className="text-xs text-destructive mb-3">{err || "Could not load ad"}</div>
+        <button onClick={onClose} className="rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground">Close</button>
+      </div>
+    </div>
+  );
+
+  return <RepostModal ad={ad} onClose={onClose} onUpdated={() => {}} />;
+}
+
 export function PlatformPreviewCard({
   platform,
   result,
@@ -516,9 +562,6 @@ export function PlatformPreviewCard({
   const [showPreview, setShowPreview] = useState(false);
   const [detectedRatio, setDetectedRatio] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
-  const [postModalOpen, setPostModalOpen] = useState(false);
-  const [postPhase, setPostPhase] = useState<"sending" | "waiting" | "success" | "error">("sending");
-  const [postError, setPostError] = useState("");
   const handleVideoDimensions = useCallback((w: number, h: number) => {
     setDetectedRatio(`${w}/${h}`);
   }, []);
@@ -529,38 +572,7 @@ export function PlatformPreviewCard({
 
   async function handlePost() {
     setPosting(true);
-    setPostError("");
-    setPostPhase("sending");
-    setPostModalOpen(true);
-    onPost(); // optimistic update in parent
-    if (adId) {
-      try {
-        const { api } = await import("@/lib/api");
-        const { job_id } = await api(`/ads/${adId}/post`, { method: "POST", body: { platforms: [platform.id] } });
-        setPostPhase("waiting");
-        for (let i = 0; i < 40; i++) {
-          await new Promise((r) => setTimeout(r, 1500));
-          const job = await api(`/ads/${adId}/post-status/${job_id}`);
-          if (job.status === "done" || job.status === "failed") {
-            if (job.status === "failed") {
-              const errMsg = job.failed?.[platform.id] || job.error || "Post failed";
-              setPostError(errMsg);
-              setPostPhase("error");
-            } else {
-              setPostPhase("success");
-              setTimeout(() => setPostModalOpen(false), 2000);
-            }
-            break;
-          }
-        }
-      } catch (e: any) {
-        setPostError(e.message || "Post failed");
-        setPostPhase("error");
-      }
-    } else {
-      setPostPhase("success");
-      setTimeout(() => setPostModalOpen(false), 2000);
-    }
+    onPost(); // parent (app.index.tsx) opens PostingProgressModal and handles status
     setPosting(false);
   }
 
@@ -612,16 +624,10 @@ export function PlatformPreviewCard({
           {posting ? "Posting…" : `Post to ${platform.name}`}
         </button>
       )}
-      {showPreview && variant && (
-        <PostedViewModal platform={platform} variant={variant} brandKit={brandKit ?? null} onClose={() => setShowPreview(false)} />
-      )}
-      {postModalOpen && (
-        <PostingStatusModal
-          platform={platform}
-          phase={postPhase}
-          error={postError}
-          onClose={() => setPostModalOpen(false)}
-        />
+      {showPreview && (
+        adId
+          ? <AdPreviewModal adId={adId} onClose={() => setShowPreview(false)} />
+          : variant && <PostedViewModal platform={platform} variant={variant} brandKit={brandKit ?? null} onClose={() => setShowPreview(false)} />
       )}
     </div>
   );

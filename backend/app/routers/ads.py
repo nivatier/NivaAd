@@ -327,6 +327,8 @@ async def preview_cost(data: PreviewCostIn, user: User = Depends(require_capabil
 
 @router.post("/preview-prompt", response_model=PromptPreviewOut)
 async def preview_prompt(data: PromptPreviewIn, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    import logging as _log
+    _log.getLogger("nivaad.ads").warning("[DEBUG preview-prompt] copy_directions=%r tone=%r", data.copy_directions, data.tone)
     # Resolve camera style and music label the same way create_ad does,
     # so the preview brief is identical to the real generation brief.
     camera_style_prompt = await _resolve_camera_style_prompt(db, data.video_camera_style_ids) if data.video_camera_style_ids else None
@@ -334,7 +336,8 @@ async def preview_prompt(data: PromptPreviewIn, user: User = Depends(get_current
     brief = {
         "product_name": data.product_name, "description": data.description,
         "audience": data.audience, "offer": data.offer, "goal": data.goal,
-        "tone": data.tone, "env": data.env, "image_scene": data.image_scene,
+        "tone": data.tone, "copy_directions": data.copy_directions or None,
+        "env": data.env, "image_scene": data.image_scene,
         "text_overlay": data.text_overlay, "tagline": data.tagline,
         "product_image_url": "preview-only" if data.has_photo else None,
         # Video-specific fields — must be included so _video_prompt /
@@ -565,7 +568,8 @@ async def create_ad(data: AdCreateIn, user: User = Depends(require_capability("c
         brief={
             "product_name": data.product_name, "description": data.description,
             "audience": data.audience, "offer": data.offer, "goal": data.goal,
-            "tone": data.tone, "env": data.env, "image_scene": data.image_scene,
+            "tone": data.tone, "copy_directions": data.copy_directions or None,
+            "env": data.env, "image_scene": data.image_scene,
             "text_overlay": data.text_overlay,
             "tagline": data.tagline, "product_image_url": product_image_url,
             "image_reference_image_url": image_reference_image_url,

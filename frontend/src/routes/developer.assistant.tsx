@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { DeveloperShell } from "@/components/developer-shell";
-import { NAV } from "@/components/app-shell";
+import { NAV } from "@/lib/nav-config";
 import { useRequireDeveloperPermission, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
 import { devApi } from "@/lib/dev-api";
 

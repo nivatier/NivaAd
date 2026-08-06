@@ -6,11 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.deps import get_current_user, require_capability, require_role
-from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, GenerationJob, Notification, ScrapedSite, User
+from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, CreditLedger, GenerationJob, Notification, ScrapedSite, User
 from app.schemas import (
     AdCreateIn, AgentEventIn, AgentEventOut, AgentRecommendationOut,
     AgentScrapeJobOut, AgentSettingsOut, AgentSettingsUpdateIn, NotificationOut, QuickStartIn,
-    QuickStartFromSiteIn, ScrapedSiteOut, ScrapedSiteLabelIn,
+    QuickStartFromSiteIn, RecommendationPatchIn, RecommendationRegenerateIn,
+    ScrapedSiteOut, ScrapedSiteLabelIn,
 )
 from app.services import agent_settings as agent_settings_svc
 from app.services import credits as credit_svc
@@ -18,6 +19,18 @@ from app.worker import celery_app
 from app.routers.ads import create_ad
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+
+IDEA_GEN_COST = 0.25  # credits charged per idea-generation call (quick-start, quick-spark, regenerate)
+
+
+async def _charge_idea_credits(db: AsyncSession, user: User, reason: str) -> None:
+    """Deduct IDEA_GEN_COST credits, raising 402 if balance is insufficient."""
+    bal = await credit_svc.balance(db, user.company_id)
+    if bal < IDEA_GEN_COST:
+        raise HTTPException(402, f"Not enough credits: generating ideas costs {IDEA_GEN_COST} credit, you have {bal:.2f}. Top up or upgrade your plan.")
+    db.add(CreditLedger(company_id=user.company_id, delta=-IDEA_GEN_COST, reason=reason))
+    await db.commit()
+
 
 
 def _next_run_date(ev: AgentEvent) -> str | None:
@@ -53,6 +66,7 @@ def _event_out(ev: AgentEvent) -> AgentEventOut:
 
 @router.post("/quick-start", response_model=AgentScrapeJobOut)
 async def start_quick_start(data: QuickStartIn, user: User = Depends(require_capability("create_ads")), db: AsyncSession = Depends(get_db)):
+    await _charge_idea_credits(db, user, "idea_gen_website_spark")
     job = AgentScrapeJob(company_id=user.company_id, url=data.url, count=data.count, focus=data.focus or None, status="queued")
     db.add(job)
     await db.flush()
@@ -73,16 +87,11 @@ async def get_quick_start_job(job_id: str, user: User = Depends(get_current_user
 @router.get("/recommendations", response_model=list[AgentRecommendationOut])
 async def list_recommendations(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     rows = (await db.scalars(
-        select(AgentRecommendation).where(AgentRecommendation.company_id == user.company_id).order_by(AgentRecommendation.created_at.desc())
+        select(AgentRecommendation)
+        .where(AgentRecommendation.company_id == user.company_id, AgentRecommendation.status == "pending")
+        .order_by(AgentRecommendation.created_at.desc())
     )).all()
-    return [
-        AgentRecommendationOut(
-            id=str(r.id), source_url=r.source_url, status=r.status, title=r.title, description=r.description,
-            audience=r.audience or "",
-            platforms=r.platforms or [], created_ad_id=str(r.created_ad_id) if r.created_ad_id else None, created_at=r.created_at,
-        )
-        for r in rows
-    ]
+    return [_rec_out(r) for r in rows]
 
 
 @router.post("/recommendations/{rec_id}/create")
@@ -148,16 +157,155 @@ async def dismiss_recommendation(rec_id: str, user: User = Depends(require_capab
     rec.status = "dismissed"
     await db.commit()
     rows = (await db.scalars(
-        select(AgentRecommendation).where(AgentRecommendation.company_id == user.company_id).order_by(AgentRecommendation.created_at.desc())
+        select(AgentRecommendation)
+        .where(AgentRecommendation.company_id == user.company_id, AgentRecommendation.status == "pending")
+        .order_by(AgentRecommendation.created_at.desc())
     )).all()
-    return [
-        AgentRecommendationOut(
-            id=str(r.id), source_url=r.source_url, status=r.status, title=r.title, description=r.description,
-            audience=r.audience or "",
-            platforms=r.platforms or [], created_ad_id=str(r.created_ad_id) if r.created_ad_id else None, created_at=r.created_at,
-        )
-        for r in rows
-    ]
+    return [_rec_out(r) for r in rows]
+
+
+def _rec_out(r: AgentRecommendation) -> AgentRecommendationOut:
+    return AgentRecommendationOut(
+        id=str(r.id), source_url=r.source_url, status=r.status,
+        title=r.title, description=r.description, audience=r.audience or "",
+        platforms=r.platforms or [], voice=r.voice, reference_style=r.reference_style,
+        product_id=str(r.product_id) if r.product_id else None,
+        created_ad_id=str(r.created_ad_id) if r.created_ad_id else None,
+        created_at=r.created_at,
+    )
+
+
+@router.patch("/recommendations/{rec_id}", response_model=AgentRecommendationOut)
+async def patch_recommendation(
+    rec_id: str, data: RecommendationPatchIn,
+    user: User = Depends(require_capability("create_ads")), db: AsyncSession = Depends(get_db),
+):
+    """Inline-edit title, description, platforms, product, voice or reference_style on a card."""
+    rec = await db.get(AgentRecommendation, rec_id)
+    if rec is None or rec.company_id != user.company_id:
+        raise HTTPException(404, "No such recommendation")
+    if data.title is not None:
+        rec.title = data.title[:200]
+    if data.description is not None:
+        rec.description = data.description
+    if data.platforms is not None:
+        rec.platforms = data.platforms
+    if data.product_id is not None:
+        rec.product_id = data.product_id
+    if data.voice is not None:
+        rec.voice = data.voice
+    if data.reference_style is not None:
+        rec.reference_style = data.reference_style
+    await db.commit()
+    await db.refresh(rec)
+    return _rec_out(rec)
+
+
+@router.post("/recommendations/{rec_id}/save", response_model=AgentRecommendationOut)
+async def save_recommendation(
+    rec_id: str,
+    user: User = Depends(require_capability("create_ads")), db: AsyncSession = Depends(get_db),
+):
+    """Move a pending recommendation to 'saved' so it appears in the Saved Ideas panel."""
+    rec = await db.get(AgentRecommendation, rec_id)
+    if rec is None or rec.company_id != user.company_id:
+        raise HTTPException(404, "No such recommendation")
+    if rec.status != "pending":
+        raise HTTPException(409, f"Recommendation is already {rec.status}")
+    rec.status = "saved"
+    await db.commit()
+    await db.refresh(rec)
+    return _rec_out(rec)
+
+
+@router.post("/recommendations/{rec_id}/unsave", response_model=AgentRecommendationOut)
+async def unsave_recommendation(
+    rec_id: str,
+    user: User = Depends(require_capability("create_ads")), db: AsyncSession = Depends(get_db),
+):
+    """Move a saved recommendation back to pending."""
+    rec = await db.get(AgentRecommendation, rec_id)
+    if rec is None or rec.company_id != user.company_id:
+        raise HTTPException(404, "No such recommendation")
+    if rec.status != "saved":
+        raise HTTPException(409, "Recommendation is not saved")
+    rec.status = "pending"
+    await db.commit()
+    await db.refresh(rec)
+    return _rec_out(rec)
+
+
+@router.get("/recommendations/saved", response_model=list[AgentRecommendationOut])
+async def list_saved_recommendations(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    """Returns all saved recommendations for the right-panel Saved Ideas section."""
+    rows = (await db.scalars(
+        select(AgentRecommendation)
+        .where(AgentRecommendation.company_id == user.company_id, AgentRecommendation.status == "saved")
+        .order_by(AgentRecommendation.created_at.desc())
+    )).all()
+    return [_rec_out(r) for r in rows]
+
+
+@router.post("/recommendations/{rec_id}/regenerate", response_model=AgentRecommendationOut)
+async def regenerate_recommendation(
+    rec_id: str, data: RecommendationRegenerateIn,
+    user: User = Depends(require_capability("create_ads")), db: AsyncSession = Depends(get_db),
+):
+    """Rewrites the description of one recommendation using the chosen voice and reference style."""
+    import re
+    from app.services import text_gen
+    from app.services.credits import get_available_models
+
+    await _charge_idea_credits(db, user, "idea_gen_rewrite")
+    rec = await db.get(AgentRecommendation, rec_id)
+    if rec is None or rec.company_id != user.company_id:
+        raise HTTPException(404, "No such recommendation")
+
+    # Derive a clean domain label from the source URL for courtesy lines
+    domain_raw = re.sub(r"https?://(www\.)?", "", rec.source_url).split("/")[0]
+    domain_label = domain_raw.capitalize()
+
+    voice_instructions = {
+        "we":      "Use 'We' and 'Our' to refer to the company throughout.",
+        "i":       "Use 'I' and 'My' — write from a founder/personal perspective.",
+        "neutral": "Use third-person language — refer to 'the brand' or 'the company'.",
+        "you":     "Address the reader directly using 'You' and 'Your'.",
+    }
+    reference_instructions = {
+        "none":  "",
+        "start": f"Begin the description with 'Courtesy {domain_label} — ' before the ad idea.",
+        "end":   f"End the description with ' — Courtesy {domain_label}'.",
+    }
+
+    voice_instr = voice_instructions.get(data.voice, voice_instructions["neutral"])
+    ref_instr = reference_instructions.get(data.reference_style, "")
+
+    prompt = (
+        f"Rewrite the following social media ad idea description. "
+        f"{voice_instr} "
+        f"{ref_instr} "
+        f"Keep the same core idea and audience. Output ONLY the rewritten description — "
+        f"no preamble, no labels, no quotes.\n\n"
+        f"Ad idea title: {rec.title}\n"
+        f"Current description: {rec.description}"
+    )
+
+    available = await get_available_models(db)
+    text_models = [m for m in available.get("text", []) if m.get("enabled", True)]
+    if not text_models:
+        raise HTTPException(422, "No enabled text model configured.")
+
+    new_desc = text_gen.generate_text(prompt, text_models[0]["model"])
+    if isinstance(new_desc, dict):
+        new_desc = new_desc.get("text") or new_desc.get("description") or rec.description
+    rec.description = str(new_desc).strip()
+    rec.voice = data.voice
+    rec.reference_style = data.reference_style
+    await db.commit()
+    await db.refresh(rec)
+    return _rec_out(rec)
 
 
 # ── Recurring Events ─────────────────────────────────────────────────
@@ -453,6 +601,7 @@ async def quick_start_from_saved_site(
 ):
     """Generate recommendations from a previously saved site scrape —
     no re-crawl, uses the stored content directly."""
+    await _charge_idea_credits(db, user, "idea_gen_website_spark")
     import uuid as _uuid
     site = await db.get(ScrapedSite, _uuid.UUID(site_id))
     if not site or site.company_id != user.company_id:
@@ -478,6 +627,7 @@ async def quick_start_from_saved_site(
 async def quick_spark(
     body: dict,
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Generate ad draft concepts from a user's idea via OpenRouter.
     Replaced the original browser→Anthropic direct call so all LLM
@@ -491,6 +641,7 @@ async def quick_spark(
     count = min(int(body.get("count", 4)), 6)
     if not idea:
         raise HTTPException(422, "idea is required")
+    await _charge_idea_credits(db, user, "idea_gen_quick_spark")
 
     system_prompt = f"""You are an expert marketing strategist. Given a user's ad idea, generate {count} distinct, creative ad draft concepts. Each should have a different angle, tone, or target audience slice.
 

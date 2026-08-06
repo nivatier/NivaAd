@@ -1772,6 +1772,11 @@ def _to_out(p: dict) -> PlatformIntegrationOut:
         video_ratio=p.get("video_ratio", "1:1"),
         api_url=p.get("api_url"),
         api_version=p.get("api_version"),
+        authorize_url=p.get("authorize_url"),
+        token_url=p.get("token_url"),
+        userinfo_url=p.get("userinfo_url"),
+        images_url=p.get("images_url"),
+        videos_url=p.get("videos_url"),
     )
 
 
@@ -1795,6 +1800,11 @@ async def add_platform_integration(data: AddPlatformIntegrationIn, _: str = Depe
         "video_ratio": data.video_ratio,
         "api_url": data.api_url or None,
         "api_version": data.api_version.strip() if data.api_version else None,
+        "authorize_url": data.authorize_url or None,
+        "token_url": data.token_url or None,
+        "userinfo_url": data.userinfo_url or None,
+        "images_url": data.images_url or None,
+        "videos_url": data.videos_url or None,
     })
     await platform_config.save_platform_integrations(db, platforms)
     return [_to_out(p) for p in platforms]
@@ -1829,6 +1839,16 @@ async def update_platform_integration(platform_id: str, data: UpdatePlatformInte
                 p["api_url"] = data.api_url or None
             if data.api_version is not None:
                 p["api_version"] = data.api_version.strip() or None
+            if data.authorize_url is not None:
+                p["authorize_url"] = data.authorize_url or None
+            if data.token_url is not None:
+                p["token_url"] = data.token_url or None
+            if data.userinfo_url is not None:
+                p["userinfo_url"] = data.userinfo_url or None
+            if data.images_url is not None:
+                p["images_url"] = data.images_url or None
+            if data.videos_url is not None:
+                p["videos_url"] = data.videos_url or None
     if not found:
         raise HTTPException(404, "That platform integration no longer exists.")
     await platform_config.save_platform_integrations(db, platforms)

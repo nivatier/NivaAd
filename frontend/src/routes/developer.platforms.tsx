@@ -24,13 +24,18 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
   const [videoRatio, setVideoRatio] = useState(entry.video_ratio || "1:1");
   const [apiUrl, setApiUrl] = useState(entry.api_url || "");
   const [apiVersion, setApiVersion] = useState(entry.api_version || "");
+  const [authorizeUrl, setAuthorizeUrl] = useState(entry.authorize_url || "");
+  const [tokenUrl, setTokenUrl] = useState(entry.token_url || "");
+  const [userinfoUrl, setUserinfoUrl] = useState(entry.userinfo_url || "");
+  const [imagesUrl, setImagesUrl] = useState(entry.images_url || "");
+  const [videosUrl, setVideosUrl] = useState(entry.videos_url || "");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [togglingEnabled, setTogglingEnabled] = useState(false);
 
   async function save() {
     setSaving(true);
-    const body: Record<string, unknown> = { label: label.trim(), client_id: clientId.trim(), scope: scope.trim() || null, redirect_uri: redirectUri.trim() || null, video_ratio: videoRatio, api_url: apiUrl.trim() || null, api_version: apiVersion.trim() || null };
+    const body: Record<string, unknown> = { label: label.trim(), client_id: clientId.trim(), scope: scope.trim() || null, redirect_uri: redirectUri.trim() || null, video_ratio: videoRatio, api_url: apiUrl.trim() || null, api_version: apiVersion.trim() || null, authorize_url: authorizeUrl.trim() || null, token_url: tokenUrl.trim() || null, userinfo_url: userinfoUrl.trim() || null, images_url: imagesUrl.trim() || null, videos_url: videosUrl.trim() || null };
     if (clientSecret.trim()) body.client_secret = clientSecret.trim(); // omit entirely if left blank — keeps the existing secret unchanged
     await onSave(entry.id, body);
     setSaving(false);
@@ -61,7 +66,7 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
           <input value={redirectUri} onChange={(e) => setRedirectUri(e.target.value)} placeholder="Redirect URI, e.g. http://localhost:8000/connections/linkedin/callback" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder="OAuth scope, e.g. openid profile w_member_social" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
           <div>
-            <div className="mb-1 text-[10px] text-muted-foreground">Platform API URL <span className="font-normal opacity-60">(posting endpoint, e.g. https://api.linkedin.com/rest/posts)</span></div>
+            <div className="mb-1 text-[10px] text-muted-foreground">Posts URL <span className="font-normal opacity-60">(posting endpoint, e.g. https://api.linkedin.com/rest/posts)</span></div>
             <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="https://api.platform.com/..." className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
           </div>
           <div>
@@ -69,6 +74,23 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
               API Version <span className="font-normal opacity-60">(LinkedIn only — YYYYMM format, e.g. 202501. Leave blank to use the system default.)</span>
             </div>
             <input value={apiVersion} onChange={(e) => setApiVersion(e.target.value)} placeholder="e.g. 202501" className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
+          </div>
+          {/* LinkedIn-specific URL overrides */}
+          <div className="rounded-lg border border-border/40 bg-background/20 p-2.5 space-y-2">
+            <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">OAuth & API URL overrides <span className="font-normal normal-case opacity-60">— leave blank to use system defaults</span></div>
+            {[
+              { label: "Authorize URL", placeholder: "https://www.linkedin.com/oauth/v2/authorization", value: authorizeUrl, set: setAuthorizeUrl },
+              { label: "Token URL", placeholder: "https://www.linkedin.com/oauth/v2/accessToken", value: tokenUrl, set: setTokenUrl },
+              { label: "Userinfo URL", placeholder: "https://api.linkedin.com/v2/userinfo", value: userinfoUrl, set: setUserinfoUrl },
+              { label: "Images URL", placeholder: "https://api.linkedin.com/rest/images", value: imagesUrl, set: setImagesUrl },
+              { label: "Videos URL", placeholder: "https://api.linkedin.com/rest/videos", value: videosUrl, set: setVideosUrl },
+            ].map(({ label, placeholder, value, set }) => (
+              <div key={label}>
+                <div className="mb-0.5 text-[10px] text-muted-foreground">{label}</div>
+                <input value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder}
+                  className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
+              </div>
+            ))}
           </div>
           <div>
             <div className="mb-1 text-[10px] text-muted-foreground">Video posting ratio — what the reframe pipeline treats as this platform's required format</div>

@@ -305,9 +305,20 @@ export function RobotMascot() {
     setIntroSize(0); // collapse from big-intro size immediately if user clicks mid-intro
     introMsgRef.current = null;
     const rect = el.getBoundingClientRect();
-    const left = Math.min(rect.right + 16, window.innerWidth - baseSize - 8);
-    const top = Math.max(8, rect.top + rect.height / 2 - baseSize / 2);
-    setPos({ top, left });
+    // Place the mascot beside the clicked icon, flipping to whichever side
+    // has more room so it never lands off-screen or on top of the element.
+    const spaceRight = window.innerWidth - rect.right - baseSize - 20;
+    const spaceLeft  = rect.left - baseSize - 20;
+    const visitLeft = spaceRight >= 0
+      ? rect.right + 16                                          // fits on the right
+      : spaceLeft  >= 0
+        ? rect.left - baseSize - 16                             // flip to the left
+        : Math.max(4, window.innerWidth - baseSize - 8);        // fallback: far-right safe zone
+    const visitTop = Math.min(
+      Math.max(8, rect.top + rect.height / 2 - baseSize / 2),
+      window.innerHeight - baseSize - 8,
+    );
+    setPos({ top: visitTop, left: visitLeft });
     setDialog({ text, typed: reducedMotion ? text.length : 0 });
     setPhase("greeting");
     greetTimer.current = window.setTimeout(() => {
@@ -577,12 +588,59 @@ export function RobotMascot() {
         // the robot while being dragged instead of staying at its original spot.
         const robotTop  = pos ? pos.top  : dockTop;
         const robotLeft = pos ? pos.left : dockLeft(currentSize);
-        const dialogTop  = introSize > 0
-          ? robotTop + currentSize + 16                                        // intro: below the big face
-          : robotTop + 6;                                                      // normal: beside the robot
-        const dialogLeft = introSize > 0
-          ? Math.max(16, Math.min(robotLeft + currentSize / 2 - 140, window.innerWidth - 290))
-          : Math.min(robotLeft + currentSize + 10, window.innerWidth - 260);
+        // ── Smart 4-way dialog placement ──
+        // Bubble width (px) — must match max-w below (240 normal, 320 intro).
+        const bubbleW = introSize > 0 ? 320 : 240;
+        const bubbleH = introSize > 0 ? 160 : 110; // rough height estimate for vertical checks
+        const GAP = 10; // gap between mascot edge and bubble
+
+        let dialogTop: number;
+        let dialogLeft: number;
+
+        if (introSize > 0) {
+          // Intro big-face: always below, centred under the face
+          dialogTop  = robotTop + currentSize + GAP;
+          dialogLeft = Math.max(GAP, Math.min(
+            robotLeft + currentSize / 2 - bubbleW / 2,
+            window.innerWidth - bubbleW - GAP,
+          ));
+        } else {
+          // Normal visit/sleep/wake bubble — find the side with the most room
+          const spaceRight  = window.innerWidth  - (robotLeft + currentSize) - GAP;
+          const spaceLeft   = robotLeft - GAP;
+          const spaceBelow  = window.innerHeight - (robotTop  + currentSize) - GAP;
+          const spaceAbove  = robotTop - GAP;
+
+          if (spaceRight >= bubbleW) {
+            // ── Right (default) ──
+            dialogLeft = robotLeft + currentSize + GAP;
+            dialogTop  = Math.min(
+              Math.max(GAP, robotTop),
+              window.innerHeight - bubbleH - GAP,
+            );
+          } else if (spaceLeft >= bubbleW) {
+            // ── Left flip ──
+            dialogLeft = robotLeft - bubbleW - GAP;
+            dialogTop  = Math.min(
+              Math.max(GAP, robotTop),
+              window.innerHeight - bubbleH - GAP,
+            );
+          } else if (spaceAbove >= bubbleH) {
+            // ── Above flip ──
+            dialogTop  = robotTop - bubbleH - GAP;
+            dialogLeft = Math.max(GAP, Math.min(
+              robotLeft + currentSize / 2 - bubbleW / 2,
+              window.innerWidth - bubbleW - GAP,
+            ));
+          } else {
+            // ── Below fallback ──
+            dialogTop  = robotTop + currentSize + GAP;
+            dialogLeft = Math.max(GAP, Math.min(
+              robotLeft + currentSize / 2 - bubbleW / 2,
+              window.innerWidth - bubbleW - GAP,
+            ));
+          }
+        }
         return (
           <div
             data-robot-ui

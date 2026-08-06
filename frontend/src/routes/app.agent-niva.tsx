@@ -13,7 +13,7 @@ export const Route = createFileRoute("/app/agent-niva")({
 });
 
 type ScrapeJob = { id: string; url: string; count: number; status: string; error: string | null; created_at: string };
-type Recommendation = { id: string; source_url: string; status: string; title: string; description: string; audience: string; platforms: string[]; created_ad_id: string | null; created_at: string };
+type Recommendation = { id: string; source_url: string; status: string; title: string; description: string; audience: string; platforms: string[]; voice: string | null; reference_style: string | null; product_id: string | null; created_ad_id: string | null; created_at: string };
 type AgentEvent = {
   id: string; name: string; month: number; day: number; lead_days: number; guidance: string; platforms: string[];
   product_id: string | null; enabled: boolean; approval_mode: string;
@@ -191,7 +191,9 @@ function EventModal({ editing, products, defaultApproval, brandLogoUrl, onSave, 
   const [wishTone, setWishTone] = useState(editing?.wish_tone ?? "warm");
   const [visualStyle, setVisualStyle] = useState(editing?.visual_style ?? "festive");
   const [guidance, setGuidance] = useState(editing?.guidance ?? "");
-  const [platforms, setPlatforms] = useState<string[]>(editing?.platforms ?? ["facebook", "instagram"]);
+  // Default to connected platforms when creating a new event — not a hardcoded list.
+  // connectedPlatformIds is populated after the hook resolves, so we sync once it loads.
+  const [platforms, setPlatforms] = useState<string[]>(editing?.platforms ?? []);
   const [productId, setProductId] = useState(editing?.product_id ?? "");
   const [approvalMode, setApprovalMode] = useState(editing?.approval_mode ?? defaultApproval);
   // Reference image — either from product auto-pick, existing stored URL, or fresh upload
@@ -203,6 +205,15 @@ function EventModal({ editing, products, defaultApproval, brandLogoUrl, onSave, 
   const { platforms: availablePlatforms, connected: connectedPlatformIds, testMode } = useConnectedPlatforms();
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+
+  // When creating a new event: once connected platforms load, default-select them.
+  // Skip if editing (already has stored platforms) or user already toggled something.
+  const platformsInitialisedRef = useRef(false);
+  useEffect(() => {
+    if (editing || platformsInitialisedRef.current || connectedPlatformIds.size === 0) return;
+    setPlatforms(Array.from(connectedPlatformIds));
+    platformsInitialisedRef.current = true;
+  }, [connectedPlatformIds, editing]);
 
   // When product changes, auto-pick its image as reference if no custom upload
   const linkedProduct = products.find(p => p.id === productId);
@@ -477,6 +488,9 @@ function EventModal({ editing, products, defaultApproval, brandLogoUrl, onSave, 
           <div className="flex items-center gap-2">
             <button onClick={onClose} className="rounded-full border border-white/10 px-4 py-2 text-xs text-muted-foreground hover:text-foreground transition">Cancel</button>
             <div className="flex flex-col items-end gap-1">
+              <div className="text-[10px] text-muted-foreground/60 text-right mb-1">
+                💳 Ad generation deducts credits as per the selected output types
+              </div>
               <RequirementChecklist items={[
                 { label: "Event name", met: !!name.trim() },
                 { label: "At least one platform", met: platforms.length > 0 },
@@ -814,18 +828,243 @@ function EventsTab() {
 
 type SavedSite = { id: string; url: string; label: string; scraped_at: string };
 
+const VOICE_OPTIONS = [
+  { value: "we",      label: "We",      desc: "Company voice" },
+  { value: "i",       label: "I",       desc: "Founder voice" },
+  { value: "neutral", label: "Neutral", desc: "Briefing style" },
+  { value: "you",     label: "You",     desc: "Customer-facing" },
+];
+
+const REF_OPTIONS = [
+  { value: "none",  label: "None" },
+  { value: "start", label: "Courtesy at start" },
+  { value: "end",   label: "Courtesy at end" },
+];
+
+// ── Per-card chip selectors ─────────────────────────────────────────
+function VoiceRefChips({ voice, refStyle, onVoice, onRef, regenBusy, onRegen }: {
+  voice: string; refStyle: string;
+  onVoice: (v: string) => void; onRef: (v: string) => void;
+  regenBusy: boolean; onRegen: () => void;
+}) {
+  return (
+    <div className="mt-3 space-y-2 border-t border-border/40 pt-3">
+      {/* Voice row */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 w-14 shrink-0">Voice</span>
+        {VOICE_OPTIONS.map((o) => (
+          <button key={o.value} type="button" onClick={() => onVoice(o.value)}
+            className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-all ${
+              voice === o.value
+                ? "border-primary/60 bg-primary/15 text-primary"
+                : "border-border/50 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+            }`}
+            title={o.desc}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      {/* Reference row */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 w-14 shrink-0">Source</span>
+        {REF_OPTIONS.map((o) => (
+          <button key={o.value} type="button" onClick={() => onRef(o.value)}
+            className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-all ${
+              refStyle === o.value
+                ? "border-primary/60 bg-primary/15 text-primary"
+                : "border-border/50 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+        <button type="button" onClick={onRegen} disabled={regenBusy}
+          className="ml-auto rounded-full border border-border/50 px-2.5 py-0.5 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground disabled:opacity-40 transition-all"
+          title="Rewrite description with current voice & source settings"
+        >
+          {regenBusy ? "Rewriting…" : "↻ Rewrite · 0.25 cr"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Recommendation card ─────────────────────────────────────────────
+function RecCard({ r, products, onUpdate, onSave, onDismiss, onCreateFrom }: {
+  r: Recommendation;
+  products: import("@/lib/api").ProductOut[];
+  onUpdate: (updated: Recommendation) => void;
+  onSave: (id: string) => void;
+  onDismiss: (id: string) => void;
+  onCreateFrom: (r: Recommendation) => void;
+}) {
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleVal, setTitleVal] = useState(r.title);
+  const [editingDesc, setEditingDesc] = useState(false);
+  const [descVal, setDescVal] = useState(r.description);
+  const [voice, setVoice] = useState(r.voice || "neutral");
+  const [refStyle, setRefStyle] = useState(r.reference_style || "none");
+  const [regenBusy, setRegenBusy] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [dismissBusy, setDismissBusy] = useState(false);
+
+  async function patch(fields: Partial<Recommendation>) {
+    try {
+      const updated = await api(`/agent/recommendations/${r.id}`, { method: "PATCH", body: fields });
+      onUpdate(updated);
+    } catch { /* non-fatal inline edit */ }
+  }
+
+  async function saveTitle() {
+    setEditingTitle(false);
+    if (titleVal !== r.title) await patch({ title: titleVal } as any);
+  }
+
+  async function saveDesc() {
+    setEditingDesc(false);
+    if (descVal !== r.description) await patch({ description: descVal } as any);
+  }
+
+  async function setProduct(productId: string) {
+    await patch({ product_id: productId || null } as any);
+    onUpdate({ ...r, product_id: productId || null });
+  }
+
+  async function handleVoice(v: string) {
+    setVoice(v);
+    await patch({ voice: v } as any);
+  }
+
+  async function handleRef(v: string) {
+    setRefStyle(v);
+    await patch({ reference_style: v } as any);
+  }
+
+  async function regen() {
+    setRegenBusy(true);
+    try {
+      const updated = await api(`/agent/recommendations/${r.id}/regenerate`, {
+        method: "POST", body: { voice, reference_style: refStyle },
+      });
+      onUpdate(updated);
+      setDescVal(updated.description);
+    } catch { /* ignore */ }
+    setRegenBusy(false);
+  }
+
+  async function save() {
+    setSaveBusy(true);
+    try {
+      await api(`/agent/recommendations/${r.id}/save`, { method: "POST" });
+      onSave(r.id);
+    } catch { /* ignore */ }
+    setSaveBusy(false);
+  }
+
+  async function dismiss() {
+    setDismissBusy(true);
+    try { onDismiss(r.id); await api(`/agent/recommendations/${r.id}/dismiss`, { method: "POST" }); }
+    catch { /* ignore */ }
+    setDismissBusy(false);
+  }
+
+  return (
+    <div className="group flex flex-col rounded-2xl border border-border bg-card shadow-[var(--shadow-glass)] overflow-hidden transition hover:border-primary/40 hover:shadow-[var(--shadow-glass-hover)]">
+      <div className="h-1 w-full bg-gradient-to-r from-primary/60 via-primary/30 to-transparent" />
+      <div className="flex flex-col flex-1 p-4">
+
+        {/* Editable title */}
+        {editingTitle ? (
+          <input autoFocus value={titleVal} onChange={(e) => setTitleVal(e.target.value)}
+            onBlur={saveTitle} onKeyDown={(e) => e.key === "Enter" && saveTitle()}
+            className="text-sm font-bold text-foreground bg-input/60 border border-primary/40 rounded-lg px-2 py-1 focus:outline-none w-full mb-1" />
+        ) : (
+          <div className="text-sm font-bold text-foreground leading-snug cursor-pointer hover:text-primary transition-colors"
+            onClick={() => setEditingTitle(true)} title="Click to edit">
+            {r.title} <span className="text-[10px] text-muted-foreground/40 font-normal">✏</span>
+          </div>
+        )}
+
+        {/* Editable description */}
+        {editingDesc ? (
+          <textarea autoFocus value={descVal} onChange={(e) => setDescVal(e.target.value)}
+            onBlur={saveDesc} rows={4}
+            className="mt-2 text-xs text-muted-foreground bg-input/60 border border-primary/40 rounded-lg px-2 py-1.5 focus:outline-none w-full resize-none leading-relaxed" />
+        ) : (
+          <div className="mt-2 text-xs text-muted-foreground leading-relaxed flex-1 cursor-pointer hover:text-foreground/80 transition-colors"
+            onClick={() => setEditingDesc(true)} title="Click to edit">
+            {r.description} <span className="text-[10px] text-muted-foreground/40">✏</span>
+          </div>
+        )}
+
+        {/* Audience */}
+        {r.audience && (
+          <div className="mt-3 flex items-start gap-1.5">
+            <span className="mt-px shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Audience</span>
+            <span className="text-xs text-foreground/80 leading-snug">{r.audience}</span>
+          </div>
+        )}
+
+
+
+        {/* Product selector */}
+        {products.length > 0 && (
+          <div className="mt-3">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">Product</div>
+            <select value={r.product_id || ""} onChange={(e) => setProduct(e.target.value)}
+              className="w-full rounded-lg border border-border bg-input/60 px-2.5 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none transition">
+              <option value="">— Use idea title as product —</option>
+              {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+        )}
+
+        {/* Source URL */}
+        {r.source_url && (
+          <div className="mt-2 text-[10px] text-muted-foreground/50 truncate">
+            🔗 <a href={r.source_url} target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors underline underline-offset-2">{r.source_url}</a>
+          </div>
+        )}
+
+        {/* Voice + reference chips + regenerate */}
+        <VoiceRefChips voice={voice} refStyle={refStyle} onVoice={handleVoice} onRef={handleRef} regenBusy={regenBusy} onRegen={regen} />
+
+        {/* Actions */}
+        <div className="mt-4 flex items-center gap-2 flex-wrap">
+          <button onClick={() => onCreateFrom(r)}
+            className="flex-1 rounded-full bg-gold-gradient px-3.5 py-2 text-xs font-semibold text-background shadow-[var(--shadow-gold)] hover:opacity-90 transition">
+            Create this ad →
+          </button>
+          <button onClick={save} disabled={saveBusy}
+            className="rounded-full border border-border px-3 py-2 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary disabled:opacity-50 transition"
+            title="Save for later">
+            {saveBusy ? "…" : "🔖"}
+          </button>
+          <button onClick={dismiss} disabled={dismissBusy}
+            className="rounded-full border border-border px-3 py-2 text-xs text-muted-foreground hover:border-destructive/40 hover:text-destructive disabled:opacity-50 transition">
+            {dismissBusy ? "…" : "Dismiss"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WebsiteSparkTab() {
   const [url, setUrl] = useState("");
   const [count, setCount] = useState(5);
   const [focus, setFocus] = useState("");
   const [job, setJob] = useState<ScrapeJob | null>(null);
   const [recs, setRecs] = useState<Recommendation[] | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [saved, setSaved] = useState<Recommendation[]>([]);
   const [err, setErr] = useState("");
+  const [mobileView, setMobileView] = useState<"pending" | "saved">("pending");
   const navigate = useNavigate();
+  const [products, setProducts] = useState<import("@/lib/api").ProductOut[]>([]);
   // Saved sites
   const [savedSites, setSavedSites] = useState<SavedSite[]>([]);
-  const [selectedSiteId, setSelectedSiteId] = useState<string>(""); // "" = use URL input
+  const [selectedSiteId, setSelectedSiteId] = useState<string>("");
   const [showSavePrompt, setShowSavePrompt] = useState(false);
   const [saveLabel, setSaveLabel] = useState("");
   const [saving, setSaving] = useState(false);
@@ -833,10 +1072,17 @@ function WebsiteSparkTab() {
   async function loadRecs() {
     try { setRecs(await api("/agent/recommendations")); } catch (e: any) { setErr(e.message || "Could not load recommendations"); }
   }
+  async function loadSaved() {
+    try { setSaved(await api("/agent/recommendations/saved")); } catch { /* non-fatal */ }
+  }
   async function loadSavedSites() {
     try { setSavedSites(await api("/agent/scraped-sites")); } catch { /* non-fatal */ }
   }
-  useEffect(() => { loadRecs(); loadSavedSites(); }, []);
+  async function loadProducts() {
+    try { setProducts(await api("/products")); } catch { /* non-fatal */ }
+  }
+
+  useEffect(() => { loadRecs(); loadSaved(); loadSavedSites(); loadProducts(); }, []);
 
   useEffect(() => {
     if (!job || !GENERATING.has(job.status)) return;
@@ -846,7 +1092,6 @@ function WebsiteSparkTab() {
         setJob(j);
         if (j.status === "ready") {
           loadRecs();
-          // Only prompt to save if this was a fresh scrape (no pre-selected saved site)
           if (!selectedSiteId) setShowSavePrompt(true);
         }
       } catch { /* transient */ }
@@ -859,7 +1104,6 @@ function WebsiteSparkTab() {
     try {
       let j;
       if (selectedSiteId) {
-        // Use cached scrape — no re-crawl
         j = await api(`/agent/quick-start/from-site/${selectedSiteId}`, { method: "POST", body: { count, focus: focus.trim() || null } });
       } else {
         if (!url.trim()) return;
@@ -874,12 +1118,8 @@ function WebsiteSparkTab() {
     setSaving(true);
     try {
       const site = await api(`/agent/scraped-sites?job_id=${job.id}`, { method: "POST", body: { label: saveLabel.trim() || job.url } });
-      setSavedSites((prev) => {
-        const without = prev.filter((s) => s.id !== site.id);
-        return [site, ...without];
-      });
-      setShowSavePrompt(false);
-      setSaveLabel("");
+      setSavedSites((prev) => { const without = prev.filter((s) => s.id !== site.id); return [site, ...without]; });
+      setShowSavePrompt(false); setSaveLabel("");
     } catch (e: any) { setErr(e.message || "Could not save site"); }
     setSaving(false);
   }
@@ -892,184 +1132,292 @@ function WebsiteSparkTab() {
     } catch (e: any) { setErr(e.message || "Could not delete"); }
   }
 
-  async function createFrom(rec: Recommendation) {
-    sessionStorage.setItem("nivaad_prefill_product", JSON.stringify({ name: rec.title, description: rec.description, audience: rec.audience }));
+  function createFrom(rec: Recommendation) {
+    const product = products.find((p) => p.id === rec.product_id);
+    // Translate voice + reference_style into plain-English copy directions
+    // so the Create Ad page can display and use them without knowing Agent Niva internals.
+    const voiceMap: Record<string, string> = {
+      we:      "Write using 'We' and 'Our' to refer to the company.",
+      i:       "Write in first-person using 'I' and 'My' — founder voice.",
+      neutral: "",
+      you:     "Address the reader directly using 'You' and 'Your'.",
+    };
+    const dirParts: string[] = [];
+    const voice = rec.voice || "neutral";
+    const refStyle = rec.reference_style || "none";
+    if (voice !== "neutral") dirParts.push(voiceMap[voice] || "");
+    if (refStyle !== "none" && rec.source_url) {
+      const domain = rec.source_url.replace(/https?:\/\/(www\.)?/, "").split("/")[0];
+      const domainLabel = domain.charAt(0).toUpperCase() + domain.slice(1);
+      if (refStyle === "start") dirParts.push(`Begin the copy with "Courtesy ${domainLabel} —".`);
+      if (refStyle === "end")   dirParts.push(`End the copy with "— Courtesy ${domainLabel}".`);
+    }
+    sessionStorage.setItem("nivaad_prefill_product", JSON.stringify({
+      name: product?.name || rec.title,
+      description: product?.description || rec.description,
+      audience: product?.audience || rec.audience,
+      voice,
+      reference_style: refStyle,
+      source_url: rec.source_url,
+      copy_directions: dirParts.filter(Boolean).join(" ") || null,
+    }));
     navigate({ to: "/app" });
   }
 
-  async function dismiss(id: string) {
-    setBusyId(id); setErr("");
-    try { setRecs(await api(`/agent/recommendations/${id}/dismiss`, { method: "POST" })); }
-    catch (e: any) { setErr(e.message || "Could not dismiss"); }
-    setBusyId(null);
+  function handleUpdate(updated: Recommendation) {
+    setRecs((prev) => prev ? prev.map((r) => r.id === updated.id ? updated : r) : prev);
+  }
+
+  function handleSave(id: string) {
+    const rec = recs?.find((r) => r.id === id);
+    if (rec) {
+      setRecs((prev) => prev ? prev.filter((r) => r.id !== id) : prev);
+      setSaved((prev) => [{ ...rec, status: "saved" }, ...prev]);
+    }
+  }
+
+  function handleDismiss(id: string) {
+    setRecs((prev) => prev ? prev.filter((r) => r.id !== id) : prev);
+  }
+
+  async function unsave(id: string) {
+    try {
+      await api(`/agent/recommendations/${id}/unsave`, { method: "POST" });
+      const rec = saved.find((r) => r.id === id);
+      if (rec) {
+        setSaved((prev) => prev.filter((r) => r.id !== id));
+        setRecs((prev) => prev ? [{ ...rec, status: "pending" }, ...prev] : [{ ...rec, status: "pending" }]);
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function dismissSaved(id: string) {
+    try {
+      await api(`/agent/recommendations/${id}/dismiss`, { method: "POST" });
+      setSaved((prev) => prev.filter((r) => r.id !== id));
+    } catch { /* ignore */ }
   }
 
   const pending = (recs || []).filter((r) => r.status === "pending");
 
   return (
-    <div className="space-y-6">
-      {/* Input card — glass */}
-      <div className="rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-glass)]">
-        <div className="text-sm font-semibold text-foreground mb-1">Study a website, get ad ideas <NovaHint hintKey="page:quick-start" /></div>
-        <p className="text-xs text-muted-foreground mb-4">Give Agent Niva your URL — it reads the site and recommends concrete ad ideas you can turn into real ads with one click.</p>
+    <div className="flex gap-6 items-start">
+      {/* ── Left: main content ── */}
+      <div className="flex-1 min-w-0 space-y-6">
+        {/* Input card */}
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-glass)]">
+          <div className="text-sm font-semibold text-foreground mb-1">Study a website, get ad ideas <NovaHint hintKey="page:quick-start" /></div>
+          <p className="text-xs text-muted-foreground mb-4">Give Agent Niva your URL — it reads the site and recommends concrete ad ideas you can turn into real ads with one click.</p>
 
-        {/* Saved sites dropdown — shown only when there are saved sites */}
-        {savedSites.length > 0 && (
-          <div className="mb-3">
-            <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Use a saved site</label>
-            <div className="flex items-center gap-2">
-              <select value={selectedSiteId} onChange={(e) => setSelectedSiteId(e.target.value)}
-                className="flex-1 rounded-xl border border-border bg-input/60 px-3 py-2 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
-                <option value="">— Enter a new URL instead —</option>
-                {savedSites.map((s) => (
-                  <option key={s.id} value={s.id}>{s.label || s.url} · {new Date(s.scraped_at).toLocaleDateString()}</option>
-                ))}
-              </select>
-              {selectedSiteId && (
-                <button onClick={() => deleteSavedSite(selectedSiteId)}
-                  title="Delete this saved site"
-                  className="shrink-0 rounded-full border border-destructive/40 px-3 py-2 text-[11px] text-destructive hover:bg-destructive/10 transition">
-                  🗑 Delete
-                </button>
-              )}
+          {savedSites.length > 0 && (
+            <div className="mb-3">
+              <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Use a saved site</label>
+              <div className="flex items-center gap-2">
+                <select value={selectedSiteId} onChange={(e) => setSelectedSiteId(e.target.value)}
+                  className="flex-1 rounded-xl border border-border bg-input/60 px-3 py-2 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
+                  <option value="">— Enter a new URL instead —</option>
+                  {savedSites.map((s) => (
+                    <option key={s.id} value={s.id}>{s.label || s.url} · {new Date(s.scraped_at).toLocaleDateString()}</option>
+                  ))}
+                </select>
+                {selectedSiteId && (
+                  <button onClick={() => deleteSavedSite(selectedSiteId)}
+                    className="shrink-0 rounded-full border border-destructive/40 px-3 py-2 text-[11px] text-destructive hover:bg-destructive/10 transition">
+                    🗑 Delete
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* URL input — shown only when no saved site is selected */}
-        {!selectedSiteId && (
-          <div className="flex flex-wrap items-center gap-2 mb-3">
-            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="yourcompany.com"
-              className="flex-1 min-w-[200px] rounded-xl border border-border bg-input/60 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition" />
-          </div>
-        )}
-
-        <div className="flex flex-wrap items-center gap-2">
-          <select value={count} onChange={(e) => setCount(Number(e.target.value))}
-            className="rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
-            {[1, 2, 3, 5, 8, 10].map((n) => <option key={n} value={n}>{n} idea{n > 1 ? "s" : ""}</option>)}
-          </select>
           {!selectedSiteId && (
-            <div className="w-full">
-              <RequirementChecklist items={[
-                { label: "Website URL", met: !!url.trim() },
-              ]} />
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="yourcompany.com"
+                className="flex-1 min-w-[200px] rounded-xl border border-border bg-input/60 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition" />
             </div>
           )}
-          <button onClick={start}
-            disabled={(!selectedSiteId && !url.trim()) || (job !== null && GENERATING.has(job.status))}
-            className="rounded-full bg-gold-gradient px-5 py-2.5 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50 transition">
-            {job && GENERATING.has(job.status) ? "Studying site…" : selectedSiteId ? "Get new ideas →" : "Get ad ideas"}
-          </button>
-        </div>
 
-        <div className="mt-3">
-          <label className="text-xs font-medium text-foreground">Focus on a specific subject <span className="font-normal text-muted-foreground">(optional)</span></label>
-          <textarea value={focus} onChange={(e) => setFocus(e.target.value)} placeholder="e.g. our summer sale, the new iOS app, our loyalty programme…"
-            rows={2} maxLength={500}
-            className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none transition resize-none" />
-          <div className="mt-1 text-right text-[10px] text-muted-foreground">{focus.length}/500</div>
-        </div>
-
-        {/* Save prompt — appears after a fresh scrape completes */}
-        {showSavePrompt && job?.status === "ready" && (
-          <div className="mt-4 rounded-xl border border-primary/30 bg-primary/5 p-3">
-            <div className="text-xs font-semibold text-foreground mb-1">💾 Save this site for next time?</div>
-            <p className="text-[11px] text-muted-foreground mb-2">Store the scraped content so you can generate new ideas from it without re-crawling.</p>
-            <div className="flex items-center gap-2 flex-wrap">
-              <input
-                value={saveLabel}
-                onChange={(e) => setSaveLabel(e.target.value)}
-                placeholder={`Label (e.g. "Main site") — optional`}
-                className="flex-1 min-w-[160px] rounded-lg border border-border bg-input/60 px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none"
-              />
-              <button onClick={saveSite} disabled={saving}
-                className="rounded-full bg-gold-gradient px-4 py-1.5 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50">
-                {saving ? "Saving…" : "Save"}
-              </button>
-              <button onClick={() => setShowSavePrompt(false)}
-                className="rounded-full border border-white/10 px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground">
-                Not now
-              </button>
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={count} onChange={(e) => setCount(Number(e.target.value))}
+              className="rounded-xl border border-border bg-input/60 px-3 py-2.5 text-sm text-foreground focus:border-primary/50 focus:outline-none transition">
+              {[1, 2, 3, 5, 8, 10].map((n) => <option key={n} value={n}>{n} idea{n > 1 ? "s" : ""}</option>)}
+            </select>
+            {!selectedSiteId && (
+              <div className="w-full">
+                <RequirementChecklist items={[{ label: "Website URL", met: !!url.trim() }]} />
+              </div>
+            )}
+            <button onClick={start}
+              disabled={(!selectedSiteId && !url.trim()) || (job !== null && GENERATING.has(job.status))}
+              className="rounded-full bg-gold-gradient px-5 py-2.5 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50 transition">
+              {job && GENERATING.has(job.status) ? "Studying site…" : selectedSiteId ? "Get new ideas · 0.25 cr →" : "Get ad ideas · 0.25 cr"}
+            </button>
           </div>
-        )}
 
-        {job?.status === "failed" && <div className="mt-2 text-xs text-destructive">Couldn't do that: {job.error}</div>}
-      </div>
+          <div className="mt-3">
+            <label className="text-xs font-medium text-foreground">Focus on a specific subject <span className="font-normal text-muted-foreground">(optional)</span></label>
+            <textarea value={focus} onChange={(e) => setFocus(e.target.value)} placeholder="e.g. our summer sale, the new iOS app, our loyalty programme…"
+              rows={2} maxLength={500}
+              className="mt-1.5 w-full rounded-xl border border-border bg-input/60 px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none transition resize-none" />
+            <div className="mt-1 text-right text-[10px] text-muted-foreground">{focus.length}/500</div>
+          </div>
 
-      {err && <div className="text-xs text-destructive">{err}</div>}
+          {showSavePrompt && job?.status === "ready" && (
+            <div className="mt-4 rounded-xl border border-primary/30 bg-primary/5 p-3">
+              <div className="text-xs font-semibold text-foreground mb-1">💾 Save this site for next time?</div>
+              <p className="text-[11px] text-muted-foreground mb-2">Store the scraped content so you can generate new ideas from it without re-crawling.</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <input value={saveLabel} onChange={(e) => setSaveLabel(e.target.value)}
+                  placeholder={`Label (e.g. "Main site") — optional`}
+                  className="flex-1 min-w-[160px] rounded-lg border border-border bg-input/60 px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none" />
+                <button onClick={saveSite} disabled={saving}
+                  className="rounded-full bg-gold-gradient px-4 py-1.5 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50">
+                  {saving ? "Saving…" : "Save"}
+                </button>
+                <button onClick={() => setShowSavePrompt(false)}
+                  className="rounded-full border border-white/10 px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+                  Not now
+                </button>
+              </div>
+            </div>
+          )}
 
-      {/* Recommendations */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <div className="text-sm font-semibold text-foreground">Ideas to review</div>
-          {pending.length > 0 && (
-            <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-[10px] font-bold text-primary">{pending.length} pending</span>
+          {job?.status === "failed" && <div className="mt-2 text-xs text-destructive">Couldn't do that: {job.error}</div>}
+        </div>
+
+        {err && <div className="text-xs text-destructive">{err}</div>}
+
+        {/* Mobile tab switcher — hidden on xl where the right panel takes over */}
+        <div className="flex xl:hidden rounded-xl border border-border bg-card/60 p-1 gap-1">
+          {(["pending", "saved"] as const).map((v) => {
+            const count = v === "pending" ? pending.length : saved.length;
+            const label = v === "pending" ? "Ideas to review" : "Saved";
+            return (
+              <button key={v} onClick={() => setMobileView(v)}
+                className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-all ${
+                  mobileView === v
+                    ? "bg-primary/10 text-primary border border-primary/30"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}>
+                {label}
+                {count > 0 && (
+                  <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                    mobileView === v ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
+                  }`}>{count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Pending ideas — shown on desktop always; on mobile only when mobileView=pending */}
+        <div className={mobileView === "saved" ? "hidden xl:block" : ""}>
+          <div className="hidden xl:flex items-center justify-between mb-4">
+            <div className="text-sm font-semibold text-foreground">Ideas to review</div>
+            {pending.length > 0 && (
+              <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-[10px] font-bold text-primary">{pending.length} pending</span>
+            )}
+          </div>
+          {recs === null ? (
+            <div className="text-xs text-muted-foreground">Loading…</div>
+          ) : pending.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border bg-card/30 px-6 py-12 text-center">
+              <div className="text-2xl mb-2">🌐</div>
+              <div className="text-xs text-muted-foreground">No pending ideas — paste a URL above and run Website Spark to get some.</div>
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {pending.map((r) => (
+                <RecCard key={r.id} r={r} products={products}
+                  onUpdate={handleUpdate} onSave={handleSave}
+                  onDismiss={handleDismiss} onCreateFrom={createFrom} />
+              ))}
+            </div>
           )}
         </div>
-        {recs === null ? (
-          <div className="text-xs text-muted-foreground">Loading…</div>
-        ) : pending.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border bg-card/30 px-6 py-12 text-center">
-            <div className="text-2xl mb-2">🌐</div>
-            <div className="text-xs text-muted-foreground">No pending ideas — paste a URL above and run Website Spark to get some.</div>
-          </div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
-            {pending.map((r) => (
-              <div key={r.id} className="group flex flex-col rounded-2xl border border-border bg-card shadow-[var(--shadow-glass)] overflow-hidden transition hover:border-primary/40 hover:shadow-[var(--shadow-glass-hover)]">
-                {/* Card accent bar */}
-                <div className="h-1 w-full bg-gradient-to-r from-primary/60 via-primary/30 to-transparent" />
-                <div className="flex flex-col flex-1 p-4">
-                  {/* Title */}
-                  <div className="text-sm font-bold text-foreground leading-snug">{r.title}</div>
-                  {/* Description */}
-                  <div className="mt-2 text-xs text-muted-foreground leading-relaxed flex-1">{r.description}</div>
-                  {/* Audience */}
-                  {r.audience && (
-                    <div className="mt-3 flex items-start gap-1.5">
-                      <span className="mt-px shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Audience</span>
-                      <span className="text-xs text-foreground/80 leading-snug">{r.audience}</span>
+
+        {/* Saved ideas — mobile only (desktop uses the right panel) */}
+        <div className={`xl:hidden ${mobileView === "pending" ? "hidden" : ""}`}>
+          {saved.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border bg-card/30 px-6 py-12 text-center">
+              <div className="text-2xl mb-2">🔖</div>
+              <div className="text-xs text-muted-foreground">No saved ideas yet. Click 🔖 on any idea card to save it here for later.</div>
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {saved.map((r) => (
+                <div key={r.id} className="rounded-2xl border border-border bg-card shadow-[var(--shadow-glass)] overflow-hidden">
+                  <div className="h-1 w-full bg-gradient-to-r from-amber-500/60 via-amber-400/30 to-transparent" />
+                  <div className="p-4">
+                    <div className="text-sm font-semibold text-foreground leading-snug">{r.title}</div>
+                    <div className="mt-1.5 text-xs text-muted-foreground leading-relaxed line-clamp-3">{r.description}</div>
+                    <div className="mt-3 flex items-center gap-2">
+                      <button onClick={() => createFrom(r)}
+                        className="flex-1 rounded-full bg-gold-gradient px-3 py-2 text-xs font-semibold text-background shadow-[var(--shadow-gold)] hover:opacity-90 transition">
+                        Create this ad →
+                      </button>
+                      <button onClick={() => unsave(r.id)}
+                        className="rounded-full border border-border px-3 py-2 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition"
+                        title="Move back to pending">↩</button>
+                      <button onClick={() => dismissSaved(r.id)}
+                        className="rounded-full border border-border px-3 py-2 text-xs text-muted-foreground hover:border-destructive/40 hover:text-destructive transition"
+                        title="Dismiss">✕</button>
                     </div>
-                  )}
-                  {/* Platform tags + source */}
-                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                    {r.platforms.length > 0 ? r.platforms.map((p) => {
-                      const meta = PLATFORMS.find((pl) => pl.id === p);
-                      return (
-                        <span key={p} className="flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                          <span className="h-3 w-3 rounded-full inline-flex items-center justify-center text-[7px]" style={{ background: meta?.color ?? "#6366f1", color: "#0f172a" }}>{meta?.tag ?? "📄"}</span>
-                          {meta?.name ?? p}
-                        </span>
-                      );
-                    }) : (
-                      <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">All platforms</span>
-                    )}
-                  </div>
-                  {r.source_url && (
-                    <div className="mt-1.5 text-[10px] text-muted-foreground/50 truncate">🔗 {r.source_url}</div>
-                  )}
-                  {/* Actions */}
-                  <div className="mt-4 flex items-center gap-2">
-                    <button onClick={() => createFrom(r)}
-                      className="flex-1 rounded-full bg-gold-gradient px-3.5 py-2 text-xs font-semibold text-background shadow-[var(--shadow-gold)] hover:opacity-90 transition">
-                      Create this ad →
-                    </button>
-                    <button onClick={() => dismiss(r.id)} disabled={busyId === r.id}
-                      className="rounded-full border border-border px-3.5 py-2 text-xs text-muted-foreground hover:border-destructive/40 hover:text-destructive disabled:opacity-50 transition">
-                      Dismiss
-                    </button>
                   </div>
                 </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Right: Saved Ideas panel — always visible ── */}
+      <div className="hidden xl:flex w-[280px] shrink-0 flex-col rounded-2xl border border-border bg-card overflow-hidden"
+        style={{ position: "sticky", top: "144px", maxHeight: "calc(100vh - 164px)", boxShadow: "var(--shadow-glass-full)" }}>
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <div className="text-xs font-semibold text-foreground">🔖 Saved Ideas</div>
+          {saved.length > 0 && (
+            <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">{saved.length}</span>
+          )}
+        </div>
+        <div className="flex-1 overflow-y-auto divide-y divide-border/50">
+          {saved.length === 0 ? (
+            <div className="flex flex-col items-center justify-center px-4 py-10 text-center">
+              <div className="text-2xl mb-2">🔖</div>
+              <div className="text-xs text-muted-foreground leading-relaxed">
+                No saved ideas yet. Click <span className="font-semibold text-foreground">🔖</span> on any idea card to save it here for later.
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          ) : (
+            saved.map((r) => (
+              <div key={r.id} className="px-4 py-3 hover:bg-muted/20 transition">
+                <div className="text-xs font-semibold text-foreground leading-snug truncate">{r.title}</div>
+                <div className="mt-1 text-[11px] text-muted-foreground leading-relaxed line-clamp-2">{r.description}</div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  <button onClick={() => createFrom(r)}
+                    className="flex-1 rounded-full bg-gold-gradient px-2.5 py-1 text-[10px] font-semibold text-background shadow-[var(--shadow-gold)] hover:opacity-90 transition">
+                    Create →
+                  </button>
+                  <button onClick={() => unsave(r.id)}
+                    className="rounded-full border border-border px-2.5 py-1 text-[10px] text-muted-foreground hover:border-primary/40 hover:text-primary transition"
+                    title="Move back to pending">
+                    ↩
+                  </button>
+                  <button onClick={() => dismissSaved(r.id)}
+                    className="rounded-full border border-border px-2.5 py-1 text-[10px] text-muted-foreground hover:border-destructive/40 hover:text-destructive transition"
+                    title="Dismiss">
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );
 }
+
 
 // ── Quick Spark Tab ──────────────────────────────────────────────────────────
 // User describes an idea → AI generates 4-5 ad draft recommendations
@@ -1175,7 +1523,7 @@ Make each concept meaningfully different. Be specific and actionable.`;
             disabled={idea.trim().length <= 10 || generating}
             className="rounded-full bg-gold-gradient px-5 py-2.5 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50 transition"
           >
-            {generating ? "Generating drafts…" : "Spark drafts →"}
+            {generating ? "Generating drafts…" : "Spark drafts · 0.25 cr →"}
           </button>
         </div>
 

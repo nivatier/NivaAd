@@ -449,6 +449,9 @@ class AgentRecommendation(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     audience: Mapped[str] = mapped_column(String(300), default="")  # suggested target audience, pre-fills Create Ad's audience field
     platforms: Mapped[list] = mapped_column(JSON, default=list)
+    voice: Mapped[str | None] = mapped_column(String(20), nullable=True)           # "we" | "i" | "neutral" | "you"
+    reference_style: Mapped[str | None] = mapped_column(String(20), nullable=True) # "none" | "start" | "end"
+    product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     created_ad_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ads.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

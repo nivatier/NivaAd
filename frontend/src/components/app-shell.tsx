@@ -7,52 +7,14 @@ import {
 import { ThemeToggle } from "@/components/theme-toggle";
 import { BuyCreditsModal } from "@/components/buy-credits-modal";
 import { ProfileModal } from "@/components/profile-modal";
+import { FreePlanUpsellModal } from "@/components/free-plan-upsell-modal";
 import { useAuth } from "@/hooks/use-auth";
 import { LiveClock } from "@/components/timezone-picker";
 import { detectedTimeZone } from "@/lib/timezone";
+import { NAV } from "@/lib/nav-config";
 
 
-// capability: undefined = always visible to any active user (Create Ad
-// and Products stay ungated even in the nav, matching the backend —
-// Create Ad's own product picker depends on product-read regardless,
-// so hiding Products from the sidebar without also gating that read
-// would be inconsistent). "admin-only" is a special marker: shown only
-// when role === "admin", never a configurable capability, matching the
-// backend's hardcoded (non-configurable) Admin access.
-export const NAV: { section: string; items: { to: string; label: string; icon: LucideIcon; capability?: string; hintKey?: string }[] }[] = [
-  {
-    section: "Create",
-    items: [
-      { to: "/app", label: "Create Ad", icon: Sparkles, hintKey: "nav:create-ad" },
-      { to: "/app/campaigns", label: "Campaigns", icon: Megaphone, capability: "view_campaigns", hintKey: "nav:campaigns" },
-    ],
-  },
-  {
-    section: "Library",
-    items: [
-      { to: "/app/my-ads", label: "My Ads", icon: Images, capability: "view_my_ads", hintKey: "nav:my-ads" },
-      { to: "/app/products", label: "Products", icon: Package, hintKey: "nav:products" },
-      { to: "/app/themes-gallery", label: "Themes", icon: GalleryHorizontal, hintKey: "nav:themes-gallery" },
-      { to: "/app/calendar", label: "Calendar", icon: CalendarDays, capability: "view_my_ads", hintKey: "nav:calendar" },
-      { to: "/app/agent-niva", label: "Agent Niva", icon: Bot, hintKey: "nav:agent-niva" },
-    ],
-  },
-  {
-    section: "Setup",
-    items: [
-      { to: "/app/brand-kit", label: "Brand Kit", icon: Palette, capability: "view_brand_kit", hintKey: "nav:brand-kit" },
-      { to: "/app/connections", label: "Connections", icon: Link2, capability: "admin-only", hintKey: "nav:connections" },
-      { to: "/app/moderation", label: "Moderation", icon: ShieldCheck, capability: "admin-only", hintKey: "nav:moderation" },
-    ],
-  },
-  {
-    section: "Insights",
-    items: [
-      { to: "/app/analytics", label: "Analytics", icon: BarChart3, capability: "view_analytics", hintKey: "nav:analytics" },
-      { to: "/app/admin", label: "Admin", icon: Crown, capability: "admin-only", hintKey: "nav:admin" },
-    ],
-  },
-];
+// NAV is defined in @/lib/nav-config to keep this file component-only (Vite HMR requirement).
 
 // Tab-level icons for the persistent bottom bar — one per NAV section + Account
 const TAB_ICONS: Record<string, LucideIcon> = {
@@ -834,6 +796,7 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
 
       {showBuyCredits && <BuyCreditsModal onClose={() => setShowBuyCredits(false)} />}
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
+      {me?.tier === "free" && <FreePlanUpsellModal />}
     </div>
   );
 }

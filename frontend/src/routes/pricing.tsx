@@ -113,11 +113,11 @@ function Pricing() {
       <div className="mx-auto max-w-5xl px-4 py-12">
 
         {/* Header */}
-        <div className="flex items-center justify-between mb-10">
-          <Link to="/" className="flex items-center gap-2.5">
+        <div className="flex items-center justify-between mb-10 gap-3">
+          <Link to="/" className="flex items-center gap-2 min-w-0">
             <img src="/logo-icon.png" alt="NivaSpark icon" className="h-9 w-9 shrink-0 object-contain" />
             <div className="leading-tight min-w-0">
-              <img src={isDark ? "/logo-wording-dark.png" : "/logo-wording-light.png"} alt="NivaSpark" className="h-7 object-contain object-left" />
+              <img src={isDark ? "/logo-wording-dark.png" : "/logo-wording-light.png"} alt="NivaSpark" className="h-6 object-contain object-left max-w-[120px] sm:max-w-none" />
               <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Powered by Nivatier</div>
             </div>
           </Link>
@@ -129,7 +129,7 @@ function Pricing() {
         </div>
 
         {/* Title */}
-        <h1 className="text-center font-display text-4xl font-bold tracking-tight text-glow">
+        <h1 className="text-center font-display text-2xl sm:text-4xl font-bold tracking-tight text-glow">
           Simple plans, <span className="text-gold-gradient">no surprise charges</span>
         </h1>
         <p className="mt-2 text-center text-sm text-muted-foreground">
@@ -137,13 +137,13 @@ function Pricing() {
         </p>
 
         {/* Term toggle */}
-        <div className="mt-8 flex justify-center">
-          <div className="flex rounded-2xl border border-border bg-card/60 backdrop-blur-sm p-1.5 gap-1">
+        <div className="mt-8 flex justify-center px-1">
+          <div className="flex flex-wrap justify-center rounded-2xl border border-border bg-card/60 backdrop-blur-sm p-1.5 gap-1">
             {TERMS.map((t, i) => (
               <button
                 key={t.m}
                 onClick={() => setTerm(i)}
-                className={`relative rounded-xl px-5 py-2.5 text-sm font-medium transition-all ${
+                className={`relative rounded-xl px-3 py-2 sm:px-5 sm:py-2.5 text-xs sm:text-sm font-medium transition-all ${
                   term === i
                     ? "bg-primary text-white shadow-[0_2px_12px_oklch(0.66_0.26_305_/_0.35)]"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
@@ -167,17 +167,17 @@ function Pricing() {
         {err && <div className="mt-4 text-center text-xs text-destructive">{err}</div>}
 
         {/* Free + Paid plan cards */}
-        <div className="mt-10 grid gap-4 md:grid-cols-3">
+        <div className="mt-10 grid gap-4 grid-cols-1 md:grid-cols-3">
 
           {/* Free plan */}
-          <div className={`rounded-2xl border p-6 flex flex-col ${currentTier === "free" ? "border-primary bg-primary/5" : "border-border bg-card/60"}`}>
+          <div className={`rounded-2xl border p-4 sm:p-6 flex flex-col ${currentTier === "free" ? "border-primary bg-primary/5" : "border-border bg-card/60"}`}>
             <div className="flex items-center gap-2">
               <div className="font-display text-xl font-bold text-foreground">Free</div>
               {currentTier === "free" && (
                 <span className="rounded-full bg-primary/15 border border-primary/40 px-2 py-0.5 text-[10px] font-semibold text-primary">Your plan</span>
               )}
             </div>
-            <div className="mt-3 font-display text-4xl font-bold text-foreground">
+            <div className="mt-3 font-display text-3xl sm:text-4xl font-bold text-foreground">
               $0<span className="text-sm font-normal text-muted-foreground">/mo</span>
             </div>
             <div className="mt-1 text-sm text-muted-foreground">3 credits / month</div>
@@ -223,7 +223,7 @@ function Pricing() {
             return (
               <div
                 key={tier.key}
-                className={`rounded-2xl border p-6 flex flex-col ${
+                className={`rounded-2xl border p-4 sm:p-6 flex flex-col ${
                   isCurrent
                     ? "border-primary bg-primary/5 shadow-[0_0_0_1px_oklch(0.66_0.26_305_/_0.15),0_8px_32px_-4px_oklch(0.66_0.26_305_/_0.20)]"
                     : tier.hot
@@ -240,7 +240,7 @@ function Pricing() {
                   )}
                 </div>
                 <div className="font-display text-xl font-bold text-foreground">{tier.name}</div>
-                <div className="mt-3 font-display text-4xl font-bold text-foreground">
+                <div className="mt-3 font-display text-3xl sm:text-4xl font-bold text-foreground">
                   ${monthlyPrice.toFixed(2).replace(/\.00$/, "")}
                   <span className="text-sm font-normal text-muted-foreground">/mo</span>
                 </div>
@@ -303,28 +303,6 @@ function Pricing() {
               </div>
             );
           })}
-        </div>
-
-        {/* Credit explainer */}
-        <div className="mt-10 rounded-2xl border border-border/60 bg-card/40 px-6 py-5">
-          <div className="text-sm font-semibold text-foreground mb-2">How credits work</div>
-          <div className="grid gap-3 sm:grid-cols-3 text-xs text-muted-foreground">
-            <div>
-              <div className="font-medium text-foreground mb-1">Text ad copy</div>
-              ~0.25 credits per generation. Always shown before you generate.
-            </div>
-            <div>
-              <div className="font-medium text-foreground mb-1">Image ads</div>
-              ~0.75–2 credits depending on model quality chosen.
-            </div>
-            <div>
-              <div className="font-medium text-foreground mb-1">Video ads</div>
-              Priced by model + duration. Preview shown before generating.
-            </div>
-          </div>
-          <div className="mt-3 text-xs text-muted-foreground">
-            Unused credits don't roll over. Need more? Buy top-up credits anytime from your account (Starter and Pro plans only).
-          </div>
         </div>
 
         {/* FAQ-style footer notes */}

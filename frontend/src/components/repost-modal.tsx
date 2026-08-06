@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { api, apiDownload, type AdOut } from "@/lib/api";
 import { PostPreviewCard, type BrandKitPreview } from "@/components/create-ad-parts";
 import { useConnectedPlatforms } from "@/hooks/use-connected-platforms";
+import { PostingProgressModal } from "@/components/posting-progress-modal";
 import { TimezoneSelect } from "@/components/timezone-picker";
 import { detectedTimeZone, formatInTimeZone, zonedWallTimeToUtcNaiveIso } from "@/lib/timezone";
 import { useAuth } from "@/hooks/use-auth";
@@ -56,6 +57,8 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
 
   const [downloading, setDownloading] = useState(false);
   const [posting, setPosting] = useState(false);
+  const [postJobId, setPostJobId] = useState<string | null>(null);
+  const [postJobPlatforms, setPostJobPlatforms] = useState<typeof postablePlatforms>([]);
   const [scheduling, setScheduling] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleDate, setScheduleDate] = useState(todayPlus(1));
@@ -203,57 +206,19 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
   }
 
   async function postNow() {
-    const platforms = [...postSelected].filter((p) => p !== "default");
-    if (platforms.length === 0) return;
+    const platformIds = [...postSelected].filter((p) => p !== "default");
+    if (platformIds.length === 0) return;
     setPosting(true); setErr("");
     try {
-      // Save any caption edits first
       await api(`/ads/${ad.id}`, { method: "PATCH", body: { results: buildResultsForAction() } });
-
-      // Queue the Celery task — returns immediately with job_id
-      const job: any = await api(`/ads/${ad.id}/post`, { method: "POST", body: { platforms } });
-
-      // Poll for completion every 2 seconds
-      let attempts = 0;
-      const maxAttempts = 60; // 2 min timeout
-      while (attempts < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 2000));
-        attempts++;
-        const status: any = await api(`/ads/${ad.id}/post-status/${job.job_id}`);
-
-        if (status.finished) {
-          if (Object.keys(status.failed).length > 0 && status.succeeded.length === 0) {
-            // All failed
-            const msgs = Object.entries(status.failed).map(([p, msg]) => `${p}: ${msg}`).join("; ");
-            setErr(`Failed to post: ${msgs}`);
-          } else if (Object.keys(status.failed).length > 0) {
-            // Partial success
-            const failed = Object.keys(status.failed).join(", ");
-            setErr(`Posted to ${status.succeeded.join(", ")} but failed: ${failed}`);
-            onUpdated();
-            onClose();
-          } else {
-            // All succeeded
-            onUpdated();
-            onClose();
-          }
-          break;
-        }
-
-        // Still running — update button label with progress
-        if (status.succeeded.length > 0) {
-          setErr(`✓ ${status.succeeded.join(", ")} posted… waiting for remaining platforms`);
-        }
-      }
-
-      if (attempts >= maxAttempts) {
-        setErr("Posting is taking longer than expected — check Posting Status in My Ads for updates.");
-        onUpdated();
-      }
+      const job: any = await api(`/ads/${ad.id}/post`, { method: "POST", body: { platforms: platformIds } });
+      const selectedPlatformObjs = postablePlatforms.filter((p) => platformIds.includes(p.id));
+      setPostJobPlatforms(selectedPlatformObjs);
+      setPostJobId(job.job_id);
     } catch (e: any) {
       setErr(e.message || "Could not post");
+      setPosting(false);
     }
-    setPosting(false);
   }
 
   async function scheduleNow() {
@@ -274,11 +239,11 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
   const postablePlatforms = allPlatforms.filter((p) => connectedIds.has(p.id));
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="glow-border w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-border bg-card/95 backdrop-blur-xl">
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/70 pt-[96px] lg:pt-[88px] px-3 pb-3 sm:pb-4 sm:px-4" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="glow-border w-full max-w-md flex flex-col rounded-2xl border border-border bg-card/95 backdrop-blur-xl max-h-[calc(100vh-360px)] lg:max-h-[calc(100vh-140px)]">
 
-        {/* Header */}
-        <div className="sticky top-0 flex items-start justify-between border-b border-border bg-card/95 px-5 py-3 backdrop-blur-xl">
+        {/* Header — sticky */}
+        <div className="shrink-0 flex items-start justify-between border-b border-border bg-card/95 px-5 py-3 backdrop-blur-xl rounded-t-2xl">
           <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold text-foreground">Preview & post</div>
             {ad.posted_at && <div className="text-[11px] text-primary">posted {formatInTimeZone(ad.posted_at, detectedTimeZone())}</div>}
@@ -312,6 +277,9 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
           </div>
           <button onClick={onClose} className="text-lg leading-none text-muted-foreground hover:text-foreground shrink-0">✕</button>
         </div>
+
+        {/* ── Scrollable middle section ── */}
+        <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain">
 
         {/* Variant tabs */}
         {variants.length > 1 && (
@@ -405,8 +373,9 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
             </div>
           )}
 
-          {/* The actual preview card */}
+          {/* The actual preview card — scaled down so the full card fits without cutting anything */}
           {activePlatform && (
+            <div style={{ transform: "scale(0.82)", transformOrigin: "top center", width: "122%", marginLeft: "-11%" }}>
             <PostPreviewCard
               platform={activePlatform}
               result={{ ...activeVariant[activeTab], caption: captions[activeVariantIdx]?.[activeTab] }}
@@ -417,13 +386,16 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
               variant={activeVariant}
               brandKit={brandKit}
             />
+            </div>
           )}
 
           {err && <div className="mt-3 text-xs text-destructive">{err}</div>}
         </div>
 
-        {/* Post / Schedule footer */}
-        <div className="sticky bottom-0 border-t border-border bg-card/95 backdrop-blur-xl">
+        </div>{/* end scrollable middle */}
+
+        {/* Post / Schedule footer — sticky */}
+        <div className="shrink-0 border-t border-border bg-card/95 backdrop-blur-xl rounded-b-2xl">
 
           {/* Platform selection for posting */}
           {postablePlatforms.length > 0 && (
@@ -518,6 +490,25 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
           )}
         </div>
       </div>
+    {postJobId && (
+      <PostingProgressModal
+        adId={ad.id}
+        jobId={postJobId}
+        platforms={postJobPlatforms}
+        onDone={(succeeded, failed) => {
+          setPostJobId(null);
+          setPosting(false);
+          onUpdated();
+          if (Object.keys(failed).length === 0) {
+            onClose();
+          } else if (succeeded.length > 0) {
+            setErr(`Partial: posted to ${succeeded.join(", ")}. Failed: ${Object.keys(failed).join(", ")}`);
+          } else {
+            setErr(`Failed: ${Object.values(failed).join("; ")}`);
+          }
+        }}
+      />
+    )}
     </div>
   );
 }
