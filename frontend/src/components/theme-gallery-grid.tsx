@@ -14,6 +14,7 @@ export type VideoTheme = {
   id: string;
   label: string;
   thumbnail: string | null;
+  preview_video?: string | null;
   category_tags: string[];
   style_notes: string;
   shots: { label: string; duration: number; prompt_template: string }[];
@@ -24,9 +25,10 @@ export type VideoTheme = {
  * style/category tags; video themes: shot list). Selecting from here
  * calls the same onSelect the card itself uses. */
 function ThemePreviewModal({
-  thumbnail, label, detail, onClose, onUse,
+  thumbnail, previewVideo, label, detail, onClose, onUse,
 }: {
   thumbnail: string | null;
+  previewVideo?: string | null;
   label: string;
   detail: ReactNode;
   onClose: () => void;
@@ -39,7 +41,14 @@ function ThemePreviewModal({
           <div className="text-sm font-semibold text-foreground truncate pr-4">{label}</div>
           <button onClick={onClose} className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground shrink-0">✕ Close</button>
         </div>
-        {thumbnail ? (
+        {/* Show mp4 player if available, fall back to thumbnail image */}
+        {previewVideo ? (
+          <video
+            src={previewVideo}
+            className="w-full rounded-lg border border-border object-contain max-h-[55vh] bg-black"
+            autoPlay loop muted playsInline controls
+          />
+        ) : thumbnail ? (
           <img src={thumbnail} alt={label} className="w-full rounded-lg border border-border object-contain max-h-[55vh] bg-muted/20" />
         ) : (
           <div className="flex h-48 w-full items-center justify-center rounded-lg border border-border bg-gradient-to-br from-primary/10 to-primary/5 text-5xl">🎬</div>
@@ -167,8 +176,18 @@ export function VideoThemeGrid({ themes, selectedId, onSelect }: { themes: Video
         {visible.map((t) => (
           <button key={t.id} type="button" onClick={() => onSelect(t)}
             className={`group relative rounded-xl border overflow-hidden text-left transition ${selectedId === t.id ? "border-primary ring-2 ring-primary" : "border-border hover:border-primary/50"}`}>
-            <div className="relative h-20 w-full">
-              {t.thumbnail ? (
+            <div className="relative h-20 w-full overflow-hidden">
+              {/* Always show the video element so the first frame is visible as a static preview.
+                  On hover the video plays; on mouse-out it pauses back to the first frame. */}
+              {t.preview_video ? (
+                <video
+                  src={t.preview_video}
+                  className="h-full w-full object-cover"
+                  muted playsInline preload="metadata"
+                  onMouseEnter={(e) => (e.currentTarget as HTMLVideoElement).play()}
+                  onMouseLeave={(e) => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
+                />
+              ) : t.thumbnail ? (
                 <img src={t.thumbnail} alt={t.label} className="h-full w-full object-cover" />
               ) : (
                 <div className="h-full w-full bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center text-2xl">🎬</div>
@@ -178,7 +197,9 @@ export function VideoThemeGrid({ themes, selectedId, onSelect }: { themes: Video
                 onClick={(e) => { e.stopPropagation(); setPreviewId(t.id); }}
                 className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition group-hover:bg-black/40 group-hover:opacity-100"
               >
-                <span className="rounded-full bg-black/60 px-2 py-1 text-[10px] text-white">👁 Preview</span>
+                <span className="rounded-full bg-black/60 px-2 py-1 text-[10px] text-white">
+                  {t.preview_video ? "▶ Play" : "👁 Preview"}
+                </span>
               </span>
             </div>
             <div className="p-1.5">
@@ -198,6 +219,7 @@ export function VideoThemeGrid({ themes, selectedId, onSelect }: { themes: Video
       {previewTheme && (
         <ThemePreviewModal
           thumbnail={previewTheme.thumbnail}
+          previewVideo={previewTheme.preview_video}
           label={previewTheme.label}
           detail={
             <div className="space-y-1">

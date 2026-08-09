@@ -293,6 +293,7 @@ class VideoThemeOut(BaseModel):
     id: str
     label: str
     thumbnail: str | None = None
+    preview_video: str | None = None  # mp4 URL for playback preview in the gallery
     category_tags: list[str]
     style_notes: str
     shots: list[VideoThemeShotOut]
@@ -308,9 +309,18 @@ class SaveVideoThemeIn(BaseModel):
     id: str = Field(min_length=1, max_length=80)
     label: str = Field(min_length=1, max_length=80)
     thumbnail: str | None = None
+    preview_video: str | None = None  # mp4 URL uploaded by developer for gallery playback
     category_tags: list[str] = []
     style_notes: str = Field(default="", max_length=500)
     shots: list[VideoThemeShotIn] = Field(min_length=1)
+
+
+class VideoPreviewUploadIn(BaseModel):
+    video: str  # base64 data URL — "data:video/mp4;base64,..."
+
+
+class VideoPreviewUploadOut(BaseModel):
+    url: str
 
 
 class GenerateVideoThemeDraftIn(BaseModel):

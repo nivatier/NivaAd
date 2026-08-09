@@ -30,6 +30,7 @@ from app.schemas import (
     DeveloperTokenOut, GenerateAllMissingOut, GenerateIntroAudioIn, GenerateTagPromptIn, GenerateTagPromptOut,
     GenerateVideoThemeDraftIn, GenerateVideoThemeDraftOut, GenerateVideoThemeThumbnailIn,
     GenerateVideoThemeThumbnailOut, GuardrailRuleCreateIn, GuardrailRuleOut, ImageGalleryEntryIn,
+    VideoPreviewUploadIn, VideoPreviewUploadOut,
     ImageThemeEditorIn, ImageThemeEditorOut, MarkupMultiplierIn, MarkupMultiplierOut, MaxExtraUsersIn,
     MaxExtraUsersOut, OpenRouterCatalogModelOut, OpenRouterCreditsOut, PlatformIntegrationOut,
     PlatformOverviewOut, PostRetentionMonthsIn, PostRetentionMonthsOut, RatioUsageOut, RawModelsIn, RawModelsOut,
@@ -1603,7 +1604,7 @@ async def list_video_themes(_: str = Depends(require_developer_permission("theme
     """Video Theme gallery, developer-facing — same list Create Ad reads
     from (GET /ads/video-themes), just with the developer auth guard."""
     themes = await themes_svc.get_themes(db)
-    return [VideoThemeOut(**t) for t in themes["video_themes"]]
+    return [VideoThemeOut(**{k: v for k, v in t.items() if k in VideoThemeOut.model_fields}) for t in themes["video_themes"]]
 
 
 @router.post("/themes/video-gallery", response_model=list[VideoThemeOut])
@@ -1615,6 +1616,7 @@ async def save_video_theme(data: SaveVideoThemeIn, _: str = Depends(require_deve
     video_themes = [t for t in themes["video_themes"] if t["id"] != data.id]
     video_themes.append({
         "id": data.id, "label": data.label, "thumbnail": data.thumbnail,
+        "preview_video": data.preview_video or None,
         "category_tags": data.category_tags, "style_notes": data.style_notes,
         "shots": [s.model_dump() for s in data.shots],
     })
@@ -1629,6 +1631,22 @@ async def delete_video_theme(theme_id: str, _: str = Depends(require_developer_p
     themes["video_themes"] = [t for t in themes["video_themes"] if t["id"] != theme_id]
     saved = await themes_svc.set_themes(db, themes)
     return [VideoThemeOut(**t) for t in saved["video_themes"]]
+
+
+@router.post("/themes/video-gallery/upload-preview", response_model=VideoPreviewUploadOut)
+async def upload_video_theme_preview(
+    data: VideoPreviewUploadIn,
+    _: str = Depends(require_developer_permission("themes")),
+):
+    """Upload an mp4 preview video for a video theme.
+    Accepts a base64 data URL (data:video/mp4;base64,...) and stores it
+    in S3/R2 under theme-previews/. Returns the public URL."""
+    from app.services.storage import upload_data_url as _upload
+    try:
+        url = _upload(data.video, prefix="theme-previews")
+        return VideoPreviewUploadOut(url=url)
+    except Exception as exc:
+        raise HTTPException(422, f"Video upload failed: {exc}") from exc
 
 
 @router.post("/themes/video-gallery/generate-draft", response_model=GenerateVideoThemeDraftOut)
@@ -2265,6 +2283,16 @@ async def _save_platform_cfg(db: AsyncSession, patch: dict) -> dict:
     await db.commit()
     return cfg["platform"]
 
+@router.get("/public/platform-config")
+async def get_public_platform_config(db: AsyncSession = Depends(get_db)):
+    """Public (no auth) subset of platform config — only safe-to-expose values.
+    Used by the home page to load the hero Vimeo ID without requiring login."""
+    saved = await _get_platform_cfg(db)
+    return {
+        "hero_vimeo_id": saved.get("hero_vimeo_id", ""),
+    }
+
+
 @router.get("/platform-config")
 async def get_platform_config(_: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
     """Runtime-editable business values — credit price, markup, carousel cap, Stripe prices, and API base URLs.
@@ -2279,6 +2307,7 @@ async def get_platform_config(_: str = Depends(require_developer_permission("set
         "stripe_price_ids":     saved.get("stripe_price_ids",     settings.STRIPE_PRICE_IDS),
         "stripe_price_topup":   saved.get("stripe_price_topup",   settings.STRIPE_PRICE_TOPUP),
         "openrouter_base_url":  saved.get("openrouter_base_url",  settings.OPENROUTER_BASE_URL),
+        "hero_vimeo_id":        saved.get("hero_vimeo_id", ""),
     }
 
 @router.put("/platform-config")
@@ -2334,6 +2363,13 @@ async def put_platform_config(
         if val and not val.startswith("http"):
             raise HTTPException(422, "openrouter_base_url must start with http")
         patch["openrouter_base_url"] = val or settings.OPENROUTER_BASE_URL
+
+    if "hero_vimeo_id" in body:
+        import re as _re
+        raw = str(body["hero_vimeo_id"]).strip()
+        # Accept full Vimeo URLs or bare numeric IDs
+        m = _re.search(r"(\d{6,12})", raw)
+        patch["hero_vimeo_id"] = m.group(1) if m else raw or None
 
     if not patch:
         raise HTTPException(422, "No valid fields to update")

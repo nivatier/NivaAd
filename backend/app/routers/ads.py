@@ -163,6 +163,7 @@ async def get_video_themes(user: User = Depends(get_current_user), db: AsyncSess
     return [
         VideoThemeOut(
             id=t["id"], label=t["label"], thumbnail=t.get("thumbnail"),
+            preview_video=t.get("preview_video"),
             category_tags=t.get("category_tags", []), style_notes=t.get("style_notes", ""),
             shots=[VideoThemeShotOut(**s) for s in t.get("shots", [])],
         )
@@ -327,8 +328,6 @@ async def preview_cost(data: PreviewCostIn, user: User = Depends(require_capabil
 
 @router.post("/preview-prompt", response_model=PromptPreviewOut)
 async def preview_prompt(data: PromptPreviewIn, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    import logging as _log
-    _log.getLogger("nivaad.ads").warning("[DEBUG preview-prompt] copy_directions=%r tone=%r", data.copy_directions, data.tone)
     # Resolve camera style and music label the same way create_ad does,
     # so the preview brief is identical to the real generation brief.
     camera_style_prompt = await _resolve_camera_style_prompt(db, data.video_camera_style_ids) if data.video_camera_style_ids else None

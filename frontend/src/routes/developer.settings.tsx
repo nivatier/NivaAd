@@ -717,6 +717,7 @@ function BillingSettingsTab() {
 function ApiEndpointsTab() {
   const handleAuthError = useDevAuthErrorHandler();
   const [openrouterUrl, setOpenrouterUrl] = useState("");
+  const [heroVimeoId, setHeroVimeoId] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState("");
@@ -725,19 +726,18 @@ function ApiEndpointsTab() {
     devApi("/developer/platform-config")
       .then((r) => {
         setOpenrouterUrl(r.openrouter_base_url ?? "");
+        setHeroVimeoId(r.hero_vimeo_id ?? "");
       })
       .catch((e: any) => { if (!handleAuthError(e)) setErr(e.message || "Could not load"); });
   }, []);
 
   async function save() {
-    for (const [label, val] of [["OpenRouter", openrouterUrl]]) {
-      if (val && !(val as string).startsWith("http")) { setErr(`${label} URL must start with http`); return; }
-    }
+    if (openrouterUrl && !openrouterUrl.startsWith("http")) { setErr("OpenRouter URL must start with http"); return; }
     setSaving(true); setErr(""); setSaved(false);
     try {
       await devApi("/developer/platform-config", {
         method: "PUT",
-        body: { openrouter_base_url: openrouterUrl, linkedin_api_url: linkedinUrl },
+        body: { openrouter_base_url: openrouterUrl, hero_vimeo_id: heroVimeoId },
       });
       setSaved(true); setTimeout(() => setSaved(false), 3000);
     } catch (e: any) { if (!handleAuthError(e)) setErr(e.message || "Could not save"); }
@@ -762,6 +762,14 @@ function ApiEndpointsTab() {
               <span key={u} className="rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] text-muted-foreground">{u}</span>
             ))}
           </div>
+        </div>
+        {/* Hero / launch video */}
+        <div className="mt-4">
+          <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Hero / launch video Vimeo ID</label>
+          <input value={heroVimeoId} onChange={(e) => setHeroVimeoId(e.target.value)}
+            placeholder="e.g. 1213550777 or https://vimeo.com/1213550777"
+            className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-ring focus:outline-none" />
+          <div className="mt-1 text-[10px] text-muted-foreground">Paste a Vimeo ID or full URL — shown as the product demo video on the public home page.</div>
         </div>
       </div>
 

@@ -18,7 +18,8 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-const VIMEO_ID = "1213550777";
+// VIMEO_ID is now loaded at runtime from /public/platform-config
+const FALLBACK_VIMEO_ID = "1213550777";
 
 const platforms = [
   { tag: "Instagram", title: "Pulse One Smartwatch", copy: "Your health, one glance away. 7-day battery.", img: adPulse },
@@ -991,6 +992,14 @@ function VimeoModal({ vimeoId, open, onClose }: { vimeoId: string; open: boolean
 // ── Featured video — static preview, click opens modal ──────────────────────
 function FeaturedVideo() {
   const [modalOpen, setModalOpen] = useState(false);
+  const [vimeoId, setVimeoId] = useState(FALLBACK_VIMEO_ID);
+
+  useEffect(() => {
+    fetch(`${import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000"}/developer/public/platform-config`)
+      .then((r) => r.json())
+      .then((d) => { if (d.hero_vimeo_id) setVimeoId(d.hero_vimeo_id); })
+      .catch(() => { /* use fallback */ });
+  }, []);
 
   return (
     <>
@@ -1024,7 +1033,7 @@ function FeaturedVideo() {
             onClick={() => setModalOpen(true)}
           >
             <iframe
-              src={`https://player.vimeo.com/video/${VIMEO_ID}?badge=0&autopause=0&player_id=0&app_id=58479`}
+              src={`https://player.vimeo.com/video/${vimeoId}?badge=0&autopause=0&player_id=0&app_id=58479`}
               width="100%"
               height="100%"
               frameBorder="0"
@@ -1065,7 +1074,7 @@ function FeaturedVideo() {
         </div>
       </div>
 
-      <VimeoModal vimeoId={VIMEO_ID} open={modalOpen} onClose={() => setModalOpen(false)} />
+      <VimeoModal vimeoId={vimeoId} open={modalOpen} onClose={() => setModalOpen(false)} />
     </>
   );
 }

@@ -18,8 +18,8 @@ type ImageThemeEditor = {
 };
 
 type VideoThemeShot = { label: string; duration: number; prompt_template: string };
-type VideoTheme = { id: string; label: string; thumbnail: string | null; category_tags: string[]; style_notes: string; shots: VideoThemeShot[] };
-type VideoThemeDraft = Omit<VideoTheme, "thumbnail"> & { thumbnail: string };
+type VideoTheme = { id: string; label: string; thumbnail: string | null; preview_video?: string | null; category_tags: string[]; style_notes: string; shots: VideoThemeShot[] };
+type VideoThemeDraft = Omit<VideoTheme, "thumbnail"> & { thumbnail: string; preview_video?: string | null };
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -504,13 +504,13 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
     const entry = entries.find((e) => e.id === id);
     if (!entry) return;
     setSelectedId(id);
-    setDraft({ ...entry, thumbnail: entry.thumbnail || "", shots: entry.shots.map((s) => ({ ...s })) });
+    setDraft({ ...entry, thumbnail: entry.thumbnail || "", preview_video: entry.preview_video || null, shots: entry.shots.map((s) => ({ ...s })) });
     setErr("");
   }
 
   function startNewBlank() {
     setSelectedId(null);
-    setDraft({ id: `video-${Date.now()}`, label: "", thumbnail: "", category_tags: [], style_notes: "", shots: [{ label: "Shot 1", duration: 3, prompt_template: "" }] });
+    setDraft({ id: `video-${Date.now()}`, label: "", thumbnail: "", preview_video: null, category_tags: [], style_notes: "", shots: [{ label: "Shot 1", duration: 3, prompt_template: "" }] });
     setErr("");
   }
 
@@ -522,7 +522,7 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
         await devApi("/developer/themes/video-gallery/generate-draft", { method: "POST", body: { brief: brief.trim(), category_tags: briefTags } });
       setSelectedId(null);
       setDraft({
-        id: `video-${Date.now()}`, label: r.label || "Untitled", thumbnail: "",
+        id: `video-${Date.now()}`, label: r.label || "Untitled", thumbnail: "", preview_video: null,
         category_tags: briefTags, style_notes: r.style_notes,
         shots: r.shots.length ? r.shots : [{ label: "Shot 1", duration: 3, prompt_template: "" }],
       });
@@ -593,7 +593,7 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
     try {
       const saved_: VideoTheme[] = await devApi("/developer/themes/video-gallery", {
         method: "POST",
-        body: { id: draft.id, label: draft.label.trim(), thumbnail: draft.thumbnail || null, category_tags: draft.category_tags, style_notes: draft.style_notes.trim(), shots: draft.shots },
+        body: { id: draft.id, label: draft.label.trim(), thumbnail: draft.thumbnail || null, preview_video: draft.preview_video || null, category_tags: draft.category_tags, style_notes: draft.style_notes.trim(), shots: draft.shots },
       });
       setEntries(saved_);
       setSaved(true);
@@ -653,10 +653,12 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
           {entries.map((entry) => (
             <button key={entry.id} onClick={() => selectExisting(entry.id)}
               className={`overflow-hidden rounded-lg border text-left ${selectedId === entry.id ? "border-primary ring-2 ring-primary" : "border-border hover:border-primary/40"}`}>
-              {entry.thumbnail ? (
+              {entry.preview_video ? (
+                <video src={entry.preview_video} className="h-16 w-full object-cover" autoPlay loop muted playsInline />
+              ) : entry.thumbnail ? (
                 <img src={entry.thumbnail} alt={entry.label} className="h-16 w-full object-cover" />
               ) : (
-                <div className="flex h-16 w-full items-center justify-center bg-muted text-[9px] text-muted-foreground">No thumbnail</div>
+                <div className="flex h-16 w-full items-center justify-center bg-muted text-[9px] text-muted-foreground">No preview</div>
               )}
               <div className="truncate px-1.5 py-1 text-[10px] text-foreground">{entry.label}</div>
             </button>
@@ -670,28 +672,36 @@ function VideoThemeTab({ categoryTags }: { categoryTags: string[] }) {
         ) : (
           <>
             <div className="mb-3 flex items-start gap-3">
-              {draft.thumbnail ? (
-                <img src={draft.thumbnail} alt={draft.label} className="h-24 w-24 rounded-lg object-cover border border-border" />
+              {/* mp4 preview player — replaces the old static thumbnail */}
+              {draft.preview_video ? (
+                <video src={draft.preview_video} className="h-24 w-24 rounded-lg object-cover border border-primary/40 shrink-0" autoPlay loop muted playsInline />
               ) : (
-                <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-dashed border-border text-[10px] text-muted-foreground text-center px-1">No thumbnail</div>
+                <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-lg border border-dashed border-border text-[10px] text-muted-foreground text-center px-1">No preview</div>
               )}
               <div className="flex-1">
                 <label className="text-[11px] text-muted-foreground">Label</label>
                 <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })}
                   className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none mb-2" />
+                {/* mp4 upload / remove */}
                 <div className="flex items-center gap-2 flex-wrap">
-                  <label className="cursor-pointer rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground">
-                    {draft.thumbnail ? "Replace thumbnail" : "Upload thumbnail"}
-                    <input type="file" accept="image/*" onChange={handleThumbnailUpload} disabled={thumbBusy} className="hidden" />
+                  <label className="cursor-pointer rounded-full border border-primary/40 px-2.5 py-1 text-[11px] text-primary/80 hover:text-primary hover:border-primary transition-colors">
+                    🎬 {draft.preview_video ? "Replace mp4" : "Upload mp4 preview"}
+                    <input type="file" accept="video/mp4,video/*" className="hidden" onChange={async (e) => {
+                      const file = e.target.files?.[0]; if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = async () => {
+                        try {
+                          const r: { url: string } = await devApi("/developer/themes/video-gallery/upload-preview", { method: "POST", body: { video: reader.result as string } });
+                          setDraft((d) => d ? { ...d, preview_video: r.url } : d);
+                        } catch (ex: any) { setErr(ex.message || "mp4 upload failed"); }
+                      };
+                      reader.readAsDataURL(file);
+                    }} />
                   </label>
-                  <button onClick={generateThumbnailFromShot} disabled={thumbBusy}
-                    className="rounded-full border border-primary/50 px-2.5 py-1 text-[11px] text-primary hover:bg-primary/10 disabled:opacity-50">
-                    {thumbBusy ? "…" : "✨ Generate from first shot"}
-                  </button>
-                  {draft.thumbnail && (
-                    <button onClick={() => setDraft({ ...draft, thumbnail: "" })}
+                  {draft.preview_video && (
+                    <button onClick={() => setDraft({ ...draft, preview_video: null })}
                       className="rounded-full border border-destructive/40 px-2.5 py-1 text-[11px] text-destructive/70 hover:text-destructive hover:border-destructive transition-colors">
-                      Remove thumbnail
+                      Remove mp4
                     </button>
                   )}
                 </div>
