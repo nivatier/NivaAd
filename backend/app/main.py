@@ -13,7 +13,13 @@ from app.routers import (
 if settings.DATABASE_URL:
     install_db_log_handler(service="api", db_url=settings.DATABASE_URL)
 
-app = FastAPI(title="NivaSpark API", version="0.14.0")
+app = FastAPI(
+    title="NivaSpark API",
+    version="0.14.0",
+    docs_url=None if settings.ENV == "production" else "/docs",
+    redoc_url=None if settings.ENV == "production" else "/redoc",
+    openapi_url=None if settings.ENV == "production" else "/openapi.json",
+)
 
 app.add_middleware(
     CORSMiddleware,
