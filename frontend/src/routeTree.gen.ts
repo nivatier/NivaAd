@@ -31,6 +31,7 @@ import { Route as DeveloperModerationRouteImport } from './routes/developer.mode
 import { Route as DeveloperModelsRouteImport } from './routes/developer.models'
 import { Route as DeveloperLogsRouteImport } from './routes/developer.logs'
 import { Route as DeveloperInfrastructureRouteImport } from './routes/developer.infrastructure'
+import { Route as DeveloperFlaggedContentRouteImport } from './routes/developer.flagged-content'
 import { Route as DeveloperEmailRouteImport } from './routes/developer.email'
 import { Route as DeveloperCompaniesRouteImport } from './routes/developer.companies'
 import { Route as DeveloperAssistantRouteImport } from './routes/developer.assistant'
@@ -159,6 +160,11 @@ const DeveloperInfrastructureRoute = DeveloperInfrastructureRouteImport.update({
   path: '/developer/infrastructure',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DeveloperFlaggedContentRoute = DeveloperFlaggedContentRouteImport.update({
+  id: '/developer/flagged-content',
+  path: '/developer/flagged-content',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DeveloperEmailRoute = DeveloperEmailRouteImport.update({
   id: '/developer/email',
   path: '/developer/email',
@@ -274,6 +280,7 @@ export interface FileRoutesByFullPath {
   '/developer/assistant': typeof DeveloperAssistantRoute
   '/developer/companies': typeof DeveloperCompaniesRoute
   '/developer/email': typeof DeveloperEmailRoute
+  '/developer/flagged-content': typeof DeveloperFlaggedContentRoute
   '/developer/infrastructure': typeof DeveloperInfrastructureRoute
   '/developer/logs': typeof DeveloperLogsRoute
   '/developer/models': typeof DeveloperModelsRoute
@@ -315,6 +322,7 @@ export interface FileRoutesByTo {
   '/developer/assistant': typeof DeveloperAssistantRoute
   '/developer/companies': typeof DeveloperCompaniesRoute
   '/developer/email': typeof DeveloperEmailRoute
+  '/developer/flagged-content': typeof DeveloperFlaggedContentRoute
   '/developer/infrastructure': typeof DeveloperInfrastructureRoute
   '/developer/logs': typeof DeveloperLogsRoute
   '/developer/models': typeof DeveloperModelsRoute
@@ -357,6 +365,7 @@ export interface FileRoutesById {
   '/developer/assistant': typeof DeveloperAssistantRoute
   '/developer/companies': typeof DeveloperCompaniesRoute
   '/developer/email': typeof DeveloperEmailRoute
+  '/developer/flagged-content': typeof DeveloperFlaggedContentRoute
   '/developer/infrastructure': typeof DeveloperInfrastructureRoute
   '/developer/logs': typeof DeveloperLogsRoute
   '/developer/models': typeof DeveloperModelsRoute
@@ -400,6 +409,7 @@ export interface FileRouteTypes {
     | '/developer/assistant'
     | '/developer/companies'
     | '/developer/email'
+    | '/developer/flagged-content'
     | '/developer/infrastructure'
     | '/developer/logs'
     | '/developer/models'
@@ -441,6 +451,7 @@ export interface FileRouteTypes {
     | '/developer/assistant'
     | '/developer/companies'
     | '/developer/email'
+    | '/developer/flagged-content'
     | '/developer/infrastructure'
     | '/developer/logs'
     | '/developer/models'
@@ -482,6 +493,7 @@ export interface FileRouteTypes {
     | '/developer/assistant'
     | '/developer/companies'
     | '/developer/email'
+    | '/developer/flagged-content'
     | '/developer/infrastructure'
     | '/developer/logs'
     | '/developer/models'
@@ -524,6 +536,7 @@ export interface RootRouteChildren {
   DeveloperAssistantRoute: typeof DeveloperAssistantRoute
   DeveloperCompaniesRoute: typeof DeveloperCompaniesRoute
   DeveloperEmailRoute: typeof DeveloperEmailRoute
+  DeveloperFlaggedContentRoute: typeof DeveloperFlaggedContentRoute
   DeveloperInfrastructureRoute: typeof DeveloperInfrastructureRoute
   DeveloperLogsRoute: typeof DeveloperLogsRoute
   DeveloperModelsRoute: typeof DeveloperModelsRoute
@@ -694,6 +707,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DeveloperInfrastructureRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/developer/flagged-content': {
+      id: '/developer/flagged-content'
+      path: '/developer/flagged-content'
+      fullPath: '/developer/flagged-content'
+      preLoaderRoute: typeof DeveloperFlaggedContentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/developer/email': {
       id: '/developer/email'
       path: '/developer/email'
@@ -845,6 +865,7 @@ const rootRouteChildren: RootRouteChildren = {
   DeveloperAssistantRoute: DeveloperAssistantRoute,
   DeveloperCompaniesRoute: DeveloperCompaniesRoute,
   DeveloperEmailRoute: DeveloperEmailRoute,
+  DeveloperFlaggedContentRoute: DeveloperFlaggedContentRoute,
   DeveloperInfrastructureRoute: DeveloperInfrastructureRoute,
   DeveloperLogsRoute: DeveloperLogsRoute,
   DeveloperModelsRoute: DeveloperModelsRoute,

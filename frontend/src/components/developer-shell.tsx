@@ -1,24 +1,25 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
-import { LayoutDashboard, Cpu, Palette, Link2, ShieldCheck, Settings, MessageCircle, Users, Activity, ScrollText, Server, Mail, type LucideIcon } from "lucide-react";
+import { LayoutDashboard, Cpu, Palette, Link2, ShieldCheck, Settings, MessageCircle, Users, Activity, ScrollText, Server, Mail, Flag, type LucideIcon } from "lucide-react";
 import { clearDevToken } from "@/lib/dev-api";
 import { useDevIdentity } from "@/hooks/use-developer-auth";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const NAV: { to: string; label: string; icon: LucideIcon; section: string | null }[] = [
-  { to: "/developer/overview",        label: "Overview",       icon: LayoutDashboard, section: null },
-  { to: "/developer/monitoring",      label: "Monitoring",     icon: Activity,        section: null },
-  { to: "/developer/infrastructure",  label: "Infrastructure", icon: Server,          section: null },
-  { to: "/developer/email",           label: "Email Health",   icon: Mail,            section: null },
-  { to: "/developer/logs",            label: "Logs",           icon: ScrollText,      section: null },
-  { to: "/developer/companies",       label: "Users",          icon: Users,           section: "companies" },
-  { to: "/developer/models",          label: "Models",         icon: Cpu,             section: "models" },
-  { to: "/developer/themes",          label: "Themes",         icon: Palette,         section: "themes" },
-  { to: "/developer/assistant",       label: "Assistant",      icon: MessageCircle,   section: "assistant" },
-  { to: "/developer/platforms",       label: "Platforms",      icon: Link2,           section: "platforms" },
-  { to: "/developer/moderation",      label: "Moderation",     icon: ShieldCheck,     section: "guardrails" },
-  { to: "/developer/settings",        label: "Settings",       icon: Settings,        section: "settings" },
-  { to: "/developer/team",            label: "Team",           icon: Users,           section: "team" },
+  { to: "/developer/overview",        label: "Overview",         icon: LayoutDashboard, section: null },
+  { to: "/developer/monitoring",      label: "Monitoring",       icon: Activity,        section: null },
+  { to: "/developer/infrastructure",  label: "Infrastructure",   icon: Server,          section: null },
+  { to: "/developer/email",           label: "Email Health",     icon: Mail,            section: null },
+  { to: "/developer/logs",            label: "Logs",             icon: ScrollText,      section: null },
+  { to: "/developer/companies",       label: "Users",            icon: Users,           section: "companies" },
+  { to: "/developer/models",          label: "Models",           icon: Cpu,             section: "models" },
+  { to: "/developer/themes",          label: "Themes",           icon: Palette,         section: "themes" },
+  { to: "/developer/assistant",       label: "Assistant",        icon: MessageCircle,   section: "assistant" },
+  { to: "/developer/platforms",       label: "Platforms",        icon: Link2,           section: "platforms" },
+  { to: "/developer/moderation",      label: "Moderation",       icon: ShieldCheck,     section: "guardrails" },
+  { to: "/developer/flagged-content", label: "Flagged Content",  icon: Flag,            section: "guardrails" },
+  { to: "/developer/settings",        label: "Settings",         icon: Settings,        section: "settings" },
+  { to: "/developer/team",            label: "Team",             icon: Users,           section: "team" },
 ];
 
 export function DeveloperShell({ title, children }: { title: ReactNode; children: ReactNode }) {

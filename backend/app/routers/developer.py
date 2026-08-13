@@ -1781,6 +1781,132 @@ async def delete_moderation_default(rule_id: uuid.UUID, _: str = Depends(require
     await db.commit()
 
 
+# ── Developer flagged content queue (cross-company) ───────────────────────────
+
+@router.get("/flagged-content")
+async def list_all_flagged_content(
+    status: str | None = None,
+    company_id: str | None = None,
+    user_id: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+    _: str = Depends(require_developer_permission("guardrails")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Developer-level cross-company flagged content queue with filtering."""
+    from sqlalchemy import and_, or_
+
+    conditions = []
+    if status == "open":
+        conditions.append(FlaggedContent.developer_status == "open")
+    elif status == "reviewed":
+        conditions.append(FlaggedContent.developer_status == "reviewed")
+    elif status == "archived":
+        conditions.append(FlaggedContent.developer_status == "archived")
+
+    if company_id:
+        try:
+            conditions.append(FlaggedContent.company_id == uuid.UUID(company_id))
+        except ValueError:
+            pass
+    if user_id:
+        try:
+            conditions.append(FlaggedContent.user_id == uuid.UUID(user_id))
+        except ValueError:
+            pass
+    if date_from:
+        try:
+            from datetime import datetime as _dt
+            conditions.append(FlaggedContent.created_at >= _dt.fromisoformat(date_from))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            from datetime import datetime as _dt
+            conditions.append(FlaggedContent.created_at <= _dt.fromisoformat(date_to))
+        except ValueError:
+            pass
+    if search:
+        term = f"%{search}%"
+        conditions.append(or_(
+            FlaggedContent.text.ilike(term),
+            FlaggedContent.matched_term.ilike(term),
+        ))
+
+    base_q = select(FlaggedContent)
+    if conditions:
+        base_q = base_q.where(and_(*conditions))
+
+    total = await db.scalar(select(func.count()).select_from(base_q.subquery()))
+    rows = (await db.scalars(
+        base_q.order_by(FlaggedContent.created_at.desc())
+        .offset((page - 1) * page_size).limit(page_size)
+    )).all()
+
+    results = []
+    for row in rows:
+        company = await db.get(Company, row.company_id) if row.company_id else None
+        user = await db.get(User, row.user_id) if row.user_id else None
+        results.append({
+            "id": str(row.id),
+            "text": row.text,
+            "matched_term": row.matched_term,
+            "resolved": row.resolved,
+            "developer_status": row.developer_status,
+            "created_at": row.created_at.isoformat(),
+            "company_id": str(row.company_id) if row.company_id else None,
+            "company_name": company.name if company else None,
+            "user_id": str(row.user_id) if row.user_id else None,
+            "user_email": user.email if user else None,
+            "user_name": user.full_name if user else None,
+        })
+
+    return {"items": results, "total": total or 0, "page": page, "page_size": page_size}
+
+
+@router.post("/flagged-content/{flag_id}/review", status_code=200)
+async def review_flagged_item(
+    flag_id: uuid.UUID,
+    _: str = Depends(require_developer_permission("guardrails")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark a flagged item as reviewed/resolved."""
+    flag = await db.get(FlaggedContent, flag_id)
+    if not flag:
+        raise HTTPException(404, "Flagged item not found")
+    flag.developer_status = "reviewed"
+    db.add(AuditLog(
+        company_id=flag.company_id,
+        action="moderation.developer_reviewed",
+        detail={"flag_id": str(flag_id), "matched_term": flag.matched_term},
+    ))
+    await db.commit()
+    return {"id": str(flag.id), "developer_status": "reviewed"}
+
+
+@router.post("/flagged-content/{flag_id}/archive", status_code=200)
+async def archive_flagged_item(
+    flag_id: uuid.UUID,
+    _: str = Depends(require_developer_permission("guardrails")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Archive a flagged item — separate from company admin resolve."""
+    flag = await db.get(FlaggedContent, flag_id)
+    if not flag:
+        raise HTTPException(404, "Flagged item not found")
+    flag.developer_status = "archived"
+    db.add(AuditLog(
+        company_id=flag.company_id,
+        action="moderation.developer_archived",
+        detail={"flag_id": str(flag_id), "matched_term": flag.matched_term},
+    ))
+    await db.commit()
+    return {"id": str(flag.id), "developer_status": "archived"}
+
+
 def _to_out(p: dict) -> PlatformIntegrationOut:
     return PlatformIntegrationOut(
         id=p["id"], label=p["label"], client_id=p.get("client_id", ""),

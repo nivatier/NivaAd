@@ -248,10 +248,6 @@ class PostJob(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)       # top-level task error
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    # TikTok publish_ids returned from the Content Posting API — stored so
-    # the /webhooks/tiktok endpoint can match async status callbacks back to
-    # the originating PostJob. One entry per TikTok post attempt.
-    tiktok_publish_ids: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class Campaign(Base):
@@ -301,7 +297,8 @@ class FlaggedContent(Base):
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     text: Mapped[str] = mapped_column(Text)
     matched_term: Mapped[str] = mapped_column(String(200))
-    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)         # company admin action
+    developer_status: Mapped[str] = mapped_column(String(20), default="open", server_default="open")  # developer action: open | reviewed | archived
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
