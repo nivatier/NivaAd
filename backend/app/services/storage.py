@@ -63,7 +63,11 @@ def _key_from_url(url: str) -> str:
       - MinIO local: {S3_PUBLIC_URL}/{S3_BUCKET}/{key}
         e.g. http://minio:9000/nivaad-media/generated/abc.png
       - R2 public:   {S3_PUBLIC_URL}/{key}   (bucket not in path)
-        e.g. https://pub-xxx.r2.dev/generated/abc.png
+        e.g. https://sparkmedia.nivatier.com/generated/abc.png
+
+    Also handles legacy URLs using the old R2 public dev URL
+    (pub-xxx.r2.dev) for files generated before the custom domain
+    was configured — both map to the same underlying object key.
 
     We detect which by checking if the bucket name appears in the URL."""
     marker = f"/{settings.S3_BUCKET}/"
@@ -74,6 +78,15 @@ def _key_from_url(url: str) -> str:
     base = settings.S3_PUBLIC_URL.rstrip("/")
     if url.startswith(base + "/"):
         return url[len(base) + 1:]
+    # Legacy R2 public dev URL fallback — handles files stored before the
+    # custom domain (sparkmedia.nivatier.com) was configured. Both URLs
+    # point to the same R2 bucket so the key extraction is identical.
+    legacy_bases = [
+        "https://pub-28b9cc4889dd44749c08751b84f38326.r2.dev",
+    ]
+    for legacy in legacy_bases:
+        if url.startswith(legacy + "/"):
+            return url[len(legacy) + 1:]
     raise ValueError(f"URL does not look like one of our own storage URLs: {url}")
 
 
