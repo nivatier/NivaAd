@@ -1188,6 +1188,10 @@ async def reframe_for_platform(
     if master_video_url:
         try:
             vid_bytes = await asyncio.to_thread(reframe_video, master_video_url, ratio, brand_kit)
+            # TikTok requires a minimum of 360px on the short edge — upscale if needed
+            if platform_id == "tiktok":
+                from app.services.tiktok import _ensure_tiktok_min_resolution
+                vid_bytes = await asyncio.to_thread(_ensure_tiktok_min_resolution, vid_bytes)
             reframed_vid_url = storage.upload_bytes(vid_bytes, "video/mp4", "mp4")
             platform_video_urls = dict(first.get("platform_video_urls") or {})
             platform_video_urls[platform_id] = reframed_vid_url

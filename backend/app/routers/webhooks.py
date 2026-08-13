@@ -343,6 +343,23 @@ async def tiktok_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     event = body.get("event", "")
     publish_id = body.get("publish_id", "")
 
+    # TikTok wraps the publish_id inside a JSON string in the "content" field
+    # e.g. content: '{"publish_id":"v_pub_file~...","reason":"picture_size_check_failed"}'
+    content_str = body.get("content", "")
+    content = {}
+    if content_str:
+        try:
+            import json as _json2
+            content = _json2.loads(content_str)
+        except Exception:
+            pass
+
+    if not publish_id:
+        publish_id = content.get("publish_id", "")
+
+    # Also extract fail reason from content if present
+    fail_reason_from_content = content.get("reason", "")
+
     if not publish_id:
         # TikTok may also send a verification ping with just {"challenge": "..."}
         challenge = body.get("challenge")
@@ -388,7 +405,7 @@ async def tiktok_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         await db.commit()
         return {"received": True}
 
-    if event == "post_publish_success":
+    if event in ("post_publish_success", "post.publish.complete", "post.publish.success"):
         succeeded = list(job.succeeded or [])
         if "tiktok" not in succeeded:
             succeeded.append("tiktok")
@@ -403,9 +420,9 @@ async def tiktok_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             detail={"publish_id": publish_id, "job_id": str(job.id)},
         ))
 
-    elif event in ("post_publish_fail", "post_publish_canceled"):
+    elif event in ("post_publish_fail", "post_publish_canceled", "post.publish.failed", "post.publish.inbox"):
         error_info = body.get("error") or {}
-        fail_reason = error_info.get("message") or event
+        fail_reason = fail_reason_from_content or error_info.get("message") or event
         failed = dict(job.failed or {})
         failed["tiktok"] = f"TikTok publish failed: {fail_reason}"
         job.failed = failed

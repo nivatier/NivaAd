@@ -40,7 +40,6 @@ PHOTO_INIT_URL     = "https://open.tiktokapis.com/v2/post/publish/content/init/"
 STATUS_URL         = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
 
 DEFAULT_SCOPE = "user.info.basic,video.publish,video.upload"
-REFRESH_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 
 # TikTok video chunk size: max 64 MB per chunk
 _CHUNK_SIZE = 64 * 1024 * 1024
@@ -93,60 +92,6 @@ def exchange_code_for_token(
     return body
 
 
-def refresh_access_token(
-    refresh_token: str,
-    client_key: str,
-    client_secret: str,
-) -> dict:
-    """Exchange a refresh token for a new access + refresh token pair.
-
-    TikTok access tokens expire after 24 hours; refresh tokens last 365 days.
-    Call this when a post fails with a 401 and retry once with the new token.
-
-    Returns the full token response dict with 'access_token' and 'refresh_token'.
-    """
-    data = {
-        "client_key": client_key,
-        "client_secret": client_secret,
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-    }
-    resp = httpx.post(
-        REFRESH_URL,
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=20,
-    )
-    if resp.status_code >= 400:
-        raise RuntimeError(f"TikTok token refresh {resp.status_code}: {resp.text[:400]}")
-    body = resp.json()
-    if body.get("error"):
-        raise RuntimeError(f"TikTok refresh error: {body.get('error_description', body.get('error'))}")
-    return body
-
-
-def get_publish_status(access_token: str, publish_id: str) -> dict:
-    """Poll the status of an async TikTok video/photo publish.
-
-    Returns the status dict from TikTok, e.g.:
-      {"status": "PUBLISH_COMPLETE"} or {"status": "FAILED", "fail_reason": "..."}
-
-    Statuses: PROCESSING_UPLOAD | SEND_TO_USER_INBOX | PUBLISH_COMPLETE | FAILED
-    """
-    resp = httpx.post(
-        STATUS_URL,
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json; charset=UTF-8",
-        },
-        json={"publish_id": publish_id},
-        timeout=20,
-    )
-    if resp.status_code >= 400:
-        raise RuntimeError(f"TikTok status fetch {resp.status_code}: {resp.text[:200]}")
-    return resp.json().get("data", {})
-
-
 def get_user_info(access_token: str) -> dict:
     """Fetch basic user info — validates the token and returns
     {open_id, display_name, avatar_url}."""
@@ -165,6 +110,61 @@ def get_user_info(access_token: str) -> dict:
 
 
 # ── Video posting ─────────────────────────────────────────────────────────────
+
+TIKTOK_MIN_SHORT_EDGE = 360  # TikTok rejects videos below 360px on the short edge
+
+
+def _ensure_tiktok_min_resolution(video_bytes: bytes) -> bytes:
+    """Upscale video bytes if the short edge is below TikTok's 360px minimum.
+
+    Uses ffmpeg to probe dimensions and upscale proportionally if needed.
+    Returns the original bytes unchanged if already meeting the requirement
+    or if ffmpeg is unavailable.
+    """
+    import subprocess
+    import tempfile
+    import os
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="tiktok_scale_") as tmp:
+            src = os.path.join(tmp, "src.mp4")
+            dst = os.path.join(tmp, "dst.mp4")
+            with open(src, "wb") as f:
+                f.write(video_bytes)
+
+            # Probe dimensions
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", src],
+                capture_output=True, timeout=15,
+            )
+            dims = probe.stdout.decode().strip()
+            if not dims or "x" not in dims:
+                return video_bytes
+            w, h = map(int, dims.split("x"))
+            short_edge = min(w, h)
+
+            if short_edge >= TIKTOK_MIN_SHORT_EDGE:
+                return video_bytes  # already fine
+
+            scale = TIKTOK_MIN_SHORT_EDGE / short_edge
+            new_w = int(round(w * scale / 2) * 2)
+            new_h = int(round(h * scale / 2) * 2)
+            logger.info("[tiktok] upscaling video from %dx%d to %dx%d to meet 360px minimum", w, h, new_w, new_h)
+
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", src,
+                 "-vf", f"scale={new_w}:{new_h}",
+                 "-c:v", "libx264", "-c:a", "copy", dst],
+                capture_output=True, timeout=120, check=True,
+            )
+            with open(dst, "rb") as f:
+                return f.read()
+
+    except Exception as exc:
+        logger.warning("[tiktok] min-resolution upscale failed, using original: %s", exc)
+        return video_bytes
+
 
 def post_video(
     access_token: str,
@@ -189,6 +189,10 @@ def post_video(
         video_bytes, content_type = _fetch_bytes(video_url)
     except Exception as exc:
         raise RuntimeError(f"Could not read video from storage: {exc}") from exc
+
+    # TikTok requires a minimum of 360px on the short edge.
+    # Upscale here if the reframed video is below that threshold.
+    video_bytes = _ensure_tiktok_min_resolution(video_bytes)
 
     file_size = len(video_bytes)
     logger.info("[tiktok] video upload: size=%d bytes", file_size)
