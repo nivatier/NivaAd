@@ -5,7 +5,8 @@ from app.config import settings
 from app.services.log_handler import install_db_log_handler
 from app.routers import (
     admin_capabilities, admin_overview, admin_users, ads, agent, analytics, auth,
-    billing, brand_kit, campaigns, connections, developer, moderation, products, schedule, webhooks,
+    billing, brand_kit, campaigns, connections, connections_linkedin, connections_tiktok,
+    developer, moderation, products, schedule, webhooks,
 )
 
 # Attach DB log handler early — before any router imports so startup
@@ -38,6 +39,8 @@ app.include_router(brand_kit.router)
 app.include_router(campaigns.router)
 app.include_router(agent.router)
 app.include_router(connections.router)
+app.include_router(connections_linkedin.router)
+app.include_router(connections_tiktok.router)
 app.include_router(schedule.router)  # backend endpoints stay — My Ads calls them directly now, the standalone /app/schedule frontend page is what's being removed
 app.include_router(moderation.router)
 app.include_router(admin_users.router)

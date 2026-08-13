@@ -137,6 +137,66 @@ def get_person_urn(access_token: str, db=None) -> str:
     return f"urn:li:person:{sub}"
 
 
+def get_organization_pages(access_token: str, version: str = LINKEDIN_API_VERSION) -> list[dict]:
+    """Fetch all LinkedIn Company Pages the token holder can admin.
+
+    Calls the Community Management API's organizationAcls endpoint —
+    requires the w_organization_social scope AND LinkedIn's Community
+    Management API product to be approved on the developer app.
+
+    Returns a list of dicts: [{org_urn, name, vanity_name}]
+    An empty list means the account has no Company Pages (or the API
+    product hasn't been approved yet).
+    """
+    hdrs = {
+        "Authorization": f"Bearer {access_token}",
+        "LinkedIn-Version": version,
+        "X-Restli-Protocol-Version": "2.0.0",
+    }
+
+    # Step 1 — get the list of organizations where the member is an admin
+    acls_resp = httpx.get(
+        "https://api.linkedin.com/rest/organizationAcls",
+        params={"q": "roleAssignee", "role": "ADMINISTRATOR", "state": "APPROVED"},
+        headers=hdrs,
+        timeout=20,
+    )
+    if acls_resp.status_code >= 400:
+        raise RuntimeError(
+            f"LinkedIn organizationAcls {acls_resp.status_code}: {acls_resp.text[:400]}"
+        )
+
+    elements = acls_resp.json().get("elements", [])
+    if not elements:
+        return []
+
+    # Step 2 — for each org URN, fetch the organization name
+    pages = []
+    for el in elements:
+        org_urn = el.get("organization") or el.get("organizationTarget", "")
+        if not org_urn or not org_urn.startswith("urn:li:organization:"):
+            continue
+        org_id = org_urn.split(":")[-1]
+
+        org_resp = httpx.get(
+            f"https://api.linkedin.com/rest/organizations/{org_id}",
+            headers=hdrs,
+            timeout=20,
+        )
+        if org_resp.status_code >= 400:
+            # Don't fail the whole list if one lookup fails — just skip it
+            continue
+
+        org_data = org_resp.json()
+        pages.append({
+            "org_urn": org_urn,
+            "name": org_data.get("localizedName") or org_data.get("name", {}).get("localized", {}).get("en_US", org_id),
+            "vanity_name": org_data.get("vanityName", ""),
+        })
+
+    return pages
+
+
 # ── Image upload ──────────────────────────────────────────────────────────────
 
 def upload_image_to_linkedin(

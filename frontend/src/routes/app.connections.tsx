@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { useRequireCapability } from "@/hooks/use-require-capability";
 import { useAuth } from "@/hooks/use-auth";
 import { FreePlanUpsellModal } from "@/components/free-plan-upsell-modal";
+import { LinkedInCompanyPagesModal } from "@/components/linkedin-company-pages-modal";
 
 export const Route = createFileRoute("/app/connections")({
   component: Connections,
@@ -28,6 +29,8 @@ const CONNECTION_META: Record<string, { initials: string; color: string }> = {
 // "Coming soon" button is disabled for anything not in this map.
 const BUILT_ROUTES: Record<string, string> = {
   linkedin_personal: "/connections/linkedin_personal/connect",
+  linkedin_company: "/connections/linkedin_company/connect",
+  tiktok: "/connections/tiktok/connect",
 };
 
 function Connections() {
@@ -43,6 +46,7 @@ function Connections() {
   const { me } = useAuth();
   const isFree = !me?.tier || me.tier === "free";
   const [showUpsell, setShowUpsell] = useState(false);
+  const [showPagePicker, setShowPagePicker] = useState(false);
 
   async function saveRatio(platformId: string, ratio: string) {
     setAvailable((cur) => ({ ...cur, [platformId]: { ...cur[platformId], video_ratio: ratio } }));
@@ -75,9 +79,11 @@ function Connections() {
     const params = new URLSearchParams(window.location.search);
     const connected = params.get("connected");
     const error = params.get("connection_error");
+    const pickPages = params.get("pick_pages");
     if (connected) setMsg(`✓ Connected successfully.`);
     if (error) setErr(decodeURIComponent(error));
-    if (connected || error) window.history.replaceState({}, "", window.location.pathname);
+    if (pickPages) setShowPagePicker(true);
+    if (connected || error || pickPages) window.history.replaceState({}, "", window.location.pathname);
     load();
   }, [allowed]);
 
@@ -189,6 +195,16 @@ function Connections() {
         </Panel>
       </div>
       {showUpsell && <FreePlanUpsellModal forceOpen onClose={() => setShowUpsell(false)} />}
+      {showPagePicker && (
+        <LinkedInCompanyPagesModal
+          onClose={() => setShowPagePicker(false)}
+          onConnected={(pageName) => {
+            setShowPagePicker(false);
+            setMsg(`✓ Connected to "${pageName}" successfully.`);
+            load();
+          }}
+        />
+      )}
     </AppShell>
   );
 }

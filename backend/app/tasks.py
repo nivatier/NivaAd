@@ -1404,6 +1404,42 @@ def fire_due_scheduled_posts():
                     failed_count += 1
                     continue
 
+            elif sp.platform == "tiktok" and not mock_posting:
+                from app.services import tiktok as tiktok_svc
+                import json as _json
+                conn = db.scalar(select(PlatformConnection).where(
+                    PlatformConnection.company_id == sp.company_id,
+                    PlatformConnection.platform == "tiktok",
+                ))
+                if not (conn and conn.status == "connected"):
+                    sp.status = "failed"
+                    failed_count += 1
+                    continue
+                try:
+                    stored = _json.loads(decrypt_token(conn.encrypted_token))
+                    access_token = stored["access_token"]
+                    variant = (ad.results or {}).get("variants", [{}])[0] if ad and ad.results else {}
+                    caption = (variant.get("tiktok") or {}).get("caption") or ""
+                    platform_image_urls = variant.get("platform_image_urls") or {}
+                    image_url = platform_image_urls.get("tiktok") or variant.get("image_url")
+                    platform_video_urls = variant.get("platform_video_urls") or {}
+                    video_url = platform_video_urls.get("tiktok") or variant.get("video_url")
+                    extra_images = [
+                        u for u in (variant.get("carousel_image_urls") or [])
+                        if u and u != image_url
+                    ]
+                    tiktok_svc.post_to_tiktok(
+                        access_token, caption,
+                        image_url=image_url,
+                        video_url=video_url,
+                        extra_image_urls=extra_images or None,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[schedule] scheduled_post=%s TikTok post failed: %s", sp.id, exc)
+                    sp.status = "failed"
+                    failed_count += 1
+                    continue
+
             sp.status = "posted"
             sp.posted_at = datetime.utcnow()
             if ad:
@@ -2025,6 +2061,53 @@ def post_ad_now(self, post_job_id: str):
                     failed[platform] = err_str
                     # Mark 4xx errors as permanent — no point retrying duplicate posts,
                     # bad requests, or auth failures (only 5xx / network errors should retry).
+                    err_lower = err_str.lower()
+                    if any(code in err_lower for code in ("422", "400", "401", "403", "duplicate", "bad request")):
+                        permanent_failures.add(platform)
+                    logger.warning("[post_ad_now] job=%s platform=%s failed: %s", post_job_id, platform, exc)
+            elif platform == "tiktok" and not mock_posting:
+                from app.services import tiktok as tiktok_svc
+                from app.services.token_crypto import decrypt_token as _decrypt
+                conn = db.scalar(select(PlatformConnection).where(
+                    PlatformConnection.company_id == job.company_id,
+                    PlatformConnection.platform == "tiktok",
+                ))
+                if not (conn and conn.status == "connected"):
+                    failed[platform] = "TikTok isn\'t connected — connect it in Connections first."
+                    continue
+                try:
+                    import json as _json
+                    stored = _json.loads(_decrypt(conn.encrypted_token))
+                    access_token = stored["access_token"]
+                    caption = (variant.get("tiktok") or {}).get("caption") or ""
+                    image_url = platform_image_urls.get("tiktok") or variant.get("image_url")
+                    platform_video_urls = variant.get("platform_video_urls") or {}
+                    video_url = platform_video_urls.get("tiktok") or variant.get("video_url")
+                    extra_images = [
+                        u for u in (variant.get("carousel_image_urls") or [])
+                        if u and u != image_url
+                    ]
+                    logger.info(
+                        "[post_ad_now] job=%s tiktok posting: image=%s video=%s extra_images=%d",
+                        post_job_id, image_url, video_url, len(extra_images),
+                    )
+                    publish_id = tiktok_svc.post_to_tiktok(
+                        access_token, caption,
+                        image_url=image_url,
+                        video_url=video_url,
+                        extra_image_urls=extra_images or None,
+                    )
+                    # Store publish_id so /webhooks/tiktok can match the
+                    # async TikTok status callback back to this PostJob.
+                    existing_ids = list(job.tiktok_publish_ids or [])
+                    if publish_id and publish_id not in existing_ids:
+                        existing_ids.append(publish_id)
+                        job.tiktok_publish_ids = existing_ids
+                    succeeded.append(platform)
+                    failed.pop(platform, None)
+                except Exception as exc:  # noqa: BLE001
+                    err_str = str(exc)[:300]
+                    failed[platform] = err_str
                     err_lower = err_str.lower()
                     if any(code in err_lower for code in ("422", "400", "401", "403", "duplicate", "bad request")):
                         permanent_failures.add(platform)

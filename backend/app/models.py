@@ -248,6 +248,10 @@ class PostJob(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)       # top-level task error
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # TikTok publish_ids returned from the Content Posting API — stored so
+    # the /webhooks/tiktok endpoint can match async status callbacks back to
+    # the originating PostJob. One entry per TikTok post attempt.
+    tiktok_publish_ids: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class Campaign(Base):

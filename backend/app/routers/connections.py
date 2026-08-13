@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user, require_role
-from app.models import BrandKit, PlatformConnection, Subscription, User
+from app.models import BrandKit, PlatformConnection, User
 from app.schemas import CompanyPlatformOut, PlatformConnectionOut, VideoRatiosOut
 from app.services import linkedin, platform_config
 from app.services import video_ratios as video_ratios_svc
@@ -60,7 +60,7 @@ async def list_available_platforms(user: User = Depends(get_current_user), db: A
     return [
         CompanyPlatformOut(
             id=p["id"], label=p["label"],
-            built=p["id"] in ("linkedin_personal",),  # FIXED — was still checking the old pre-rename "linkedin" id, meaning this always showed "Coming soon" for the one platform that actually has real integration code
+            built=p["id"] in ("linkedin_personal", "linkedin_company", "tiktok"),
             video_ratio=overrides.get(p["id"], p.get("video_ratio", "1:1")),  # company's own override wins over the developer default, same precedence as the reframe pipeline itself
         )
         for p in platforms if p.get("enabled", True)
@@ -142,31 +142,6 @@ async def linkedin_callback(
         db.add(PlatformConnection(company_id=uuid.UUID(company_id), platform="linkedin_personal", encrypted_token=encrypted, status="connected"))
     await db.commit()
     return RedirectResponse(f"{settings.FRONTEND_URL}/app/connections?connected=linkedin_personal")
-
-
-@router.get("/{platform}/connect")
-async def connect_platform_gated(
-    platform: str,
-    user: User = Depends(require_role("admin")),
-    db: AsyncSession = Depends(get_db),
-):
-    """Catch-all for any platform connect attempt that isn't linkedin_personal.
-    Free-tier users are blocked here — the frontend shows the upsell modal,
-    but this defends against direct API calls bypassing the UI."""
-    # Check tier
-    sub = await db.scalar(
-        select(Subscription)
-        .where(Subscription.company_id == user.company_id)
-        .order_by(Subscription.created_at.desc())
-    )
-    tier = sub.tier if sub else "free"
-    if tier == "free":
-        raise HTTPException(
-            403,
-            "Platform connections other than LinkedIn Personal require a paid plan. "
-            "Upgrade to Starter or Pro to connect all platforms.",
-        )
-    raise HTTPException(404, f"No connection integration exists for platform '{platform}' yet.")
 
 
 @router.delete("/{platform}", status_code=204)

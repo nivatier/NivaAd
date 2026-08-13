@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import AuditLog, CreditLedger, EmailSuppression, Subscription
+from app.models import AuditLog, CreditLedger, EmailSuppression, PostJob, Subscription
 
 from app.services import billing as billing_svc
 
@@ -305,6 +305,123 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         logger.info("Unhandled Stripe event type: %s", etype)
 
     db.add(AuditLog(action="stripe.webhook", detail={"event_id": event["id"], "type": etype}))
+    await db.commit()
+    return {"received": True}
+
+
+@router.post("/tiktok")
+async def tiktok_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    """Receives async post-status notifications from TikTok's Content Posting API.
+
+    TikTok calls this URL after processing a video or photo upload with the
+    result (PUBLISH_COMPLETE or FAILED). We match the publish_id to the
+    originating PostJob and update its failed/succeeded lists accordingly.
+
+    TikTok sends a JSON body like:
+      {
+        "event": "post_publish_success" | "post_publish_fail",
+        "publish_id": "v_pub_url~v2...",
+        "error": {"code": 0, "message": ""},
+        "extra": {"logid": "..."}
+      }
+
+    TikTok does not sign webhook payloads with a secret (as of v2 API) so we
+    do not verify a signature here. We match solely on publish_id which is an
+    unguessable opaque string returned by TikTok at post time.
+
+    Setup in TikTok Developer Portal:
+      Products > Webhooks > Callback URL:
+      https://nivaad-production.up.railway.app/webhooks/tiktok
+    """
+    import json as _json
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
+
+    event = body.get("event", "")
+    publish_id = body.get("publish_id", "")
+
+    if not publish_id:
+        # TikTok may also send a verification ping with just {"challenge": "..."}
+        challenge = body.get("challenge")
+        if challenge:
+            # Respond to TikTok's URL verification challenge
+            return {"challenge": challenge}
+        logger.info("[tiktok_webhook] received event with no publish_id: %s", body)
+        return {"received": True}
+
+    logger.info("[tiktok_webhook] event=%s publish_id=%s", event, publish_id)
+
+    # Find the PostJob that owns this publish_id
+
+    # JSON array containment search — works on both PostgreSQL (with cast) and
+    # falls back to a Python-side filter for smaller datasets.
+    try:
+        job = await db.scalar(
+            select(PostJob).where(
+                PostJob.tiktok_publish_ids.cast(
+                    __import__("sqlalchemy.dialects.postgresql", fromlist=["JSONB"]).JSONB
+                ).contains([publish_id])
+            ).order_by(PostJob.created_at.desc()).limit(1)
+        )
+    except Exception:
+        # Fallback: load recent jobs and filter in Python (safe for low volume)
+        recent_jobs = (await db.scalars(
+            select(PostJob)
+            .where(PostJob.finished_at.is_(None))
+            .order_by(PostJob.created_at.desc())
+            .limit(200)
+        )).all()
+        job = next(
+            (j for j in recent_jobs if publish_id in (j.tiktok_publish_ids or [])),
+            None,
+        )
+
+    if not job:
+        logger.warning("[tiktok_webhook] no PostJob found for publish_id=%s", publish_id)
+        db.add(AuditLog(
+            action="tiktok.webhook.unmatched",
+            detail={"event": event, "publish_id": publish_id},
+        ))
+        await db.commit()
+        return {"received": True}
+
+    if event == "post_publish_success":
+        succeeded = list(job.succeeded or [])
+        if "tiktok" not in succeeded:
+            succeeded.append("tiktok")
+        job.succeeded = succeeded
+        failed = dict(job.failed or {})
+        failed.pop("tiktok", None)
+        job.failed = failed
+        logger.info("[tiktok_webhook] PostJob %s tiktok PUBLISHED ok", job.id)
+        db.add(AuditLog(
+            company_id=job.company_id,
+            action="tiktok.post_published",
+            detail={"publish_id": publish_id, "job_id": str(job.id)},
+        ))
+
+    elif event in ("post_publish_fail", "post_publish_canceled"):
+        error_info = body.get("error") or {}
+        fail_reason = error_info.get("message") or event
+        failed = dict(job.failed or {})
+        failed["tiktok"] = f"TikTok publish failed: {fail_reason}"
+        job.failed = failed
+        logger.warning(
+            "[tiktok_webhook] PostJob %s tiktok FAILED: %s", job.id, fail_reason
+        )
+        db.add(AuditLog(
+            company_id=job.company_id,
+            action="tiktok.post_failed",
+            detail={"publish_id": publish_id, "job_id": str(job.id), "reason": fail_reason},
+        ))
+
+    else:
+        # e.g. processing status updates — log and ignore
+        logger.info("[tiktok_webhook] unhandled event=%s for job=%s", event, job.id)
+
     await db.commit()
     return {"received": True}
 
