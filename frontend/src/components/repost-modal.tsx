@@ -496,14 +496,16 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
         jobId={postJobId}
         platforms={postJobPlatforms}
         onDone={(succeeded, failed) => {
-          setPostJobId(null);
           setPosting(false);
           onUpdated();
           if (Object.keys(failed).length === 0) {
-            onClose();
+            // All succeeded — close modal after delay so user sees success
+            setTimeout(() => { setPostJobId(null); onClose(); }, 3000);
           } else if (succeeded.length > 0) {
+            setPostJobId(null);
             setErr(`Partial: posted to ${succeeded.join(", ")}. Failed: ${Object.keys(failed).join(", ")}`);
           } else {
+            setPostJobId(null);
             setErr(`Failed: ${Object.values(failed).join("; ")}`);
           }
         }}

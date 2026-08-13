@@ -2545,7 +2545,8 @@ function CreateAd() {
           jobId={postJob.jobId}
           platforms={postJob.platforms}
           onDone={(succeeded, failed) => {
-            setPostJob(null);
+            // Don't close immediately — the modal shows OK button for user to dismiss.
+            // Just update the posted map and error state here; modal closes itself.
             setPostedMap((m) => {
               const next = { ...m };
               succeeded.forEach((id) => { next[id] = true; });
@@ -2556,6 +2557,8 @@ function CreateAd() {
             } else if (Object.keys(failed).length > 0) {
               setErrorMsg(`Posted to ${succeeded.join(", ")}. Failed: ${Object.keys(failed).join(", ")}`);
             }
+            // Close modal after a short delay so user sees the result
+            setTimeout(() => setPostJob(null), 3000);
           }}
         />
       )}
