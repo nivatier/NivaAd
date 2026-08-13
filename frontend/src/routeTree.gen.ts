@@ -10,7 +10,9 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as Index_oldRouteImport } from './routes/index_old'
@@ -52,9 +54,19 @@ const VerifyEmailRoute = VerifyEmailRouteImport.update({
   path: '/verify-email',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PricingRoute = PricingRouteImport.update({
@@ -241,7 +253,9 @@ export interface FileRoutesByFullPath {
   '/index_old': typeof Index_oldRoute
   '/login': typeof LoginRoute
   '/pricing': typeof PricingRoute
+  '/privacy': typeof PrivacyRoute
   '/signup': typeof SignupRoute
+  '/terms': typeof TermsRoute
   '/verify-email': typeof VerifyEmailRoute
   '/app/admin': typeof AppAdminRoute
   '/app/agent-niva': typeof AppAgentNivaRoute
@@ -280,7 +294,9 @@ export interface FileRoutesByTo {
   '/index_old': typeof Index_oldRoute
   '/login': typeof LoginRoute
   '/pricing': typeof PricingRoute
+  '/privacy': typeof PrivacyRoute
   '/signup': typeof SignupRoute
+  '/terms': typeof TermsRoute
   '/verify-email': typeof VerifyEmailRoute
   '/app/admin': typeof AppAdminRoute
   '/app/agent-niva': typeof AppAgentNivaRoute
@@ -320,7 +336,9 @@ export interface FileRoutesById {
   '/index_old': typeof Index_oldRoute
   '/login': typeof LoginRoute
   '/pricing': typeof PricingRoute
+  '/privacy': typeof PrivacyRoute
   '/signup': typeof SignupRoute
+  '/terms': typeof TermsRoute
   '/verify-email': typeof VerifyEmailRoute
   '/app/admin': typeof AppAdminRoute
   '/app/agent-niva': typeof AppAgentNivaRoute
@@ -361,7 +379,9 @@ export interface FileRouteTypes {
     | '/index_old'
     | '/login'
     | '/pricing'
+    | '/privacy'
     | '/signup'
+    | '/terms'
     | '/verify-email'
     | '/app/admin'
     | '/app/agent-niva'
@@ -400,7 +420,9 @@ export interface FileRouteTypes {
     | '/index_old'
     | '/login'
     | '/pricing'
+    | '/privacy'
     | '/signup'
+    | '/terms'
     | '/verify-email'
     | '/app/admin'
     | '/app/agent-niva'
@@ -439,7 +461,9 @@ export interface FileRouteTypes {
     | '/index_old'
     | '/login'
     | '/pricing'
+    | '/privacy'
     | '/signup'
+    | '/terms'
     | '/verify-email'
     | '/app/admin'
     | '/app/agent-niva'
@@ -479,7 +503,9 @@ export interface RootRouteChildren {
   Index_oldRoute: typeof Index_oldRoute
   LoginRoute: typeof LoginRoute
   PricingRoute: typeof PricingRoute
+  PrivacyRoute: typeof PrivacyRoute
   SignupRoute: typeof SignupRoute
+  TermsRoute: typeof TermsRoute
   VerifyEmailRoute: typeof VerifyEmailRoute
   AppAdminRoute: typeof AppAdminRoute
   AppAgentNivaRoute: typeof AppAgentNivaRoute
@@ -521,11 +547,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof VerifyEmailRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/signup': {
       id: '/signup'
       path: '/signup'
       fullPath: '/signup'
       preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pricing': {
@@ -783,7 +823,9 @@ const rootRouteChildren: RootRouteChildren = {
   Index_oldRoute: Index_oldRoute,
   LoginRoute: LoginRoute,
   PricingRoute: PricingRoute,
+  PrivacyRoute: PrivacyRoute,
   SignupRoute: SignupRoute,
+  TermsRoute: TermsRoute,
   VerifyEmailRoute: VerifyEmailRoute,
   AppAdminRoute: AppAdminRoute,
   AppAgentNivaRoute: AppAgentNivaRoute,
