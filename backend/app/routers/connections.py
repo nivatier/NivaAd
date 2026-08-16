@@ -60,7 +60,7 @@ async def list_available_platforms(user: User = Depends(get_current_user), db: A
     return [
         CompanyPlatformOut(
             id=p["id"], label=p["label"],
-            built=p["id"] in ("linkedin_personal", "linkedin_company", "tiktok"),
+            built=p["id"] in ("linkedin_personal", "linkedin_company", "tiktok", "facebook", "instagram", "threads"),
             video_ratio=overrides.get(p["id"], p.get("video_ratio", "1:1")),  # company's own override wins over the developer default, same precedence as the reframe pipeline itself
         )
         for p in platforms if p.get("enabled", True)
