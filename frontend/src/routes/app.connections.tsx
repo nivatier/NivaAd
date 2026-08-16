@@ -6,6 +6,7 @@ import { useRequireCapability } from "@/hooks/use-require-capability";
 import { useAuth } from "@/hooks/use-auth";
 import { FreePlanUpsellModal } from "@/components/free-plan-upsell-modal";
 import { LinkedInCompanyPagesModal } from "@/components/linkedin-company-pages-modal";
+import { FacebookPagesModal } from "@/components/facebook-pages-modal";
 
 export const Route = createFileRoute("/app/connections")({
   component: Connections,
@@ -31,6 +32,7 @@ const BUILT_ROUTES: Record<string, string> = {
   linkedin_personal: "/connections/linkedin_personal/connect",
   linkedin_company: "/connections/linkedin_company/connect",
   tiktok: "/connections/tiktok/connect",
+  facebook: "/connections/facebook/connect",
 };
 
 function Connections() {
@@ -47,6 +49,7 @@ function Connections() {
   const isFree = !me?.tier || me.tier === "free";
   const [showUpsell, setShowUpsell] = useState(false);
   const [showPagePicker, setShowPagePicker] = useState(false);
+  const [showFacebookPicker, setShowFacebookPicker] = useState(false);
 
   async function saveRatio(platformId: string, ratio: string) {
     setAvailable((cur) => ({ ...cur, [platformId]: { ...cur[platformId], video_ratio: ratio } }));
@@ -80,10 +83,12 @@ function Connections() {
     const connected = params.get("connected");
     const error = params.get("connection_error");
     const pickPages = params.get("pick_pages");
+    const pickFbPages = params.get("pick_facebook_pages");
     if (connected) setMsg(`✓ Connected successfully.`);
     if (error) setErr(decodeURIComponent(error));
     if (pickPages) setShowPagePicker(true);
-    if (connected || error || pickPages) window.history.replaceState({}, "", window.location.pathname);
+    if (pickFbPages) setShowFacebookPicker(true);
+    if (connected || error || pickPages || pickFbPages) window.history.replaceState({}, "", window.location.pathname);
     load();
   }, [allowed]);
 
@@ -201,6 +206,16 @@ function Connections() {
           onConnected={(pageName) => {
             setShowPagePicker(false);
             setMsg(`✓ Connected to "${pageName}" successfully.`);
+            load();
+          }}
+        />
+      )}
+      {showFacebookPicker && (
+        <FacebookPagesModal
+          onClose={() => setShowFacebookPicker(false)}
+          onConnected={(platforms) => {
+            setShowFacebookPicker(false);
+            setMsg(`✓ Connected: ${platforms.join(", ")}.`);
             load();
           }}
         />
