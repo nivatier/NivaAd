@@ -1913,7 +1913,7 @@ def _to_out(p: dict) -> PlatformIntegrationOut:
         id=p["id"], label=p["label"], client_id=p.get("client_id", ""),
         has_secret=bool(p.get("client_secret_encrypted")),
         scope=p.get("scope"), redirect_uri=p.get("redirect_uri"),
-        enabled=p.get("enabled", True), built=p["id"] in ("linkedin_personal", "linkedin_company", "tiktok"),
+        enabled=p.get("enabled", True), built=p["id"] in ("linkedin_personal", "linkedin_company", "tiktok", "facebook", "instagram", "threads"),
         video_ratio=p.get("video_ratio", "1:1"),
         api_url=p.get("api_url"),
         api_version=p.get("api_version"),
