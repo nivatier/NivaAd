@@ -60,7 +60,7 @@ async def list_available_platforms(user: User = Depends(get_current_user), db: A
     return [
         CompanyPlatformOut(
             id=p["id"], label=p["label"],
-            built=p["id"] in ("linkedin_personal", "linkedin_company", "tiktok", "facebook", "instagram", "threads"),
+            built=p["id"] in ("linkedin_personal", "linkedin_company", "tiktok"),
             video_ratio=overrides.get(p["id"], p.get("video_ratio", "1:1")),  # company's own override wins over the developer default, same precedence as the reframe pipeline itself
         )
         for p in platforms if p.get("enabled", True)
@@ -69,10 +69,9 @@ async def list_available_platforms(user: User = Depends(get_current_user), db: A
 
 @router.get("/video-ratios", response_model=VideoRatiosOut)
 async def list_video_ratios(_: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Company-facing — the same developer-managed ratio list, so the
-    Connections page's ratio dropdown offers exactly what's actually
-    available, not a hardcoded set that could drift out of sync."""
-    return VideoRatiosOut(ratios=await video_ratios_svc.get_video_ratios(db))
+    """Company-facing — returns aspect ratios with platform mapping so the
+    Connections page can filter the dropdown per platform."""
+    return VideoRatiosOut(ratios=await video_ratios_svc.get_aspect_ratios(db))
 
 
 @router.get("", response_model=list[PlatformConnectionOut])

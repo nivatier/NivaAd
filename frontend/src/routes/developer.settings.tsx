@@ -146,17 +146,26 @@ function PostRetentionCard() {
 
 function VideoRatiosCard() {
   const handleAuthError = useDevAuthErrorHandler();
-  const [ratios, setRatios] = useState<string[] | null>(null);
+  const [ratios, setRatios] = useState<{ ratio: string; platforms: string[] }[] | null>(null);
+  const [platforms, setPlatforms] = useState<string[]>([]);
   const [newRatio, setNewRatio] = useState("");
+  const [newPlatforms, setNewPlatforms] = useState<string[]>([]);
+  const [editingRatio, setEditingRatio] = useState<string | null>(null);
+  const [editPlatforms, setEditPlatforms] = useState<string[]>([]);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
 
   async function load() {
     try {
-      const r = await devApi("/developer/video-ratios");
+      const [r, p] = await Promise.all([
+        devApi("/developer/video-ratios"),
+        devApi("/developer/platforms"),
+      ]);
       setRatios(r.ratios);
+      setPlatforms(p.map((pl: any) => pl.id));
+      setNewPlatforms(p.map((pl: any) => pl.id)); // default all selected
     } catch (e: any) {
-      if (!handleAuthError(e)) setErr(e.message || "Could not load ratios");
+      if (!handleAuthError(e)) setErr(e.message || "Could not load");
     }
   }
   useEffect(() => { load(); }, []);
@@ -165,11 +174,30 @@ function VideoRatiosCard() {
     if (!newRatio.trim()) return;
     setBusy("add"); setErr("");
     try {
-      const r = await devApi("/developer/video-ratios", { method: "POST", body: { ratio: newRatio.trim() } });
+      const r = await devApi("/developer/video-ratios", {
+        method: "POST",
+        body: { ratio: newRatio.trim(), platforms: newPlatforms },
+      });
       setRatios(r.ratios);
       setNewRatio("");
+      setNewPlatforms(platforms);
     } catch (e: any) {
       if (!handleAuthError(e)) setErr(e.message || "Could not add that ratio — check the format (e.g. 21:9)");
+    }
+    setBusy(null);
+  }
+
+  async function saveEdit(ratio: string) {
+    setBusy(`edit-${ratio}`); setErr("");
+    try {
+      const r = await devApi(`/developer/video-ratios/${encodeURIComponent(ratio)}/platforms`, {
+        method: "PUT",
+        body: { platforms: editPlatforms },
+      });
+      setRatios(r.ratios);
+      setEditingRatio(null);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not save");
     }
     setBusy(null);
   }
@@ -182,7 +210,7 @@ function VideoRatiosCard() {
       if (usage.platforms.length > 0) usedBy.push(`${usage.platforms.length} platform(s): ${usage.platforms.join(", ")}`);
       if (usage.company_override_count > 0) usedBy.push(`${usage.company_override_count} company override(s)`);
       const warning = usedBy.length > 0
-        ? `"${ratio}" is currently used by ${usedBy.join(" and ")}. Deleting it won't break anything — they'll silently fall back to a default ratio the next time they generate. Delete anyway?`
+        ? `"${ratio}" is currently used by ${usedBy.join(" and ")}. Deleting it won't break anything — they'll silently fall back to a default ratio. Delete anyway?`
         : `Delete "${ratio}"? Nothing currently references it.`;
       if (!confirm(warning)) { setBusy(null); return; }
       const r = await devApi(`/developer/video-ratios/${encodeURIComponent(ratio)}`, { method: "DELETE" });
@@ -193,28 +221,131 @@ function VideoRatiosCard() {
     setBusy(null);
   }
 
+  function togglePlatform(list: string[], setList: (v: string[]) => void, id: string) {
+    setList(list.includes(id) ? list.filter((p) => p !== id) : [...list, id]);
+  }
+
   return (
     <div className="rounded-xl border border-border bg-card/60 p-5">
-      <div className="text-sm font-semibold text-foreground">Video ratios</div>
-      <p className="mt-1 text-xs text-muted-foreground">The aspect ratios available for platforms and company overrides to choose from. Just the ratio itself (e.g. "9:16") — actual pixel dimensions are computed per generation from each source video's own resolution, not a fixed size.</p>
+      <div className="text-sm font-semibold text-foreground">Aspect ratios</div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        The aspect ratios available for platforms and company overrides. Each ratio can be restricted to specific platforms — click Edit to update. Actual pixel dimensions are computed per generation from each source media's own resolution.
+      </p>
+
       {!ratios ? (
         <div className="mt-3 text-xs text-muted-foreground">Loading…</div>
       ) : (
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <div className="mt-3 space-y-2">
           {ratios.map((r) => (
-            <span key={r} className="flex items-center gap-1.5 rounded-full border border-border bg-background/60 px-2.5 py-1 text-[11px] text-foreground">
-              {r}
-              <button onClick={() => remove(r)} disabled={busy === r} className="text-muted-foreground hover:text-destructive disabled:opacity-50">✕</button>
-            </span>
+            <div key={r.ratio} className="rounded-lg border border-border bg-background/40 px-3 py-2">
+              {editingRatio === r.ratio ? (
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold text-foreground">{r.ratio}</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {platforms.map((pid) => (
+                      <label key={pid} className="flex cursor-pointer items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary">
+                        <input
+                          type="checkbox"
+                          checked={editPlatforms.includes(pid)}
+                          onChange={() => togglePlatform(editPlatforms, setEditPlatforms, pid)}
+                          className="h-2.5 w-2.5 accent-primary"
+                        />
+                        {pid}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => saveEdit(r.ratio)}
+                      disabled={busy === `edit-${r.ratio}`}
+                      className="rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold text-background disabled:opacity-50"
+                    >
+                      {busy === `edit-${r.ratio}` ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      onClick={() => setEditingRatio(null)}
+                      className="rounded-full border border-border px-3 py-1 text-[11px] text-muted-foreground"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className="text-xs font-semibold text-foreground">{r.ratio}</span>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {r.platforms.length === platforms.length ? (
+                        <span className="rounded-full bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">All platforms</span>
+                      ) : r.platforms.length === 0 ? (
+                        <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-400">No platforms</span>
+                      ) : (
+                        r.platforms.map((pid) => (
+                          <span key={pid} className="rounded-full bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">{pid}</span>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      onClick={() => { setEditingRatio(r.ratio); setEditPlatforms([...r.platforms]); }}
+                      className="text-[11px] text-muted-foreground hover:text-foreground"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => remove(r.ratio)}
+                      disabled={busy === r.ratio}
+                      className="text-[11px] text-muted-foreground hover:text-destructive disabled:opacity-50"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           ))}
         </div>
       )}
-      <div className="mt-3 flex gap-2">
-        <input value={newRatio} onChange={(e) => setNewRatio(e.target.value)} placeholder="e.g. 21:9" className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
-        <button onClick={add} disabled={busy === "add" || !newRatio.trim()} className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
-          {busy === "add" ? "Adding…" : "+ Add"}
-        </button>
+
+      {/* Add new ratio */}
+      <div className="mt-4 space-y-2">
+        <div className="text-[11px] font-semibold text-muted-foreground">Add aspect ratio</div>
+        <div className="flex gap-2">
+          <input
+            value={newRatio}
+            onChange={(e) => setNewRatio(e.target.value)}
+            placeholder="e.g. 21:9"
+            className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
+          />
+          <button
+            onClick={add}
+            disabled={busy === "add" || !newRatio.trim()}
+            className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50"
+          >
+            {busy === "add" ? "Adding…" : "+ Add"}
+          </button>
+        </div>
+        {platforms.length > 0 && (
+          <div>
+            <div className="mb-1 text-[10px] text-muted-foreground">Applies to platforms:</div>
+            <div className="flex flex-wrap gap-1.5">
+              {platforms.map((pid) => (
+                <label key={pid} className="flex cursor-pointer items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary">
+                  <input
+                    type="checkbox"
+                    checked={newPlatforms.includes(pid)}
+                    onChange={() => togglePlatform(newPlatforms, setNewPlatforms, pid)}
+                    className="h-2.5 w-2.5 accent-primary"
+                  />
+                  {pid}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
+
       {err && <div className="mt-2 text-xs text-destructive">{err}</div>}
     </div>
   );
@@ -1106,7 +1237,7 @@ const SETTINGS_TABS = [
   { key: "retention", label: "🗄 Retention" },
   { key: "scraper",   label: "🕷 Web Scraper" },
   { key: "theme",     label: "🎨 Theme AI" },
-  { key: "ratios",    label: "📐 Video Ratios" },
+  { key: "ratios",    label: "📐 Aspect Ratios" },
   { key: "railway",   label: "🚂 Railway" },
   { key: "legal",     label: "📄 Legal" },
 ] as const;

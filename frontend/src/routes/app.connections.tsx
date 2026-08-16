@@ -33,6 +33,8 @@ const BUILT_ROUTES: Record<string, string> = {
   linkedin_company: "/connections/linkedin_company/connect",
   tiktok: "/connections/tiktok/connect",
   facebook: "/connections/facebook/connect",
+  instagram: "/connections/facebook/connect",  // Instagram connects via Facebook OAuth
+  threads: "/connections/threads/connect",
 };
 
 function Connections() {
@@ -40,7 +42,7 @@ function Connections() {
 
   const [connections, setConnections] = useState<{ platform: string; status: string; connected_at: string | null }[] | null>(null);
   const [available, setAvailable] = useState<Record<string, { label: string; built: boolean; video_ratio: string }>>({});
-  const [ratios, setRatios] = useState<string[]>(["1:1"]);
+  const [ratios, setRatios] = useState<{ ratio: string; platforms: string[] }[]>([]);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -155,7 +157,9 @@ function Connections() {
                                 className="rounded-full border border-border bg-background/60 px-2 py-0.5 text-[10px] text-muted-foreground focus:border-primary focus:outline-none disabled:opacity-50"
                                 title="Choose the format your videos post at for this platform"
                               >
-                                {ratios.map((r) => <option key={r} value={r}>Posts at {r}</option>)}
+                                {ratios
+                                  .filter((r) => r.platforms.length === 0 || r.platforms.includes(c.platform))
+                                  .map((r) => <option key={r.ratio} value={r.ratio}>Posts at {r.ratio}</option>)}
                               </select>
                             </div>
                           )}

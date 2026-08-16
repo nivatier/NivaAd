@@ -450,3 +450,78 @@ def _raise_for_meta_error(resp: httpx.Response, context: str) -> None:
         raise RuntimeError(
             f"{context} error {err.get('code')}: {err.get('message', data)}"
         )
+
+
+# ── Threads OAuth ─────────────────────────────────────────────────────────────
+
+THREADS_AUTHORIZE_URL = "https://threads.net/oauth/authorize"
+THREADS_TOKEN_URL     = "https://graph.threads.net/oauth/access_token"
+THREADS_LONGTOKEN_URL = "https://graph.threads.net/access_token"
+
+
+def get_threads_authorize_url(
+    client_id: str, redirect_uri: str, state: str
+) -> str:
+    """Build the Threads OAuth authorize URL.
+    Threads uses its own OAuth endpoint separate from Facebook.
+    The Threads App ID is shown as 'Threads app ID' in Meta App Settings -> Basic.
+    """
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": "threads_basic,threads_content_publish",
+        "response_type": "code",
+        "state": state,
+    }
+    return f"{THREADS_AUTHORIZE_URL}?{urllib.parse.urlencode(params)}"
+
+
+def exchange_threads_code_for_token(
+    code: str,
+    client_id: str,
+    client_secret: str,
+    redirect_uri: str,
+) -> dict:
+    """Exchange Threads authorization code -> short-lived token (1 hour)."""
+    resp = httpx.post(
+        THREADS_TOKEN_URL,
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+            "code": code,
+            "grant_type": "authorization_code",
+        },
+        timeout=20,
+    )
+    _raise_for_meta_error(resp, "Threads token exchange")
+    return resp.json()
+
+
+def exchange_threads_for_long_lived_token(
+    short_token: str,
+    client_secret: str,
+) -> dict:
+    """Exchange short-lived Threads token -> long-lived token (60 days)."""
+    resp = httpx.get(
+        THREADS_LONGTOKEN_URL,
+        params={
+            "grant_type": "th_exchange_token",
+            "client_secret": client_secret,
+            "access_token": short_token,
+        },
+        timeout=20,
+    )
+    _raise_for_meta_error(resp, "Threads long-lived token exchange")
+    return resp.json()
+
+
+def get_threads_user_profile(access_token: str) -> dict:
+    """Fetch the Threads user profile to validate the token."""
+    resp = httpx.get(
+        f"{THREADS_URL}/me",
+        params={"fields": "id,username,name", "access_token": access_token},
+        timeout=15,
+    )
+    _raise_for_meta_error(resp, "Threads /me")
+    return resp.json()

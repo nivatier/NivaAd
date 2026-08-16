@@ -13,7 +13,7 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
   entry: PlatformIntegration;
   onSave: (id: string, body: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
-  ratios: string[];
+  ratios: { ratio: string; platforms: string[] }[];
 }) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(entry.label);
@@ -95,8 +95,13 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
           <div>
             <div className="mb-1 text-[10px] text-muted-foreground">Video posting ratio — what the reframe pipeline treats as this platform's required format</div>
             <select value={videoRatio} onChange={(e) => setVideoRatio(e.target.value)} className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
-              {ratios.map((r) => <option key={r} value={r}>{r}</option>)}
+              {ratios
+                .filter((r) => r.platforms.length === 0 || r.platforms.includes(entry.id))
+                .map((r) => <option key={r.ratio} value={r.ratio}>{r.ratio}</option>)}
             </select>
+            {ratios.filter((r) => r.platforms.length === 0 || r.platforms.includes(entry.id)).length === 0 && (
+              <div className="mt-1 text-[10px] text-amber-400">No aspect ratios are configured for this platform — add one in Settings → Aspect Ratios.</div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button disabled={saving || !label.trim() || !clientId.trim()} onClick={save} className="rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">{saving ? "Saving…" : "Save"}</button>
@@ -129,7 +134,7 @@ function PlatformRow({ entry, onSave, onDelete, ratios }: {
   );
 }
 
-function AddPlatformForm({ onAdd, ratios }: { onAdd: (body: Record<string, unknown>) => Promise<void>; ratios: string[] }) {
+function AddPlatformForm({ onAdd, ratios }: { onAdd: (body: Record<string, unknown>) => Promise<void>; ratios: { ratio: string; platforms: string[] }[] }) {
   const [open, setOpen] = useState(false);
   const [id, setId] = useState("");
   const [label, setLabel] = useState("");
@@ -170,7 +175,7 @@ function AddPlatformForm({ onAdd, ratios }: { onAdd: (body: Record<string, unkno
       <div>
         <div className="mb-1 text-[10px] text-muted-foreground">Video posting ratio</div>
         <select value={videoRatio} onChange={(e) => setVideoRatio(e.target.value)} className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
-          {ratios.map((r) => <option key={r} value={r}>{r}</option>)}
+          {ratios.map((r) => <option key={r.ratio} value={r.ratio}>{r.ratio}</option>)}
         </select>
       </div>
       <div className="flex items-center gap-2">
@@ -186,7 +191,7 @@ function DeveloperPlatforms() {
   const handleAuthError = useDevAuthErrorHandler();
 
   const [platforms, setPlatforms] = useState<PlatformIntegration[] | null>(null);
-  const [ratios, setRatios] = useState<string[]>(["1:1"]);
+  const [ratios, setRatios] = useState<{ ratio: string; platforms: string[] }[]>([{ ratio: "1:1", platforms: [] }]);
   const [err, setErr] = useState("");
 
   async function load() {

@@ -37,7 +37,8 @@ from app.schemas import (
     RawThemesIn, RawThemesOut, ReorderModelsIn, RetentionMonthsIn, RetentionMonthsOut, SaveVideoThemeIn,
     TextStylePresetOut, ThemeAiSettingsIn, ThemeAiSettingsOut, ThemeThumbnailUploadIn, ThemeThumbnailUploadOut,
     UpdateAssistantHintIn, UpdateCameraStylePresetIn, UpdateDeveloperTeamUserIn, UpdateModelIn,
-    UpdateMusicPresetIn, UpdatePlatformIntegrationIn, UpdateTextStylePresetIn, VideoPrepSettingsIn, VideoPrepSettingsOut,
+    UpdateMusicPresetIn, UpdatePlatformIntegrationIn, UpdateTextStylePresetIn, UpdateRatioPlatformsIn,
+    VideoPrepSettingsIn, VideoPrepSettingsOut,
     VideoRatiosOut, VideoThemeOut,
 )
 from app.security import create_developer_token
@@ -1912,7 +1913,7 @@ def _to_out(p: dict) -> PlatformIntegrationOut:
         id=p["id"], label=p["label"], client_id=p.get("client_id", ""),
         has_secret=bool(p.get("client_secret_encrypted")),
         scope=p.get("scope"), redirect_uri=p.get("redirect_uri"),
-        enabled=p.get("enabled", True), built=p["id"] in ("linkedin_personal", "linkedin_company", "tiktok", "facebook", "instagram", "threads"),
+        enabled=p.get("enabled", True), built=p["id"] in ("linkedin_personal", "linkedin_company", "tiktok"),
         video_ratio=p.get("video_ratio", "1:1"),
         api_url=p.get("api_url"),
         api_version=p.get("api_version"),
@@ -2643,16 +2644,22 @@ async def update_video_prep(data: VideoPrepSettingsIn, _: str = Depends(require_
 
 @router.get("/video-ratios", response_model=VideoRatiosOut)
 async def get_video_ratios(_: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
-    """The developer-managed list of available aspect ratios — just the
-    ratio strings, not fixed pixel sizes (see services/video_ratios.py
-    and services/reframe.py, which computes real dimensions from each
-    source video's own resolution)."""
-    return VideoRatiosOut(ratios=await video_ratios_svc.get_video_ratios(db))
+    """The developer-managed list of available aspect ratios — each with
+    the platforms it applies to. Ratio strings only, not fixed pixel sizes
+    (see services/video_ratios.py and services/reframe.py)."""
+    return VideoRatiosOut(ratios=await video_ratios_svc.get_aspect_ratios(db))
 
 
 @router.post("/video-ratios", response_model=VideoRatiosOut, status_code=201)
 async def add_video_ratio(data: AddVideoRatioIn, _: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
-    ratios = await video_ratios_svc.add_video_ratio(db, data.ratio)
+    ratios = await video_ratios_svc.add_video_ratio(db, data.ratio, data.platforms or None)
+    return VideoRatiosOut(ratios=ratios)
+
+
+@router.put("/video-ratios/{ratio}/platforms", response_model=VideoRatiosOut)
+async def update_ratio_platforms(ratio: str, data: UpdateRatioPlatformsIn, _: str = Depends(require_developer_permission("settings")), db: AsyncSession = Depends(get_db)):
+    """Update which platforms an aspect ratio applies to."""
+    ratios = await video_ratios_svc.update_ratio_platforms(db, ratio, data.platforms)
     return VideoRatiosOut(ratios=ratios)
 
 

@@ -1147,12 +1147,27 @@ class PlatformRatioOverrideIn(BaseModel):
     ratio: str | None = None  # null clears the override, reverting to the developer default; validated against the developer's current ratio list at the endpoint
 
 
+class AspectRatioOut(BaseModel):
+    ratio: str
+    platforms: list[str]
+
+
 class VideoRatiosOut(BaseModel):
+    ratios: list[AspectRatioOut]
+
+
+class PlainVideoRatiosOut(BaseModel):
+    """User-facing ratio list — plain strings only, no platform mapping."""
     ratios: list[str]
 
 
 class AddVideoRatioIn(BaseModel):
-    ratio: str = Field(min_length=3, max_length=10, pattern=r"^\d+(\.\d+)?:\d+(\.\d+)?$")  # structural check only (e.g. "9:16", "1.91:1") — not a fixed allowed-values list, since the whole point is letting the developer define new ones
+    ratio: str = Field(min_length=3, max_length=10, pattern=r"^\d+(\.\d+)?:\d+(\.\d+)?$")
+    platforms: list[str] = []  # empty = all platforms
+
+
+class UpdateRatioPlatformsIn(BaseModel):
+    platforms: list[str]
 
 
 class RatioUsageOut(BaseModel):
