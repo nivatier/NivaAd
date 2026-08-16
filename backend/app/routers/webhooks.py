@@ -571,3 +571,60 @@ async def ses_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         await db.commit()
 
     return {"received": True}
+
+
+@router.get("/facebook")
+async def facebook_webhook_verify(
+    hub_mode: str | None = None,
+    hub_challenge: str | None = None,
+    hub_verify_token: str | None = None,
+):
+    """Meta sends a GET request to verify the webhook URL.
+    Respond with the hub.challenge value to confirm ownership.
+    FACEBOOK_WEBHOOK_VERIFY_TOKEN must be set in Railway env.
+    """
+    if (
+        hub_mode == "subscribe"
+        and hub_verify_token == settings.FACEBOOK_WEBHOOK_VERIFY_TOKEN
+        and hub_challenge
+    ):
+        return int(hub_challenge)
+    raise HTTPException(403, "Webhook verification token mismatch")
+
+
+@router.post("/facebook")
+async def facebook_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    """Receives Meta platform notifications (page post status, etc).
+    Verifies the X-Hub-Signature-256 header before processing.
+    """
+    import hashlib
+    import hmac
+    import json as _json
+
+    body = await request.body()
+
+    # Verify signature if verify token is configured
+    if settings.FACEBOOK_WEBHOOK_VERIFY_TOKEN:
+        sig_header = request.headers.get("X-Hub-Signature-256", "")
+        expected = "sha256=" + hmac.new(
+            settings.FACEBOOK_WEBHOOK_VERIFY_TOKEN.encode(),
+            body,
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(sig_header, expected):
+            raise HTTPException(403, "Invalid webhook signature")
+
+    try:
+        payload = _json.loads(body)
+    except Exception:
+        raise HTTPException(400, "Invalid JSON")
+
+    logger.info("[facebook_webhook] received object=%s", payload.get("object"))
+
+    # Future: handle specific page/instagram post status events here
+    db.add(AuditLog(
+        action="facebook.webhook",
+        detail={"object": payload.get("object"), "entry_count": len(payload.get("entry", []))},
+    ))
+    await db.commit()
+    return {"received": True}

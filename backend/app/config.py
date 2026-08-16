@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     REGISTRATION_OPEN: bool = False   # when False only pre-approved emails can register
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
+    FACEBOOK_WEBHOOK_VERIFY_TOKEN: str = ""  # set in Railway env — used to verify Meta webhook calls
     # Growth tier retired 2026-08-02 — only starter and pro remain.
     # These are the live Stripe price IDs; override via Developer > Settings
     # without a redeploy if prices ever change.

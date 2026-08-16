@@ -2112,6 +2112,92 @@ def post_ad_now(self, post_job_id: str):
                     if any(code in err_lower for code in ("422", "400", "401", "403", "duplicate", "bad request")):
                         permanent_failures.add(platform)
                     logger.warning("[post_ad_now] job=%s platform=%s failed: %s", post_job_id, platform, exc)
+            elif platform == "facebook" and not mock_posting:
+                from app.services import meta as meta_svc
+                conn = db.scalar(select(PlatformConnection).where(
+                    PlatformConnection.company_id == job.company_id,
+                    PlatformConnection.platform == "facebook",
+                ))
+                if not (conn and conn.status == "connected"):
+                    failed[platform] = "Facebook isn't connected — connect it in Connections first."
+                    continue
+                try:
+                    import json as _json
+                    stored = _json.loads(decrypt_token(conn.encrypted_token))
+                    page_token = stored["page_token"]
+                    page_id = stored["page_id"]
+                    caption = (variant.get("facebook") or {}).get("caption") or ""
+                    image_url = (variant.get("platform_image_urls") or {}).get("facebook") or variant.get("image_url")
+                    platform_video_urls = variant.get("platform_video_urls") or {}
+                    video_url = platform_video_urls.get("facebook") or variant.get("video_url")
+                    logger.info("[post_ad_now] job=%s facebook posting: image=%s video=%s", post_job_id, image_url, video_url)
+                    meta_svc.post_to_facebook(page_token, page_id, caption, image_url=image_url, video_url=video_url)
+                    succeeded.append(platform)
+                    failed.pop(platform, None)
+                except Exception as exc:  # noqa: BLE001
+                    err_str = str(exc)[:300]
+                    failed[platform] = err_str
+                    if any(c in err_str.lower() for c in ("400", "401", "403", "invalid")):
+                        permanent_failures.add(platform)
+                    logger.warning("[post_ad_now] job=%s platform=%s failed: %s", post_job_id, platform, exc)
+
+            elif platform == "instagram" and not mock_posting:
+                from app.services import meta as meta_svc
+                conn = db.scalar(select(PlatformConnection).where(
+                    PlatformConnection.company_id == job.company_id,
+                    PlatformConnection.platform == "instagram",
+                ))
+                if not (conn and conn.status == "connected"):
+                    failed[platform] = "Instagram isn't connected — connect it via Facebook in Connections."
+                    continue
+                try:
+                    import json as _json
+                    stored = _json.loads(decrypt_token(conn.encrypted_token))
+                    page_token = stored["page_token"]
+                    ig_user_id = stored["ig_user_id"]
+                    caption = (variant.get("instagram") or {}).get("caption") or ""
+                    image_url = (variant.get("platform_image_urls") or {}).get("instagram") or variant.get("image_url")
+                    platform_video_urls = variant.get("platform_video_urls") or {}
+                    video_url = platform_video_urls.get("instagram") or variant.get("video_url")
+                    logger.info("[post_ad_now] job=%s instagram posting: image=%s video=%s", post_job_id, image_url, video_url)
+                    meta_svc.post_to_instagram(page_token, ig_user_id, caption, image_url=image_url, video_url=video_url)
+                    succeeded.append(platform)
+                    failed.pop(platform, None)
+                except Exception as exc:  # noqa: BLE001
+                    err_str = str(exc)[:300]
+                    failed[platform] = err_str
+                    if any(c in err_str.lower() for c in ("400", "401", "403", "invalid")):
+                        permanent_failures.add(platform)
+                    logger.warning("[post_ad_now] job=%s platform=%s failed: %s", post_job_id, platform, exc)
+
+            elif platform == "threads" and not mock_posting:
+                from app.services import meta as meta_svc
+                conn = db.scalar(select(PlatformConnection).where(
+                    PlatformConnection.company_id == job.company_id,
+                    PlatformConnection.platform == "threads",
+                ))
+                if not (conn and conn.status == "connected"):
+                    failed[platform] = "Threads isn't connected — connect it via Facebook in Connections."
+                    continue
+                try:
+                    import json as _json
+                    stored = _json.loads(decrypt_token(conn.encrypted_token))
+                    user_token = stored["user_token"]
+                    threads_user_id = stored["threads_user_id"]
+                    caption = (variant.get("threads") or {}).get("caption") or ""
+                    image_url = (variant.get("platform_image_urls") or {}).get("threads") or variant.get("image_url")
+                    platform_video_urls = variant.get("platform_video_urls") or {}
+                    video_url = platform_video_urls.get("threads") or variant.get("video_url")
+                    meta_svc.post_to_threads(user_token, threads_user_id, caption, image_url=image_url, video_url=video_url)
+                    succeeded.append(platform)
+                    failed.pop(platform, None)
+                except Exception as exc:  # noqa: BLE001
+                    err_str = str(exc)[:300]
+                    failed[platform] = err_str
+                    if any(c in err_str.lower() for c in ("400", "401", "403", "invalid")):
+                        permanent_failures.add(platform)
+                    logger.warning("[post_ad_now] job=%s platform=%s failed: %s", post_job_id, platform, exc)
+
             else:
                 # Mock or non-integrated platform — simulate success
                 succeeded.append(platform)
