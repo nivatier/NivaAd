@@ -157,7 +157,7 @@ function PrivacyPolicy() {
         <div className="mx-auto flex max-w-4xl items-center justify-between">
           <Link to="/" className="flex items-center gap-2">
             <img src="/logo-wording-dark.png" alt="NivaSpark" className="h-7 dark:block hidden" />
-            <img src="/logo-wording-light.png" alt="NivaSpark" className="h-7 dark:hidden block" />
+            <img src="/logo-wording-dark.png" alt="NivaSpark" className="h-7 dark:hidden block" />
           </Link>
           <Link
             to="/"
