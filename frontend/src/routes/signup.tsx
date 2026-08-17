@@ -152,7 +152,7 @@ function Signup() {
           <label className="flex items-start gap-2 text-xs text-muted-foreground">
             <input type="checkbox" checked={aup} onChange={(e) => setAup(e.target.checked)} className="mt-0.5" />
             <span>I accept the{" "}
-              <button type="button" onClick={() => setLegalModal("terms")} className="text-primary underline underline-offset-2 hover:opacity-80">Terms of Service</button>
+              <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:opacity-80">Terms of Service</a>
               {" "}and{" "}
               <button type="button" onClick={() => setLegalModal("aup")} className="text-primary underline underline-offset-2 hover:opacity-80">Acceptable Use Policy</button>.
             </span>

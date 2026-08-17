@@ -774,18 +774,34 @@ function LandingFooter() {
             </a>
           </div>
           <div className="flex flex-wrap gap-5">
-            {(["terms", "privacy", "acceptable_use"] as const).map((key) => (
-              <button
-                key={key}
-                onClick={() => setOpenModal(key)}
-                className="transition-colors capitalize hover:underline"
-                style={{ color: "oklch(0.68 0.01 280)" }}
-                onMouseEnter={e => (e.currentTarget.style.color = "oklch(0.92 0.01 280)")}
-                onMouseLeave={e => (e.currentTarget.style.color = "oklch(0.68 0.01 280)")}
-              >
-                {key === "acceptable_use" ? "Acceptable Use" : key.charAt(0).toUpperCase() + key.slice(1)}
-              </button>
-            ))}</div>
+            <a
+              href="/terms"
+              className="transition-colors hover:underline"
+              style={{ color: "oklch(0.68 0.01 280)" }}
+              onMouseEnter={e => (e.currentTarget.style.color = "oklch(0.92 0.01 280)")}
+              onMouseLeave={e => (e.currentTarget.style.color = "oklch(0.68 0.01 280)")}
+            >
+              Terms
+            </a>
+            <a
+              href="/privacy"
+              className="transition-colors hover:underline"
+              style={{ color: "oklch(0.68 0.01 280)" }}
+              onMouseEnter={e => (e.currentTarget.style.color = "oklch(0.92 0.01 280)")}
+              onMouseLeave={e => (e.currentTarget.style.color = "oklch(0.68 0.01 280)")}
+            >
+              Privacy
+            </a>
+            <button
+              onClick={() => setOpenModal("acceptable_use")}
+              className="transition-colors hover:underline"
+              style={{ color: "oklch(0.68 0.01 280)" }}
+              onMouseEnter={e => (e.currentTarget.style.color = "oklch(0.92 0.01 280)")}
+              onMouseLeave={e => (e.currentTarget.style.color = "oklch(0.68 0.01 280)")}
+            >
+              Acceptable Use
+            </button>
+          </div>
         </div>
       </footer>
 
