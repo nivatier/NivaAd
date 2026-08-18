@@ -2209,7 +2209,8 @@ def post_ad_now(self, post_job_id: str):
                 except Exception as exc:  # noqa: BLE001
                     err_str = str(exc)[:300]
                     failed[platform] = err_str
-                    if any(c in err_str.lower() for c in ("400", "401", "403", "invalid")):
+                    # 2207027 = "media not ready" — a timing issue, not a permanent auth failure
+                    if any(c in err_str.lower() for c in ("400", "401", "403", "invalid")) and "2207027" not in err_str:
                         permanent_failures.add(platform)
                     logger.warning("[post_ad_now] job=%s platform=%s failed: %s", post_job_id, platform, exc)
 

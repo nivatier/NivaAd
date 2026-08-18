@@ -307,6 +307,8 @@ def post_to_instagram(
 def _post_image_instagram(
     page_token: str, ig_user_id: str, caption: str, image_url: str
 ) -> str:
+    import time
+
     # Step 1 — create container
     create_resp = httpx.post(
         f"{GRAPH_URL}/{ig_user_id}/media",
@@ -321,7 +323,32 @@ def _post_image_instagram(
             f"Instagram image container returned no id: {create_resp.text[:300]}"
         )
 
-    # Step 2 — publish
+    # Step 2 — poll until FINISHED (Instagram needs time to fetch and process
+    # the image even for static posts — skipping this causes error_subcode 2207027)
+    logger.info("[instagram] image container created: %s — polling for FINISHED", creation_id)
+    for attempt in range(15):
+        status_resp = httpx.get(
+            f"{GRAPH_URL}/{creation_id}",
+            params={"access_token": page_token, "fields": "status_code,status"},
+            timeout=15,
+        )
+        if status_resp.status_code == 200:
+            status_code = status_resp.json().get("status_code", "")
+            logger.info("[instagram] image container %s status=%s (attempt %d)", creation_id, status_code, attempt + 1)
+            if status_code == "FINISHED":
+                break
+            if status_code == "ERROR":
+                raise RuntimeError(
+                    f"Instagram image processing failed: {status_resp.json().get('status')}"
+                )
+        time.sleep(3)
+    else:
+        logger.warning(
+            "[instagram] image container %s status check timed out after 45s, attempting publish anyway",
+            creation_id,
+        )
+
+    # Step 3 — publish
     pub_resp = httpx.post(
         f"{GRAPH_URL}/{ig_user_id}/media_publish",
         params={"access_token": page_token},
