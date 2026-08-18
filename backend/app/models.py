@@ -329,24 +329,32 @@ class ModelConfig(Base):
 
 
 async def get_config_row(db, topic: str) -> "ModelConfig":
-    """Fetch (or create) the ModelConfig row for *topic* — async version."""
-    from sqlalchemy import select
+    """Fetch (or create) the ModelConfig row for *topic* — async version.
+    Uses INSERT ... ON CONFLICT DO NOTHING to safely handle concurrent workers."""
+    from sqlalchemy import select, text
     row = await db.scalar(select(ModelConfig).where(ModelConfig.topic == topic))
     if row is None:
-        row = ModelConfig(topic=topic, config={})
-        db.add(row)
+        # Use raw SQL upsert to avoid race condition across multiple API workers
+        await db.execute(
+            text("INSERT INTO model_config (topic, config) VALUES (:topic, :config) ON CONFLICT (topic) DO NOTHING"),
+            {"topic": topic, "config": "{}"},
+        )
         await db.flush()
+        row = await db.scalar(select(ModelConfig).where(ModelConfig.topic == topic))
     return row
 
 
 def get_config_row_sync(db, topic: str) -> "ModelConfig":
     """Sync version of get_config_row — for Celery tasks."""
-    from sqlalchemy import select
+    from sqlalchemy import select, text
     row = db.scalars(select(ModelConfig).where(ModelConfig.topic == topic)).first()
     if row is None:
-        row = ModelConfig(topic=topic, config={})
-        db.add(row)
+        db.execute(
+            text("INSERT INTO model_config (topic, config) VALUES (:topic, :config) ON CONFLICT (topic) DO NOTHING"),
+            {"topic": topic, "config": "{}"},
+        )
         db.flush()
+        row = db.scalars(select(ModelConfig).where(ModelConfig.topic == topic)).first()
     return row
 
 
