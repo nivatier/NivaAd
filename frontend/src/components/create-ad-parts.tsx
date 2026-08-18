@@ -553,7 +553,7 @@ export function PlatformPreviewCard({
   videoUrl?: string;
   companyName: string;
   posted: boolean;
-  onPost: () => void;
+  onPost: () => Promise<void> | void;
   onEditCaption: (text: string) => void;
   variant?: Record<string, any>;
   brandKit?: BrandKitPreview | null;
@@ -572,8 +572,11 @@ export function PlatformPreviewCard({
 
   async function handlePost() {
     setPosting(true);
-    onPost(); // parent (app.index.tsx) opens PostingProgressModal and handles status
-    setPosting(false);
+    try {
+      await onPost(); // wait for parent to open PostingProgressModal
+    } finally {
+      setPosting(false);
+    }
   }
 
   return (

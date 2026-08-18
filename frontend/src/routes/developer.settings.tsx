@@ -1229,6 +1229,534 @@ function LegalLinksCard() {
 
 
 
+// ── RSS Feeds Catalogue tab ────────────────────────────────────────────────────
+
+// ── RSS Feeds Catalogue tab ─────────────────────────────────────────────────
+
+type DevRssFeed = {
+  id: string; name: string; url: string; category: string; description: string;
+  enabled: boolean; created_at: string;
+  last_checked_at: string | null; last_status: string | null;
+  last_error: string | null; last_article_count: number | null;
+};
+
+const RSS_CATEGORIES = [
+  "Aerospace & Defense","Agriculture & AgriTech","Artificial Intelligence",
+  "Automotive & Mobility","Construction & Architecture","Cybersecurity",
+  "Education & EdTech","Energy & Sustainability","Finance & Banking",
+  "Fintech","Food & Beverage","Government & Public Sector","HR & Workforce",
+  "Healthcare","Insurance","Legal","Manufacturing","Marketing",
+  "Media & Entertainment","Mental Health & Wellness","Non-profit & Social Impact",
+  "Pharmaceuticals & Biotech","Real Estate","Retail & E-commerce",
+  "Science & Research","Small Business","Startups & VC",
+  "Supply Chain & Logistics","Technology","Travel & Hospitality","General",
+];
+
+function HealthDot({ feed }: { feed: DevRssFeed }) {
+  const checkedDate = feed.last_checked_at
+    ? new Date(feed.last_checked_at).toLocaleString(undefined, {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+      })
+    : null;
+
+  if (!feed.last_status) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/50">
+        <span className="inline-block h-2 w-2 rounded-full bg-muted/60" />
+        Never checked
+      </span>
+    );
+  }
+  const ok = feed.last_status === "ok";
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-[11px] ${ok ? "text-emerald-400" : "text-red-400"}`}>
+      <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${ok ? "bg-emerald-400" : "bg-red-400"}`} />
+      {ok
+        ? `OK · ${feed.last_article_count ?? 0} articles`
+        : `Error · ${feed.last_error ?? "unknown"}`}
+      {checkedDate && (
+        <span className="text-muted-foreground/50 font-normal">· {checkedDate}</span>
+      )}
+    </span>
+  );
+}
+
+function RssFeedsCatalogueTab() {
+  const handleAuthError = useDevAuthErrorHandler();
+  const [feeds, setFeeds] = useState<DevRssFeed[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ name: "", url: "", category: "Technology", description: "", enabled: true });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", url: "", category: "Technology", description: "", enabled: true });
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [checkingId, setCheckingId] = useState<string | null>(null);
+  const [checkingAll, setCheckingAll] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState("__all__");
+  const [statusFilter, setStatusFilter] = useState<"__all__" | "ok" | "error" | "unchecked">("__all__");
+  const [intervalDays, setIntervalDays] = useState(7);
+  const [savingInterval, setSavingInterval] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkRechecking, setBulkRechecking] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const [feedsRes, settingsRes] = await Promise.all([
+        devApi("/developer/rss/feeds"),
+        devApi("/developer/rss/settings"),
+      ]);
+      setFeeds(feedsRes);
+      setIntervalDays(settingsRes.health_check_interval_days ?? 7);
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not load feeds");
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function addFeed() {
+    if (!form.name.trim() || !form.url.trim()) { setErr("Name and URL are required."); return; }
+    setSaving(true); setErr("");
+    try {
+      await devApi("/developer/rss/feeds", { method: "POST", body: form });
+      setForm({ name: "", url: "", category: "Technology", description: "", enabled: true });
+      setShowAdd(false);
+      load();
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not add feed");
+    }
+    setSaving(false);
+  }
+
+  async function updateFeed() {
+    if (!editingId) return;
+    setSaving(true); setErr("");
+    try {
+      await devApi(`/developer/rss/feeds/${editingId}`, { method: "PATCH", body: editForm });
+      setEditingId(null);
+      load();
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not update feed");
+    }
+    setSaving(false);
+  }
+
+  async function deleteFeed(id: string) {
+    setErr("");
+    try {
+      await devApi(`/developer/rss/feeds/${id}`, { method: "DELETE" });
+      setDeleteId(null);
+      load();
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not delete feed");
+    }
+  }
+
+  async function recheckFeed(id: string) {
+    setCheckingId(id);
+    try {
+      const result = await devApi(`/developer/rss/feeds/${id}/check`, { method: "POST" });
+      setFeeds(prev => prev.map(f => f.id !== id ? f : {
+        ...f,
+        last_checked_at: result.checked_at,
+        last_status: result.ok ? "ok" : "error",
+        last_error: result.error ?? null,
+        last_article_count: result.ok ? result.article_count : f.last_article_count,
+      }));
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Check failed");
+    }
+    setCheckingId(null);
+  }
+
+  async function recheckAll() {
+    setCheckingAll(true);
+    setErr("");
+    for (const feed of feeds.filter(f => f.enabled)) {
+      setCheckingId(feed.id);
+      try {
+        const result = await devApi(`/developer/rss/feeds/${feed.id}/check`, { method: "POST" });
+        setFeeds(prev => prev.map(f => f.id !== feed.id ? f : {
+          ...f,
+          last_checked_at: result.checked_at,
+          last_status: result.ok ? "ok" : "error",
+          last_error: result.error ?? null,
+          last_article_count: result.ok ? result.article_count : f.last_article_count,
+        }));
+      } catch {
+        // continue to next feed even if one fails
+      }
+    }
+    setCheckingId(null);
+    setCheckingAll(false);
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === filtered.length && filtered.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map(f => f.id)));
+    }
+  }
+
+  async function bulkDelete() {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Delete ${selectedIds.size} feed${selectedIds.size !== 1 ? "s" : ""}? This cannot be undone.`)) return;
+    setBulkDeleting(true);
+    setErr("");
+    for (const id of Array.from(selectedIds)) {
+      try {
+        await devApi(`/developer/rss/feeds/${id}`, { method: "DELETE" });
+      } catch {
+        // continue
+      }
+    }
+    setSelectedIds(new Set());
+    setBulkDeleting(false);
+    load();
+  }
+
+  async function bulkRecheck() {
+    if (selectedIds.size === 0) return;
+    setBulkRechecking(true);
+    setErr("");
+    const ids = Array.from(selectedIds);
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      setCheckingId(id);
+      try {
+        const result = await devApi(`/developer/rss/feeds/${id}/check`, { method: "POST" });
+        setFeeds(prev => prev.map(f => f.id !== id ? f : {
+          ...f,
+          last_checked_at: result.checked_at,
+          last_status: result.ok ? "ok" : "error",
+          last_error: result.error ?? null,
+          last_article_count: result.ok ? result.article_count : f.last_article_count,
+        }));
+      } catch {
+        // continue to next
+      }
+    }
+    setCheckingId(null);
+    setBulkRechecking(false);
+  }
+
+  async function saveInterval() {
+    setSavingInterval(true);
+    try {
+      await devApi("/developer/rss/settings", { method: "PUT", body: { health_check_interval_days: intervalDays } });
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Could not save interval");
+    }
+    setSavingInterval(false);
+  }
+
+  function startEdit(feed: DevRssFeed) {
+    setEditingId(feed.id);
+    setEditForm({ name: feed.name, url: feed.url, category: feed.category, description: feed.description, enabled: feed.enabled });
+  }
+
+  const inputCls = "w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none";
+  const selCls = "w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none";
+
+  const uniqueCategories = Array.from(new Set(feeds.map(f => f.category))).sort();
+  const filtered = feeds.filter(f => {
+    if (categoryFilter !== "__all__" && f.category !== categoryFilter) return false;
+    if (statusFilter === "ok")        return f.last_status === "ok";
+    if (statusFilter === "error")     return f.last_status === "error";
+    if (statusFilter === "unchecked") return !f.last_status;
+    return true;
+  });
+
+  return (
+    <div className="space-y-6">
+      {/* Header + add button */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-sm font-bold text-foreground">RSS Feed Catalogue</div>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Add curated RSS feeds here — they appear in Agent Niva for all users to subscribe to.
+            Pro users can also add their own custom URLs on top of these.
+          </p>
+        </div>
+        <button onClick={() => { setShowAdd(true); setErr(""); }}
+          className="shrink-0 rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90">
+          + Add feed
+        </button>
+      </div>
+
+      {/* Health check interval setting */}
+      <div className="rounded-xl border border-border/40 bg-card/50 p-4 flex items-center gap-4 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-semibold text-foreground">Health check interval</div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            How often the scheduled task re-checks each feed. Manual re-check always works immediately.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <input
+            type="number" min={1} max={365} value={intervalDays}
+            onChange={e => setIntervalDays(Number(e.target.value))}
+            className="w-16 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground text-center focus:border-ring focus:outline-none"
+          />
+          <span className="text-xs text-muted-foreground">days</span>
+          <button onClick={saveInterval} disabled={savingInterval}
+            className="rounded-full bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+            {savingInterval ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+
+      {err && <div className="text-xs text-destructive">{err}</div>}
+
+      {/* Add form */}
+      {showAdd && (
+        <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 space-y-3">
+          <div className="text-xs font-semibold text-foreground">New feed</div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] text-muted-foreground mb-1">Name *</label>
+              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="TechCrunch" className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-[11px] text-muted-foreground mb-1">Category</label>
+              <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} className={selCls}>
+                {RSS_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-[11px] text-muted-foreground mb-1">URL *</label>
+            <input value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} placeholder="https://techcrunch.com/feed/" className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-[11px] text-muted-foreground mb-1">Description (shown to users)</label>
+            <input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Latest technology news and startup coverage" className={inputCls} />
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-foreground cursor-pointer">
+              <input type="checkbox" checked={form.enabled} onChange={e => setForm(f => ({ ...f, enabled: e.target.checked }))} className="accent-primary" />
+              Enabled (visible to users)
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => { setShowAdd(false); setErr(""); }} className="rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+            <button onClick={addFeed} disabled={saving} className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+              {saving ? "Adding…" : "Add feed"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Filters + Check All */}
+      {!loading && feeds.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[11px] text-muted-foreground shrink-0">Filter:</span>
+
+          {/* Category */}
+          <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
+            className="rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+            <option value="__all__">All categories ({feeds.length})</option>
+            {uniqueCategories.map(c => (
+              <option key={c} value={c}>{c} ({feeds.filter(f => f.category === c).length})</option>
+            ))}
+          </select>
+
+          {/* Status */}
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as any)}
+            className="rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+            <option value="__all__">All statuses</option>
+            <option value="ok">🟢 OK ({feeds.filter(f => f.last_status === "ok").length})</option>
+            <option value="error">🔴 Error ({feeds.filter(f => f.last_status === "error").length})</option>
+            <option value="unchecked">⚪ Never checked ({feeds.filter(f => !f.last_status).length})</option>
+          </select>
+
+          {/* Clear filters */}
+          {(categoryFilter !== "__all__" || statusFilter !== "__all__") && (
+            <button onClick={() => { setCategoryFilter("__all__"); setStatusFilter("__all__"); }}
+              className="text-[11px] text-primary hover:underline">
+              Clear
+            </button>
+          )}
+
+          {/* Result count */}
+          <span className="text-[11px] text-muted-foreground">
+            {filtered.length} of {feeds.length} feed{feeds.length !== 1 ? "s" : ""}
+          </span>
+
+          {/* Check All button */}
+          <button
+            onClick={recheckAll}
+            disabled={checkingAll || checkingId !== null}
+            className="ml-auto rounded-full border border-border/50 px-3 py-1.5 text-[11px] text-muted-foreground hover:text-foreground hover:border-border transition-all disabled:opacity-40 flex items-center gap-1.5">
+            {checkingAll ? (
+              <>
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+                Checking {feeds.findIndex(f => f.id === checkingId) + 1}/{feeds.filter(f => f.enabled).length}…
+              </>
+            ) : "Check all feeds"}
+          </button>
+        </div>
+      )}
+
+      {/* Bulk action bar — shown when any feeds are selected */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 rounded-xl border border-border/50 bg-card/80 px-4 py-2.5">
+          <span className="text-xs font-semibold text-foreground">
+            {selectedIds.size} feed{selectedIds.size !== 1 ? "s" : ""} selected
+          </span>
+          <button onClick={() => setSelectedIds(new Set())} className="text-[11px] text-muted-foreground hover:text-foreground">
+            Clear
+          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={bulkRecheck}
+              disabled={bulkRechecking || bulkDeleting || checkingAll}
+              className="rounded-full border border-border/50 px-4 py-1.5 text-xs font-semibold text-foreground hover:border-border transition-all disabled:opacity-40 flex items-center gap-1.5">
+              {bulkRechecking ? (
+                <>
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+                  Checking {Array.from(selectedIds).indexOf(checkingId ?? "") + 1}/{selectedIds.size}…
+                </>
+              ) : `Re-check ${selectedIds.size} selected`}
+            </button>
+            <button
+              onClick={bulkDelete}
+              disabled={bulkDeleting || bulkRechecking}
+              className="rounded-full bg-destructive px-4 py-1.5 text-xs font-semibold text-white hover:bg-destructive/80 disabled:opacity-50">
+              {bulkDeleting ? "Deleting…" : `Delete ${selectedIds.size} selected`}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Feed list */}
+      {loading ? (
+        <div className="text-xs text-muted-foreground">Loading…</div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border/40 p-8 text-center">
+          <div className="text-2xl mb-2">📰</div>
+          <div className="text-xs text-muted-foreground">
+            {feeds.length === 0 ? "No feeds yet. Add one above." : "No feeds match this filter."}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {/* Select-all row */}
+          <div className="flex items-center gap-3 px-1 pb-1">
+            <input
+              type="checkbox"
+              checked={selectedIds.size === filtered.length && filtered.length > 0}
+              onChange={toggleSelectAll}
+              className="accent-primary h-3.5 w-3.5 cursor-pointer"
+            />
+            <span className="text-[11px] text-muted-foreground">
+              {selectedIds.size > 0 ? `${selectedIds.size} selected` : "Select all"}
+            </span>
+          </div>
+
+          {filtered.map(feed => (
+            <div key={feed.id} className={`rounded-xl border p-3 ${selectedIds.has(feed.id) ? "border-primary/40 bg-primary/5" : feed.enabled ? "border-border/40 bg-card/50" : "border-border/20 bg-muted/10 opacity-60"}`}>
+              {editingId === feed.id ? (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] text-muted-foreground mb-1">Name</label>
+                      <input value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} className={inputCls} />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-muted-foreground mb-1">Category</label>
+                      <select value={editForm.category} onChange={e => setEditForm(f => ({ ...f, category: e.target.value }))} className={selCls}>
+                        {RSS_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-muted-foreground mb-1">URL</label>
+                    <input value={editForm.url} onChange={e => setEditForm(f => ({ ...f, url: e.target.value }))} className={inputCls} />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-muted-foreground mb-1">Description</label>
+                    <input value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} className={inputCls} />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="flex items-center gap-2 text-xs text-foreground cursor-pointer">
+                      <input type="checkbox" checked={editForm.enabled} onChange={e => setEditForm(f => ({ ...f, enabled: e.target.checked }))} className="accent-primary" />
+                      Enabled
+                    </label>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setEditingId(null)} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                    <button onClick={updateFeed} disabled={saving} className="rounded-full bg-foreground px-3 py-1 text-xs font-semibold text-background hover:bg-foreground/90 disabled:opacity-50">
+                      {saving ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              ) : deleteId === feed.id ? (
+                <div className="flex items-center justify-between gap-4">
+                  <p className="text-xs text-destructive">Delete <span className="font-semibold">{feed.name}</span>? Existing subscriptions will lose this feed.</p>
+                  <div className="flex gap-2 shrink-0">
+                    <button onClick={() => setDeleteId(null)} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                    <button onClick={() => deleteFeed(feed.id)} className="rounded-full bg-destructive px-3 py-1 text-xs font-semibold text-white hover:bg-destructive/80">Delete</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start gap-3">
+                  {/* Row checkbox */}
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(feed.id)}
+                    onChange={() => toggleSelect(feed.id)}
+                    className="accent-primary h-3.5 w-3.5 mt-0.5 shrink-0 cursor-pointer"
+                  />
+                  <div className="flex-1 min-w-0 flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-semibold text-foreground">{feed.name}</span>
+                      <span className="rounded-full bg-muted/40 border border-border/30 px-2 py-0.5 text-[10px] text-muted-foreground">{feed.category}</span>
+                      {!feed.enabled && <span className="rounded-full bg-muted/20 border border-border/20 px-2 py-0.5 text-[10px] text-muted-foreground/50">Disabled</span>}
+                    </div>
+                    {feed.description && <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-1">{feed.description}</p>}
+                    <p className="text-[11px] text-muted-foreground/50 mt-0.5 truncate">{feed.url}</p>
+                    <div className="mt-1.5">
+                      <HealthDot feed={feed} />
+                    </div>
+                  </div>
+                  <div className="flex gap-2 shrink-0 items-center">
+                    <button
+                      onClick={() => recheckFeed(feed.id)}
+                      disabled={checkingId === feed.id}
+                      title="Re-check feed health now"
+                      className="rounded-full border border-border/40 px-3 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-border transition-all disabled:opacity-40">
+                      {checkingId === feed.id ? "Checking…" : "Re-check"}
+                    </button>
+                    <button onClick={() => startEdit(feed)} className="rounded-full border border-border/40 px-3 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-border transition-all">Edit</button>
+                    <button onClick={() => setDeleteId(feed.id)} className="rounded-full border border-border/30 px-3 py-1 text-[11px] text-destructive/60 hover:text-destructive hover:border-destructive/30 transition-all">Delete</button>
+                  </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const SETTINGS_TABS = [
   { key: "launch",    label: "🚀 Launch" },
   { key: "billing",   label: "💳 Billing" },
@@ -1240,6 +1768,7 @@ const SETTINGS_TABS = [
   { key: "ratios",    label: "📐 Aspect Ratios" },
   { key: "railway",   label: "🚂 Railway" },
   { key: "legal",     label: "📄 Legal" },
+  { key: "rss",       label: "📰 RSS Feeds" },
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number]["key"];
 
@@ -1399,6 +1928,7 @@ function DeveloperSettings() {
       {tab === "ratios"    && <VideoRatiosCard />}
       {tab === "railway"   && <RailwayTab />}
       {tab === "legal"     && <LegalLinksCard />}
+      {tab === "rss"       && <RssFeedsCatalogueTab />}
     </DeveloperShell>
   );
 }

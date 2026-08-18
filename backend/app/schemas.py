@@ -1394,6 +1394,7 @@ class AgentRecommendationOut(BaseModel):
     platforms: list[str]
     voice: str | None = None
     reference_style: str | None = None
+    image_prompt: str | None = None
     product_id: str | None = None
     created_ad_id: str | None = None
     created_at: datetime
@@ -1475,3 +1476,112 @@ class ScrapedSiteLabelIn(BaseModel):
 class QuickStartFromSiteIn(BaseModel):
     count: int = Field(default=5, ge=1, le=10)
     focus: str | None = Field(default=None, max_length=500)
+
+
+# ── RSS Feeds ─────────────────────────────────────────────────────────
+
+class RssFeedOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    url: str
+    category: str
+    description: str
+    enabled: bool
+    created_at: datetime
+    last_checked_at: datetime | None = None
+    last_status: str | None = None       # "ok" | "error" | None (never checked)
+    last_error: str | None = None
+    last_article_count: int | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class RssFeedIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    url: str = Field(min_length=5, max_length=500)
+    category: str = Field(default="General", max_length=80)
+    description: str = Field(default="", max_length=500)
+    enabled: bool = True
+
+
+class RssFeedSubscriptionOut(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    rss_feed_id: uuid.UUID | None = None
+    custom_url: str | None = None
+    label: str
+    content_type: str
+    image_model_id: str | None = None
+    video_model_id: str | None = None
+    platforms: list
+    posting_mode: str
+    frequency: str
+    day_of_week: int | None = None
+    day_of_month: int | None = None
+    posts_per_run: int
+    article_selection: str
+    tone_style: str
+    enabled: bool
+    last_run_at: datetime | None = None
+    next_run_at: datetime | None = None
+    created_at: datetime
+    # Enriched fields from joined feed
+    feed_name: str | None = None
+    feed_category: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class RssFeedSubscriptionIn(BaseModel):
+    rss_feed_id: uuid.UUID | None = None
+    custom_url: str | None = Field(default=None, max_length=500)
+    label: str = Field(default="", max_length=200)
+    content_type: str = Field(default="text", pattern="^(text|text_image|text_video)$")
+    image_model_id: str | None = None
+    video_model_id: str | None = None
+    platforms: list[str] = Field(default_factory=list)
+    posting_mode: str = Field(default="manual", pattern="^(auto_post|manual)$")
+    frequency: str = Field(default="daily", pattern="^(daily|weekly|monthly)$")
+    day_of_week: int | None = Field(default=None, ge=0, le=6)
+    day_of_month: int | None = Field(default=None, ge=1, le=31)
+    posts_per_run: int = Field(default=1, ge=1, le=3)
+    article_selection: str = Field(default="most_recent", pattern="^(most_relevant|most_trending|most_recent|most_educational|most_controversial|positive_only)$")
+    tone_style: str = Field(default="curator", pattern="^(we|i|you|they|lets)$")
+    enabled: bool = True
+
+
+class RssFeedSubscriptionPatchIn(BaseModel):
+    label: str | None = Field(default=None, max_length=200)
+    content_type: str | None = Field(default=None, pattern="^(text|text_image|text_video)$")
+    image_model_id: str | None = None
+    video_model_id: str | None = None
+    platforms: list[str] | None = None
+    posting_mode: str | None = Field(default=None, pattern="^(auto_post|manual)$")
+    frequency: str | None = Field(default=None, pattern="^(daily|weekly|monthly)$")
+    day_of_week: int | None = Field(default=None, ge=0, le=6)
+    day_of_month: int | None = Field(default=None, ge=1, le=31)
+    posts_per_run: int | None = Field(default=None, ge=1, le=3)
+    article_selection: str | None = Field(default=None, pattern="^(most_relevant|most_trending|most_recent|most_educational|most_controversial|positive_only)$")
+    tone_style: str | None = Field(default=None, pattern="^(we|i|you|they|lets)$")
+    enabled: bool | None = None
+
+
+class RssFeedDraftOut(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    subscription_id: uuid.UUID
+    article_url: str
+    article_title: str
+    article_summary: str
+    ad_id: uuid.UUID | None = None
+    status: str
+    expires_at: datetime
+    created_at: datetime
+    # Enriched from joined subscription
+    subscription_label: str | None = None
+    feed_name: str | None = None
+
+    class Config:
+        from_attributes = True

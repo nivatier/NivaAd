@@ -160,3 +160,38 @@ async def set_log_retention_days(db, days: int) -> None:
     row.config = config
     flag_modified(row, "config")
     await db.commit()
+
+
+# ── RSS feed health-check interval ────────────────────────────────────────────
+
+DEFAULT_RSS_HEALTH_INTERVAL_DAYS = 7
+
+
+async def get_rss_health_interval_days(db) -> int:
+    """Return the configured RSS feed health-check interval in days (default 7)."""
+    row = await get_config_row(db, "rss")
+    value = (row.config or {}).get("health_check_interval_days")
+    try:
+        return int(value) if value is not None else DEFAULT_RSS_HEALTH_INTERVAL_DAYS
+    except (TypeError, ValueError):
+        return DEFAULT_RSS_HEALTH_INTERVAL_DAYS
+
+
+def get_rss_health_interval_days_sync(db) -> int:
+    """Sync version for Celery tasks."""
+    row = get_config_row_sync(db, "rss")
+    value = (row.config or {}).get("health_check_interval_days")
+    try:
+        return int(value) if value is not None else DEFAULT_RSS_HEALTH_INTERVAL_DAYS
+    except (TypeError, ValueError):
+        return DEFAULT_RSS_HEALTH_INTERVAL_DAYS
+
+
+async def set_rss_health_interval_days(db, days: int) -> None:
+    """Persist the RSS feed health-check interval."""
+    row = await get_config_row(db, "rss")
+    config = dict(row.config or {})
+    config["health_check_interval_days"] = days
+    row.config = config
+    flag_modified(row, "config")
+    await db.commit()

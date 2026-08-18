@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.services.log_handler import install_db_log_handler
 from app.routers import (
-    admin_capabilities, admin_overview, admin_users, ads, agent, analytics, auth,
+    admin_capabilities, admin_overview, admin_users, ads, agent, agent_rss, analytics, auth,
     billing, brand_kit, campaigns, connections, connections_linkedin, connections_tiktok,
     connections_meta, connections_threads, developer, moderation, products, schedule, webhooks,
 )
@@ -38,6 +38,8 @@ app.include_router(products.router)
 app.include_router(brand_kit.router)
 app.include_router(campaigns.router)
 app.include_router(agent.router)
+app.include_router(agent_rss.router)
+app.include_router(agent_rss.dev_router)
 app.include_router(connections.router)
 app.include_router(connections_tiktok.router)
 app.include_router(connections_meta.router)

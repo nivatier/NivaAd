@@ -452,6 +452,7 @@ class AgentRecommendation(Base):
     platforms: Mapped[list] = mapped_column(JSON, default=list)
     voice: Mapped[str | None] = mapped_column(String(20), nullable=True)           # "we" | "i" | "neutral" | "you"
     reference_style: Mapped[str | None] = mapped_column(String(20), nullable=True) # "none" | "start" | "end"
+    image_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)          # AI-generated image scene prompt
     product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     created_ad_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ads.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -519,3 +520,78 @@ class EmailSuppression(Base):
     reason: Mapped[str] = mapped_column(String(20))   # "bounce" | "complaint"
     detail: Mapped[dict] = mapped_column(JSON, default=dict)  # raw SNS notification payload snippet
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class RssFeed(Base):
+    """Developer-managed global RSS feeds available for all users to subscribe to.
+    Categorised so the UI can display them in themed groups (Tech, Science, etc.)."""
+    __tablename__ = "rss_feeds"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(200))
+    url: Mapped[str] = mapped_column(String(500), unique=True)
+    category: Mapped[str] = mapped_column(String(80), default="General")  # Tech | Science | Business | Health | Marketing | General
+    description: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Health check columns — populated by scheduled task and manual re-check endpoint
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_status: Mapped[str | None] = mapped_column(String(10), nullable=True)   # "ok" | "error" | None
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    last_article_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class RssFeedSubscription(Base):
+    """One company's subscription to an RSS feed (developer feed or custom URL).
+    Stores all per-subscription settings: platforms, posting mode, frequency, etc."""
+    __tablename__ = "rss_feed_subscriptions"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
+    # Either rss_feed_id (developer feed) OR custom_url (Pro users only) — one must be set
+    rss_feed_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("rss_feeds.id"), nullable=True)
+    custom_url: Mapped[str | None] = mapped_column(String(500), nullable=True)  # Pro-only custom RSS URL
+    label: Mapped[str] = mapped_column(String(200), default="")  # user-editable friendly name
+    # Generation settings
+    content_type: Mapped[str] = mapped_column(String(20), default="text")  # "text" | "text_image" | "text_video"
+    image_model_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    video_model_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    platforms: Mapped[list] = mapped_column(JSON, default=list)
+    posting_mode: Mapped[str] = mapped_column(String(20), default="manual")  # "auto_post" | "manual"
+    # Schedule
+    frequency: Mapped[str] = mapped_column(String(20), default="daily")  # "daily" | "weekly" | "monthly"
+    day_of_week: Mapped[int | None] = mapped_column(Integer, nullable=True)   # 0=Mon..6=Sun, used when frequency="weekly"
+    day_of_month: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1-31, used when frequency="monthly"
+    posts_per_run: Mapped[int] = mapped_column(Integer, default=1)  # 1 | 2 | 3
+    # AI selection preferences
+    article_selection: Mapped[str] = mapped_column(String(40), default="most_recent")
+    # most_relevant | most_trending | most_recent | most_educational | most_controversial | positive_only
+    tone_style: Mapped[str] = mapped_column(String(30), default="curator")
+    # thought_leader | promoter | curator | educator | conversational
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class RssFeedSeenItem(Base):
+    """Tracks article URLs already processed per subscription — prevents re-posting the same article."""
+    __tablename__ = "rss_feed_seen_items"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    subscription_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rss_feed_subscriptions.id", ondelete="CASCADE"), index=True)
+    article_url: Mapped[str] = mapped_column(String(500))
+    seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class RssFeedDraft(Base):
+    """A pending AI-generated post from an RSS feed run, awaiting manual approval.
+    Expires 24 hours after creation if not approved; cleaned up by the hourly Celery task."""
+    __tablename__ = "rss_feed_drafts"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
+    subscription_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rss_feed_subscriptions.id", ondelete="CASCADE"), index=True)
+    article_url: Mapped[str] = mapped_column(String(500))
+    article_title: Mapped[str] = mapped_column(String(500), default="")
+    article_summary: Mapped[str] = mapped_column(Text, default="")
+    ad_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ads.id"), nullable=True)  # the generated Ad row
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # "pending" | "approved" | "dismissed"
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

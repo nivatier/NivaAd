@@ -5,6 +5,7 @@ import { NovaHint } from "@/components/nova-hint";
 import { RequirementChecklist } from "@/components/requirement-checklist";
 import { PLATFORMS, type Platform } from "@/components/create-ad-parts";
 import { useConnectedPlatforms } from "@/hooks/use-connected-platforms";
+import { useAuth } from "@/hooks/use-auth";
 import { api, type ProductOut } from "@/lib/api";
 
 export const Route = createFileRoute("/app/agent-niva")({
@@ -13,7 +14,7 @@ export const Route = createFileRoute("/app/agent-niva")({
 });
 
 type ScrapeJob = { id: string; url: string; count: number; status: string; error: string | null; created_at: string };
-type Recommendation = { id: string; source_url: string; status: string; title: string; description: string; audience: string; platforms: string[]; voice: string | null; reference_style: string | null; product_id: string | null; created_ad_id: string | null; created_at: string };
+type Recommendation = { id: string; source_url: string; status: string; title: string; description: string; audience: string; platforms: string[]; voice: string | null; reference_style: string | null; image_prompt: string | null; product_id: string | null; created_ad_id: string | null; created_at: string };
 type AgentEvent = {
   id: string; name: string; month: number; day: number; lead_days: number; guidance: string; platforms: string[];
   product_id: string | null; enabled: boolean; approval_mode: string;
@@ -905,6 +906,8 @@ function RecCard({ r, products, onUpdate, onSave, onDismiss, onCreateFrom }: {
   const [descVal, setDescVal] = useState(r.description);
   const [voice, setVoice] = useState(r.voice || "neutral");
   const [refStyle, setRefStyle] = useState(r.reference_style || "none");
+  const [imagePromptVal, setImagePromptVal] = useState(r.image_prompt || "");
+  const [imagePromptBusy, setImagePromptBusy] = useState(false);
   const [regenBusy, setRegenBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [dismissBusy, setDismissBusy] = useState(false);
@@ -1030,9 +1033,41 @@ function RecCard({ r, products, onUpdate, onSave, onDismiss, onCreateFrom }: {
         {/* Voice + reference chips + regenerate */}
         <VoiceRefChips voice={voice} refStyle={refStyle} onVoice={handleVoice} onRef={handleRef} regenBusy={regenBusy} onRegen={regen} />
 
+        {/* Image prompt */}
+        <div className="mt-3 space-y-1">
+          <div className="flex items-center justify-between">
+            <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+              🖼 Image prompt
+            </label>
+            <button
+              type="button"
+              disabled={imagePromptBusy}
+              onClick={async () => {
+                setImagePromptBusy(true);
+                try {
+                  const updated = await api(`/agent/recommendations/${r.id}/image-prompt`, { method: "POST" });
+                  setImagePromptVal(updated.image_prompt || "");
+                  onUpdate(updated);
+                } catch { /* ignore */ }
+                setImagePromptBusy(false);
+              }}
+              className="text-[10px] text-primary hover:underline disabled:opacity-40 transition-all"
+            >
+              {imagePromptBusy ? "Generating…" : imagePromptVal ? "↻ Regenerate · 0.25 cr" : "✦ Generate · 0.25 cr"}
+            </button>
+          </div>
+          <textarea
+            value={imagePromptVal}
+            onChange={e => setImagePromptVal(e.target.value)}
+            rows={2}
+            placeholder={imagePromptBusy ? "Generating image prompt…" : "Click Generate above to create an AI image prompt for this idea"}
+            className="w-full rounded-lg border border-border/40 bg-input/30 px-2.5 py-1.5 text-[11px] text-foreground placeholder:text-muted-foreground/40 focus:border-primary/50 focus:outline-none resize-none leading-relaxed"
+          />
+        </div>
+
         {/* Actions */}
         <div className="mt-4 flex items-center gap-2 flex-wrap">
-          <button onClick={() => onCreateFrom(r)}
+          <button onClick={() => onCreateFrom({ ...r, image_prompt: imagePromptVal || r.image_prompt })}
             className="flex-1 rounded-full bg-gold-gradient px-3.5 py-2 text-xs font-semibold text-background shadow-[var(--shadow-gold)] hover:opacity-90 transition">
             Create this ad →
           </button>
@@ -1160,6 +1195,7 @@ function WebsiteSparkTab() {
       reference_style: refStyle,
       source_url: rec.source_url,
       copy_directions: dirParts.filter(Boolean).join(" ") || null,
+      image_scene: rec.image_prompt || null,  // AI-generated image prompt from quick start
     }));
     navigate({ to: "/app" });
   }
@@ -1602,24 +1638,1004 @@ Make each concept meaningfully different. Be specific and actionable.`;
   );
 }
 
+// ── RSS Feeds Tab ───────────────────────────────────────────────────────
+
+type RssFeed = { id: string; name: string; url: string; category: string; description: string; enabled: boolean };
+type RssFeedSub = {
+  id: string; company_id: string; rss_feed_id: string | null; custom_url: string | null;
+  label: string; content_type: string; image_model_id: string | null; video_model_id: string | null;
+  platforms: string[]; posting_mode: string; frequency: string;
+  day_of_week: number | null; day_of_month: number | null; posts_per_run: number;
+  article_selection: string; tone_style: string; enabled: boolean;
+  last_run_at: string | null; next_run_at: string | null; created_at: string;
+  feed_name: string | null; feed_category: string | null;
+};
+type RssDraft = {
+  id: string; subscription_id: string; article_url: string; article_title: string;
+  article_summary: string; ad_id: string | null; status: string;
+  expires_at: string; created_at: string;
+  subscription_label: string | null; feed_name: string | null;
+};
+
+const SELECTION_OPTIONS = [
+  { value: "most_relevant",     label: "Most relevant to my business" },
+  { value: "most_trending",     label: "Most trending / viral" },
+  { value: "most_recent",       label: "Most recent" },
+  { value: "most_educational",  label: "Most educational" },
+  { value: "most_controversial",label: "Most controversial" },
+  { value: "positive_only",     label: "Positive news only" },
+];
+const TONE_OPTIONS = [
+  {
+    value: "we",
+    label: "We / Our",
+    desc: "Company voice — \"We believe…\", \"Our team…\", \"We're excited to share…\"",
+    voiceKey: "we",
+    adTone: "Professional",
+    direction: "Write using 'We' and 'Our' to refer to the company throughout the post.",
+  },
+  {
+    value: "i",
+    label: "I / My",
+    desc: "Founder voice — \"I think…\", \"In my view…\", \"I've been following this…\"",
+    voiceKey: "i",
+    adTone: "Professional",
+    direction: "Write in first-person using 'I' and 'My' — founder or personal brand voice.",
+  },
+  {
+    value: "you",
+    label: "You / Your",
+    desc: "Customer-facing — \"You need to know…\", \"Your business can…\", \"Have you seen…\"",
+    voiceKey: "you",
+    adTone: "Fun",
+    direction: "Address the reader directly using 'You' and 'Your' throughout the post.",
+  },
+  {
+    value: "they",
+    label: "They / The brand",
+    desc: "Third-person — \"The study shows…\", \"Researchers found…\", \"The company announced…\"",
+    voiceKey: "neutral",
+    adTone: "Minimal",
+    direction: "Write in third-person neutral voice — refer to companies, researchers, or subjects by name or as 'they'.",
+  },
+  {
+    value: "lets",
+    label: "Let's / Together",
+    desc: "Inclusive voice — \"Let's explore…\", \"Together we can…\", \"Join us in…\"",
+    voiceKey: "we",
+    adTone: "Fun",
+    direction: "Use an inclusive, collaborative voice — 'Let's', 'Together', 'Join us' — to bring the reader into the conversation.",
+  },
+];
+const FREQ_OPTIONS = [
+  { value: "daily",   label: "Daily" },
+  { value: "weekly",  label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+];
+const DAYS_OF_WEEK = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const CONTENT_TYPE_OPTIONS = [
+  { value: "text",       label: "Text only",       cost: "0.25 cr" },
+  { value: "text_image", label: "Text + Image",    cost: "0.25 + image model" },
+  { value: "text_video", label: "Text + Video",    cost: "0.25 + video model" },
+];
+
+type SubFormState = {
+  rss_feed_id: string; custom_url: string; label: string;
+  content_type: string; image_model_id: string; video_model_id: string;
+  platforms: string[]; posting_mode: string; frequency: string;
+  day_of_week: number; day_of_month: number; posts_per_run: number;
+  article_selection: string; tone_style: string; enabled: boolean;
+};
+
+function defaultForm(feed_id = ""): SubFormState {
+  return {
+    rss_feed_id: feed_id, custom_url: "", label: "", content_type: "text",
+    image_model_id: "", video_model_id: "",
+    platforms: ["facebook", "instagram"], posting_mode: "manual",
+    frequency: "daily", day_of_week: 0, day_of_month: 1,
+    posts_per_run: 1, article_selection: "most_recent", tone_style: "curator", enabled: true,
+  };
+}
+
+function SubModal({
+  initialForm, title, availableModels, connectedPlatformIds,
+  onSave, onClose,
+}: {
+  initialForm: SubFormState; title: string;
+  availableModels: { image: any[]; video: any[] };
+  connectedPlatformIds: Set<string>;
+  onSave: (form: SubFormState) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [form, setForm] = useState<SubFormState>(initialForm);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  function set(key: keyof SubFormState, val: any) {
+    setForm(f => ({ ...f, [key]: val }));
+  }
+  function togglePlatform(id: string) {
+    setForm(f => ({
+      ...f,
+      platforms: f.platforms.includes(id) ? f.platforms.filter(p => p !== id) : [...f.platforms, id],
+    }));
+  }
+
+  async function handleSave() {
+    if (!form.platforms.length) { setErr("Select at least one platform."); return; }
+    setSaving(true); setErr("");
+    try { await onSave(form); }
+    catch (e: any) { setErr(e.message || "Could not save"); setSaving(false); }
+  }
+
+  const sel = (label: string, key: keyof SubFormState, opts: { value: string; label: string }[]) => (
+    <div>
+      <label className="block text-xs font-medium text-foreground mb-1">{label}</label>
+      <select value={form[key] as string} onChange={e => set(key, e.target.value)}
+        className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+        {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl max-h-[90vh] overflow-y-auto space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold text-foreground">{title}</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg">✕</button>
+        </div>
+
+        {/* Label */}
+        <div>
+          <label className="block text-xs font-medium text-foreground mb-1">Label (optional)</label>
+          <input value={form.label} onChange={e => set("label", e.target.value)} placeholder="My Tech Feed"
+            className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+        </div>
+
+        {/* Custom URL (only shown if no rss_feed_id) */}
+        {!form.rss_feed_id && (
+          <div>
+            <label className="block text-xs font-medium text-foreground mb-1">RSS Feed URL <span className="text-primary">(Pro)</span></label>
+            <input value={form.custom_url} onChange={e => set("custom_url", e.target.value)} placeholder="https://feeds.example.com/rss"
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+          </div>
+        )}
+
+        {/* Content type */}
+        {sel("Content type", "content_type", CONTENT_TYPE_OPTIONS)}
+
+        {/* Image model (text_image) */}
+        {form.content_type === "text_image" && availableModels.image.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-foreground mb-1">Image model</label>
+            <select value={form.image_model_id} onChange={e => set("image_model_id", e.target.value)}
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+              {availableModels.image.filter((m: any) => m.enabled !== false).map((m: any) => (
+                <option key={m.id} value={m.id}>{m.label} ({m.credits} cr)</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Video model (text_video) */}
+        {form.content_type === "text_video" && availableModels.video.length > 0 && (
+          <div>
+            <label className="block text-xs font-medium text-foreground mb-1">Video model</label>
+            <select value={form.video_model_id} onChange={e => set("video_model_id", e.target.value)}
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+              {availableModels.video.filter((m: any) => m.enabled !== false).map((m: any) => (
+                <option key={m.id} value={m.id}>{m.label} ({m.credits} cr)</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Platforms */}
+        <div>
+          <label className="block text-xs font-medium text-foreground mb-1.5">Platforms</label>
+          <PlatformChips selected={form.platforms} onToggle={togglePlatform} connectedPlatformIds={connectedPlatformIds} />
+        </div>
+
+        {/* Posting mode */}
+        <div>
+          <label className="block text-xs font-medium text-foreground mb-1">Posting mode</label>
+          <div className="flex gap-2">
+            {[{ v: "manual", l: "Manual approval" }, { v: "auto_post", l: "Auto-post" }].map(({ v, l }) => (
+              <button key={v} type="button" onClick={() => set("posting_mode", v)}
+                className={`flex-1 rounded-lg border px-3 py-2 text-xs transition-all ${form.posting_mode === v ? "border-primary bg-primary/10 text-primary" : "border-border/50 text-muted-foreground hover:border-primary/40"}`}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-1">
+            {form.posting_mode === "manual" ? "Drafts expire after 24 h — you'll be notified to approve." : "Posts go live automatically on your connected platforms."}
+          </p>
+        </div>
+
+        {/* Frequency */}
+        <div className="grid grid-cols-2 gap-3">
+          {sel("Frequency", "frequency", FREQ_OPTIONS)}
+          {form.frequency === "weekly" && (
+            <div>
+              <label className="block text-xs font-medium text-foreground mb-1">Day of week</label>
+              <select value={form.day_of_week} onChange={e => set("day_of_week", Number(e.target.value))}
+                className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+                {DAYS_OF_WEEK.map((d, i) => <option key={i} value={i}>{d}</option>)}
+              </select>
+            </div>
+          )}
+          {form.frequency === "monthly" && (
+            <div>
+              <label className="block text-xs font-medium text-foreground mb-1">Day of month</label>
+              <input type="number" min={1} max={28} value={form.day_of_month} onChange={e => set("day_of_month", Number(e.target.value))}
+                className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
+            </div>
+          )}
+        </div>
+
+        {/* Posts per run */}
+        <div>
+          <label className="block text-xs font-medium text-foreground mb-1">Posts per run</label>
+          <div className="flex gap-2">
+            {[1, 2, 3].map(n => (
+              <button key={n} type="button" onClick={() => set("posts_per_run", n)}
+                className={`flex-1 rounded-lg border px-3 py-2 text-xs transition-all ${form.posts_per_run === n ? "border-primary bg-primary/10 text-primary" : "border-border/50 text-muted-foreground hover:border-primary/40"}`}>
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Article selection + tone */}
+        <div className="grid grid-cols-2 gap-3">
+          {sel("Article selection", "article_selection", SELECTION_OPTIONS)}
+          <div>
+            <label className="block text-xs font-medium text-foreground mb-1">Tone / style</label>
+            <select value={form.tone_style} onChange={e => set("tone_style", e.target.value)}
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+              {TONE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            {TONE_OPTIONS.find(o => o.value === form.tone_style)?.desc && (
+              <p className="mt-1 text-[11px] text-muted-foreground leading-snug">
+                {TONE_OPTIONS.find(o => o.value === form.tone_style)!.desc}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {err && <p className="text-xs text-destructive">{err}</p>}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="rounded-full bg-gold-gradient px-4 py-1.5 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50">
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const RSS_PAGE_SIZE = 8;
+
+// ── Audience inference ─────────────────────────────────────────────────────
+// Derives a target audience string from the article + tone without an API call.
+// Used to pre-fill the "Target audience" field in Create Ad.
+
+function deriveAudience(idea: RssIdea, toneStyle: string): string {
+  const title = (idea.title || "").toLowerCase();
+  const summary = (idea.summary || "").toLowerCase();
+  const goal = (idea.goal || "").toLowerCase();
+  const text = `${title} ${summary}`;
+
+  // ── Topic signals → audience descriptor ──────────────────────────
+  const topicMap: [RegExp, string][] = [
+    [/\b(ai|artificial intelligence|machine learning|llm|gpt|chatbot|automation)\b/,   "tech-savvy professionals and business leaders interested in AI"],
+    [/\b(startup|venture|funding|seed|series [a-c]|investor|vc|founder)\b/,             "startup founders, entrepreneurs and early-stage investors"],
+    [/\b(cybersecurity|data breach|ransomware|hacker|zero.day|vulnerability)\b/,        "IT security professionals and business owners managing digital risk"],
+    [/\b(marketing|seo|brand|content strategy|social media|advertising|campaign)\b/,    "marketing managers and brand strategists"],
+    [/\b(finance|stock|investment|portfolio|interest rate|inflation|economy|banking)\b/, "finance professionals and investment-minded adults"],
+    [/\b(health|medical|clinical|patient|treatment|drug|pharma|biotech|hospital)\b/,    "healthcare professionals and health-conscious consumers"],
+    [/\b(legal|law|regulation|compliance|court|ruling|litigation|attorney)\b/,          "legal professionals, compliance officers and business executives"],
+    [/\b(real estate|property|housing|mortgage|rent|commercial|cre|reit)\b/,            "property investors, real estate professionals and home buyers"],
+    [/\b(manufacturing|supply chain|logistics|warehouse|production|factory|automation)\b/, "operations managers and manufacturing industry professionals"],
+    [/\b(agriculture|farming|crop|livestock|agri|food production|harvest)\b/,           "agricultural professionals and agribusiness decision-makers"],
+    [/\b(education|school|university|learning|edtech|student|teacher|curriculum)\b/,    "educators, parents and education technology adopters"],
+    [/\b(retail|e-commerce|consumer|shopping|brand|product launch|dtc)\b/,              "retail professionals, brand managers and online shoppers"],
+    [/\b(energy|solar|renewable|sustainability|climate|esg|green|carbon)\b/,            "sustainability-focused business leaders and clean energy professionals"],
+    [/\b(hr|human resources|talent|recruitment|workforce|employee|hiring)\b/,           "HR managers, recruiters and people operations leaders"],
+    [/\b(travel|hospitality|hotel|tourism|airline|destination)\b/,                      "travel industry professionals and frequent travellers"],
+    [/\b(food|beverage|restaurant|dining|nutrition|ingredient|chef)\b/,                 "food and beverage industry professionals and culinary enthusiasts"],
+    [/\b(science|research|study|discovery|innovation|breakthrough|lab)\b/,              "research professionals, academics and innovation-driven business leaders"],
+    [/\b(government|policy|regulation|public sector|federal|legislation)\b/,            "policy professionals, government affairs teams and compliance officers"],
+  ];
+
+  let audienceBase = "business professionals and decision-makers"; // fallback
+  for (const [pattern, audience] of topicMap) {
+    if (pattern.test(text)) {
+      audienceBase = audience;
+      break;
+    }
+  }
+
+  // ── Tone modifier — add seniority/context flavour ────────────────
+  const toneModifier: Record<string, string> = {
+    thought_leader:  ", particularly senior leaders and C-suite executives",
+    promoter:        " looking to stay ahead of industry trends",
+    curator:         " who value curated, high-quality content",
+    educator:        " eager to deepen their knowledge and skills",
+    conversational:  " interested in fresh perspectives and open discussion",
+  };
+
+  return audienceBase + (toneModifier[toneStyle] ?? "");
+}
+
+// ── Image scene inference ─────────────────────────────────────────────────
+// Generates a default image scene description from the article content.
+// Pre-fills the "Image description" textarea in Create Ad.
+
+function deriveImageScene(idea: RssIdea): string {
+  const title = (idea.title || "").toLowerCase();
+  const summary = (idea.summary || "").toLowerCase();
+  const text = `${title} ${summary}`;
+
+  // Topic → visual scene
+  const sceneMap: [RegExp, string][] = [
+    [/\b(ai|artificial intelligence|machine learning|robot|automation|algorithm)\b/, "Futuristic digital interface with glowing neural network visualisation, dark tech background"],
+    [/\b(startup|founder|venture|funding|pitch|investor)\b/,                         "Modern open-plan office with entrepreneurs collaborating at a standing desk"],
+    [/\b(cybersecurity|hacker|data breach|ransomware|firewall|encryption)\b/,        "Abstract digital lock and shield over a dark background with glowing circuit lines"],
+    [/\b(health|medical|doctor|hospital|patient|clinical|wellness)\b/,               "Clean medical environment with soft lighting, healthcare professional in the background"],
+    [/\b(pharma|drug|biotech|molecule|lab|research|genomics)\b/,                     "Modern laboratory setting with scientific equipment and soft blue lighting"],
+    [/\b(legal|law|court|attorney|compliance|regulation|ruling)\b/,                  "Professional law office with books and polished wooden desk, natural window light"],
+    [/\b(finance|banking|stock|investment|market|economy|trading)\b/,                "Modern city financial district skyline at dusk with upward trending graph overlay"],
+    [/\b(real estate|property|housing|building|architecture|construction)\b/,        "Contemporary building exterior with clean lines, blue sky and greenery"],
+    [/\b(manufacturing|factory|production|industrial|supply chain|logistics)\b/,     "Modern factory floor with automated machinery and clean industrial aesthetic"],
+    [/\b(agriculture|farm|crop|harvest|food production|sustainable farming)\b/,      "Wide aerial shot of green farmland at golden hour with clear skies"],
+    [/\b(energy|solar|renewable|wind|sustainability|climate|green)\b/,               "Solar panels and wind turbines on a clean landscape under a bright blue sky"],
+    [/\b(retail|ecommerce|shopping|consumer|brand|product)\b/,                       "Bright minimalist retail display with clean product arrangement and soft shadows"],
+    [/\b(marketing|advertising|brand|campaign|social media|digital)\b/,              "Creative agency workspace with mood boards, laptops and natural light"],
+    [/\b(education|school|university|learning|student|classroom)\b/,                 "Bright modern classroom or library with students engaged, warm natural lighting"],
+    [/\b(travel|hotel|tourism|destination|airline|hospitality)\b/,                   "Stunning travel destination at golden hour, wide open landscape with clear sky"],
+    [/\b(food|restaurant|dining|nutrition|cuisine|beverage|chef)\b/,                 "Beautifully plated dish on a clean surface with soft studio lighting"],
+    [/\b(science|discovery|research|space|nature|biology|physics)\b/,                "Stunning macro or space photography with dramatic lighting and vibrant colours"],
+    [/\b(hr|workforce|hiring|talent|team|employee|workplace)\b/,                     "Diverse professional team collaborating in a bright modern office"],
+  ];
+
+  for (const [pattern, scene] of sceneMap) {
+    if (pattern.test(text)) return scene;
+  }
+  // Generic fallback — uses the article title as a natural language prompt
+  return `Professional editorial image representing: ${idea.title}. Clean background, high quality, photorealistic`;
+}
+
+
+
+type RssIdea = {
+  index: number; title: string; url: string; summary: string;
+  ad_concept: string; suggested_tone: string; goal: string;
+  image_prompt?: string;  // AI-generated image scene prompt from get-ideas endpoint
+};
+
+// Map RSS tone value → Create Ad prefill fields — derived from TONE_OPTIONS itself
+function getToneAdFields(toneValue: string) {
+  const opt = TONE_OPTIONS.find(o => o.value === toneValue) ?? TONE_OPTIONS[0];
+  return { adTone: opt.adTone, direction: opt.direction, voiceKey: opt.voiceKey };
+}
+
+
+// ── Saved RSS ideas (localStorage, 24h TTL) ─────────────────────────────────
+
+type SavedIdea = RssIdea & {
+  savedAt: number;        // Date.now() when stored
+  feedId: string;
+  feedName: string;
+  toneStyle: string;
+  includeLink: boolean;
+  imageScene: string;
+};
+
+function loadSavedIdeas(): SavedIdea[] {
+  try {
+    const raw = localStorage.getItem('nivaspark_rss_ideas');
+    if (!raw) return [];
+    const all: SavedIdea[] = JSON.parse(raw);
+    // Purge expired (>24h old)
+    const fresh = all.filter(i => Date.now() - i.savedAt < 86400000);
+    if (fresh.length !== all.length) localStorage.setItem('nivaspark_rss_ideas', JSON.stringify(fresh));
+    return fresh;
+  } catch { return []; }
+}
+
+function saveSavedIdeas(ideas: SavedIdea[]) {
+  try { localStorage.setItem('nivaspark_rss_ideas', JSON.stringify(ideas)); } catch {}
+}
+
+function RssFeedsTab() {
+  const { me } = useAuth();
+  const isPro = me?.tier === "pro";
+  const { platforms: availPlatforms, connected: connectedPlatformIds } = useConnectedPlatforms();
+  const navigate = useNavigate();
+
+  const [catalogue, setCatalogue] = useState<Record<string, RssFeed[]>>({});
+  const [subs, setSubs] = useState<RssFeedSub[]>([]);
+  const [drafts, setDrafts] = useState<RssDraft[]>([]);
+  const [availableModels, setAvailableModels] = useState<{ image: any[]; video: any[] }>({ image: [], video: [] });
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  // Filters + pagination
+  const [categoryFilter, setCategoryFilter] = useState("__all__");
+  const [page, setPage] = useState(0);
+
+  // Right-column tab: "subscriptions" | "ideas"
+  const [rightTab, setRightTab] = useState<"subscriptions" | "ideas">("subscriptions");
+
+  // Saved ideas (persisted in localStorage)
+  const [savedIdeas, setSavedIdeas] = useState<SavedIdea[]>(() => loadSavedIdeas());
+
+  // Inline ideas generation state
+  const [ideasFeed, setIdeasFeed] = useState<RssFeed | null>(null);  // which feed is being queried
+  const [articleSelection, setArticleSelection] = useState("most_recent");
+  const [ideaCount, setIdeaCount] = useState(4);
+  const [ideasLoading, setIdeasLoading] = useState(false);
+  const [ideasErr, setIdeasErr] = useState("");
+  // Per-idea settings (ephemeral, just for the current generate session)
+  const [ideaSettings, setIdeaSettings] = useState<Record<number, { toneStyle: string; includeLink: boolean; imageScene: string }>>({});
+
+  function getIdeaSettings(i: number) {
+    return ideaSettings[i] ?? { toneStyle: "we", includeLink: true, imageScene: "" };
+  }
+  function setIdeaSetting(i: number, key: "toneStyle" | "includeLink" | "imageScene", val: any) {
+    setIdeaSettings(prev => ({ ...prev, [i]: { ...getIdeaSettings(i), [key]: val } }));
+  }
+
+  // Modal state
+  const [subscribeModal, setSubscribeModal] = useState<{ feedId: string } | null>(null);
+  const [customModal, setCustomModal] = useState(false);
+  const [editModal, setEditModal] = useState<RssFeedSub | null>(null);
+
+  async function load() {
+    setLoading(true); setErr("");
+    try {
+      const [cat, s, d, models] = await Promise.all([
+        api("/agent/rss/feeds/catalogue"),
+        api("/agent/rss/subscriptions"),
+        api("/agent/rss/drafts"),
+        api("/ads/available-models").catch(() => ({ image: [], video: [] })),
+      ]);
+      setCatalogue(cat);
+      setSubs(s);
+      setDrafts(d);
+      setAvailableModels({ image: models.image || [], video: models.video || [] });
+    } catch (e: any) {
+      setErr(e.message || "Could not load RSS feeds");
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, []);
+  useEffect(() => { setPage(0); }, [categoryFilter]);
+
+  // ── Idea generation ────────────────────────────────────────────────
+  async function generateIdeas() {
+    if (!ideasFeed) return;
+    setIdeasLoading(true); setIdeasErr("");
+    try {
+      const res = await api("/agent/rss/get-ideas", {
+        method: "POST",
+        body: { rss_feed_id: ideasFeed.id, article_selection: articleSelection, count: ideaCount },
+      });
+      const incoming: RssIdea[] = res.ideas || [];
+
+      // Derive per-idea settings defaults
+      const defaults: Record<number, { toneStyle: string; includeLink: boolean; imageScene: string }> = {};
+      incoming.forEach((idea, i) => {
+        defaults[i] = { toneStyle: "we", includeLink: true, imageScene: idea.image_prompt || deriveImageScene(idea) };
+      });
+      setIdeaSettings(defaults);
+
+      // Save to localStorage with TTL
+      const newSaved: SavedIdea[] = incoming.map((idea, i) => ({
+        ...idea,
+        savedAt: Date.now(),
+        feedId: ideasFeed.id,
+        feedName: ideasFeed.name,
+        toneStyle: "we",
+        includeLink: true,
+        imageScene: idea.image_prompt || deriveImageScene(idea),
+      }));
+      const merged = [...loadSavedIdeas(), ...newSaved];
+      saveSavedIdeas(merged);
+      setSavedIdeas(merged);
+      setRightTab("ideas");
+    } catch (e: any) {
+      setIdeasErr(e.message || "Could not generate ideas");
+    }
+    setIdeasLoading(false);
+  }
+
+  // ── Idea management ────────────────────────────────────────────────
+  function dismissIdea(idea: SavedIdea) {
+    const updated = savedIdeas.filter(x => x.savedAt !== idea.savedAt || x.url !== idea.url);
+    setSavedIdeas(updated);
+    saveSavedIdeas(updated);
+  }
+
+  function clearAllIdeas() {
+    setSavedIdeas([]);
+    saveSavedIdeas([]);
+  }
+
+  function expiresIn(idea: SavedIdea) {
+    const ms = idea.savedAt + 86400000 - Date.now();
+    const h = Math.max(0, Math.floor(ms / 3600000));
+    const m = Math.max(0, Math.floor((ms % 3600000) / 60000));
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  // ── Create Ad from saved idea ──────────────────────────────────────
+  function createAdFromIdea(idea: SavedIdea) {
+    const { adTone, direction, voiceKey } = getToneAdFields(idea.toneStyle);
+    const parts = [direction];
+    if (idea.includeLink && idea.url) parts.push(`End the post with the source link on its own line: ${idea.url}`);
+    sessionStorage.setItem("nivaad_prefill_product", JSON.stringify({
+      name: idea.title,
+      description: idea.summary,
+      audience: deriveAudience(idea, idea.toneStyle),
+      goal: idea.goal,
+      tone: adTone,
+      voice: voiceKey,
+      copy_directions: parts.join(" "),
+      source_url: idea.url,
+      image_scene: idea.imageScene || deriveImageScene(idea),
+    }));
+    navigate({ to: "/app" });
+  }
+
+  // ── Subscription handlers ──────────────────────────────────────────
+  async function handleSubscribe(form: SubFormState) {
+    const payload: any = {
+      rss_feed_id: form.rss_feed_id || undefined, custom_url: form.custom_url || undefined,
+      label: form.label, content_type: form.content_type,
+      image_model_id: form.image_model_id || undefined, video_model_id: form.video_model_id || undefined,
+      platforms: form.platforms, posting_mode: form.posting_mode, frequency: form.frequency,
+      day_of_week: form.frequency === "weekly" ? form.day_of_week : undefined,
+      day_of_month: form.frequency === "monthly" ? form.day_of_month : undefined,
+      posts_per_run: form.posts_per_run, article_selection: form.article_selection,
+      tone_style: form.tone_style, enabled: true,
+    };
+    await api("/agent/rss/subscriptions", { method: "POST", body: payload });
+    setSubscribeModal(null); setCustomModal(false); load();
+  }
+
+  async function handleUpdate(subId: string, form: SubFormState) {
+    const payload: any = {
+      label: form.label, content_type: form.content_type,
+      image_model_id: form.image_model_id || undefined, video_model_id: form.video_model_id || undefined,
+      platforms: form.platforms, posting_mode: form.posting_mode, frequency: form.frequency,
+      day_of_week: form.frequency === "weekly" ? form.day_of_week : undefined,
+      day_of_month: form.frequency === "monthly" ? form.day_of_month : undefined,
+      posts_per_run: form.posts_per_run, article_selection: form.article_selection,
+      tone_style: form.tone_style, enabled: form.enabled,
+    };
+    await api(`/agent/rss/subscriptions/${subId}`, { method: "PATCH", body: payload });
+    setEditModal(null); load();
+  }
+
+  async function handleToggle(sub: RssFeedSub) {
+    await api(`/agent/rss/subscriptions/${sub.id}`, { method: "PATCH", body: { enabled: !sub.enabled } });
+    load();
+  }
+
+  async function handleDelete(sub: RssFeedSub) {
+    if (!confirm(`Delete subscription "${sub.label || sub.feed_name || "this feed"}"? This can't be undone.`)) return;
+    await api(`/agent/rss/subscriptions/${sub.id}`, { method: "DELETE" });
+    load();
+  }
+
+  async function handleApproveDraft(draft: RssDraft) { await api(`/agent/rss/drafts/${draft.id}/approve`, { method: "POST" }); load(); }
+  async function handleDismissDraft(draft: RssDraft) { await api(`/agent/rss/drafts/${draft.id}`, { method: "DELETE" }); load(); }
+
+  // ── Computed ──────────────────────────────────────────────────────
+  const subscribedFeedIds = new Set(subs.map(s => s.rss_feed_id).filter(Boolean) as string[]);
+  const allFeeds: RssFeed[] = Object.entries(catalogue).flatMap(([, feeds]) => feeds);
+  const uniqueCategories = Object.keys(catalogue).sort();
+  const filteredFeeds = categoryFilter === "__all__" ? allFeeds : allFeeds.filter(f => f.category === categoryFilter);
+  const totalPages = Math.ceil(filteredFeeds.length / RSS_PAGE_SIZE);
+  const pageFeeds = filteredFeeds.slice(page * RSS_PAGE_SIZE, (page + 1) * RSS_PAGE_SIZE);
+
+  const fmtDate = (s: string | null) => s ? new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : null;
+  const fmtNextRun = (s: RssFeedSub) => {
+    if (!s.next_run_at) return "—";
+    const d = new Date(s.next_run_at);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  };
+  const fmtLastRun = (s: RssFeedSub) => s.last_run_at ? new Date(s.last_run_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Never";
+  const expiresInDraft = (d: RssDraft) => {
+    const ms = new Date(d.expires_at).getTime() - Date.now();
+    const h = Math.max(0, Math.floor(ms / 3600000));
+    const m = Math.max(0, Math.floor((ms % 3600000) / 60000));
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+
+  if (loading) return <div className="text-xs text-muted-foreground py-6">Loading…</div>;
+  if (err) return <div className="text-xs text-destructive py-4">{err}</div>;
+
+  const hasDrafts = drafts.length > 0;
+  const hasSubs = subs.length > 0;
+  const hasCatalogue = Object.keys(catalogue).length > 0;
+  const hasIdeas = savedIdeas.length > 0;
+
+  const miniSelCls = "rounded-lg border border-border bg-input/40 px-2 py-1 text-[11px] text-foreground focus:border-ring focus:outline-none";
+
+  return (
+    <div className="space-y-6">
+
+      {/* ── Pending Drafts ── */}
+      {hasDrafts && (
+        <section>
+          <h3 className="text-xs font-bold text-foreground mb-3 flex items-center gap-2">
+            📬 Pending approvals
+            <span className="rounded-full bg-amber-500/20 border border-amber-400/30 px-2 py-0.5 text-[11px] text-amber-300">{drafts.length}</span>
+          </h3>
+          <div className="space-y-2">
+            {drafts.map(draft => (
+              <div key={draft.id} className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-semibold text-foreground line-clamp-1">{draft.article_title || "Untitled article"}</div>
+                    {draft.article_summary && <p className="mt-0.5 text-[11px] text-muted-foreground line-clamp-2">{draft.article_summary}</p>}
+                    <div className="mt-1.5 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                      <span>{draft.feed_name || draft.subscription_label || "Feed"}</span>
+                      <span>·</span>
+                      <span className="text-amber-400">Expires in {expiresInDraft(draft)}</span>
+                      {draft.article_url && <a href={draft.article_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">View ↗</a>}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button onClick={() => handleDismissDraft(draft)} className="rounded-full border border-border/50 px-3 py-1.5 text-[11px] text-muted-foreground hover:text-foreground hover:border-border transition-all">Dismiss</button>
+                    <button onClick={() => handleApproveDraft(draft)} className="rounded-full bg-gold-gradient px-3 py-1.5 text-[11px] font-semibold text-background shadow-[var(--shadow-gold)]">Approve & Post</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ── Main two-column layout ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+
+        {/* ── LEFT: Feed Catalogue + Get Ideas ── */}
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h3 className="text-xs font-bold text-foreground">Browse feeds</h3>
+            {isPro && (
+              <button onClick={() => setCustomModal(true)}
+                className="flex items-center gap-1.5 rounded-full border border-dashed border-primary/30 bg-primary/5 px-3 py-1 text-[11px] text-primary hover:border-primary/50 hover:bg-primary/10 transition-all">
+                <span>+</span> Add custom URL
+                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] text-primary">Pro</span>
+              </button>
+            )}
+          </div>
+
+          {/* Category filter */}
+          {uniqueCategories.length > 0 && (
+            <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
+              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+              <option value="__all__">All categories ({allFeeds.length} feeds)</option>
+              {uniqueCategories.map(c => <option key={c} value={c}>{c} ({catalogue[c]?.length ?? 0})</option>)}
+            </select>
+          )}
+
+          {/* Inline Get Ideas panel — shown when a feed is selected */}
+          {ideasFeed && (
+            <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-semibold text-foreground">💡 Get ideas from feed</div>
+                  <div className="text-[11px] text-muted-foreground truncate max-w-[200px]">{ideasFeed.name}</div>
+                </div>
+                <button onClick={() => { setIdeasFeed(null); setIdeasErr(""); }} className="text-muted-foreground hover:text-foreground text-sm">✕</button>
+              </div>
+
+              {/* Step 1 indicator */}
+              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-primary text-background text-[9px] font-bold">1</span>
+                Choose articles to surface
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] text-muted-foreground mb-1">Article selection</label>
+                  <select value={articleSelection} onChange={e => setArticleSelection(e.target.value)}
+                    className="w-full rounded-lg border border-border bg-input/40 px-2 py-1.5 text-[11px] text-foreground focus:border-ring focus:outline-none">
+                    {SELECTION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-muted-foreground mb-1">Number of ideas</label>
+                  <div className="flex gap-1">
+                    {[2, 3, 4, 5, 6].map(n => (
+                      <button key={n} type="button" onClick={() => setIdeaCount(n)}
+                        className={`flex-1 rounded-lg border py-1.5 text-[11px] transition-all ${ideaCount === n ? "border-primary bg-primary/10 text-primary" : "border-border/50 text-muted-foreground hover:border-primary/40"}`}>
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {ideasErr && <p className="text-[11px] text-destructive">{ideasErr}</p>}
+
+              <button onClick={generateIdeas} disabled={ideasLoading}
+                className="w-full rounded-full bg-gold-gradient py-2 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50">
+                {ideasLoading ? "Fetching feed…" : "Generate ideas · 0.25 cr →"}
+              </button>
+
+              {ideasLoading && (
+                <div className="flex items-center gap-2 text-[11px] text-primary animate-pulse justify-center">
+                  <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  </svg>
+                  Reading {ideasFeed.name}…
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Feed list */}
+          {!hasCatalogue ? (
+            <div className="rounded-xl border border-dashed border-border/40 p-6 text-center">
+              <div className="text-2xl mb-2">📰</div>
+              <p className="text-[11px] text-muted-foreground">No feeds in the catalogue yet.</p>
+            </div>
+          ) : pageFeeds.length === 0 ? (
+            <div className="text-[11px] text-muted-foreground py-4 text-center">No feeds match this filter.</div>
+          ) : (
+            <div className="space-y-2">
+              {pageFeeds.map((feed: RssFeed) => {
+                const alreadySubscribed = subscribedFeedIds.has(feed.id);
+                const checkedDate = (feed as any).last_checked_at ? fmtDate((feed as any).last_checked_at) : null;
+                const status = (feed as any).last_status as string | null;
+                const isActive = ideasFeed?.id === feed.id;
+                return (
+                  <div key={feed.id} className={`rounded-xl border p-3 transition-all ${isActive ? "border-primary/40 bg-primary/5" : "border-border/40 bg-card/50"}`}>
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-semibold text-foreground truncate">{feed.name}</div>
+                        {feed.description && <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-1">{feed.description}</p>}
+                      </div>
+                    </div>
+                    <div className="mb-2 flex items-center gap-1.5 text-[11px]">
+                      {!status ? <span className="text-muted-foreground/50">⚪ Not yet verified</span>
+                        : status === "ok" ? <span className="text-emerald-400">🟢 Active{(feed as any).last_article_count != null ? ` · ${(feed as any).last_article_count} articles` : ""}</span>
+                        : <span className="text-red-400">🔴 Error</span>}
+                      {checkedDate && <span className="text-muted-foreground/40">· {checkedDate}</span>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => { setIdeasFeed(isActive ? null : feed); setIdeasErr(""); }}
+                        className={`rounded-full border px-2.5 py-1 text-[11px] transition-all ${isActive ? "border-primary bg-primary/10 text-primary" : "border-border/50 text-muted-foreground hover:text-foreground hover:border-border"}`}>
+                        {isActive ? "✕ Cancel" : "💡 Get ideas"}
+                      </button>
+                      {alreadySubscribed ? (
+                        <span className="rounded-full bg-emerald-500/15 border border-emerald-400/30 px-2.5 py-1 text-[11px] text-emerald-300">✓ Subscribed</span>
+                      ) : (
+                        <button onClick={() => setSubscribeModal({ feedId: feed.id })}
+                          className="rounded-full border border-primary/40 bg-primary/5 px-2.5 py-1 text-[11px] text-primary hover:bg-primary/15 transition-all">
+                          Subscribe
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+                className="rounded-full border border-border/40 px-3 py-1 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-30 transition-all">← Prev</button>
+              <span className="text-[11px] text-muted-foreground">Page {page + 1} of {totalPages} · {filteredFeeds.length} feeds</span>
+              <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
+                className="rounded-full border border-border/40 px-3 py-1 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-30 transition-all">Next →</button>
+            </div>
+          )}
+        </section>
+
+        {/* ── RIGHT: Tabbed panel — Subscriptions | Ideas ── */}
+        <section className="space-y-3">
+          {/* Tab bar */}
+          <div className="flex items-center gap-1">
+            <button onClick={() => setRightTab("subscriptions")}
+              className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-all ${rightTab === "subscriptions" ? "border-primary/50 bg-primary/10 text-primary" : "border-border/40 text-muted-foreground hover:text-foreground"}`}>
+              📡 Subscriptions {hasSubs ? `(${subs.length})` : ""}
+            </button>
+            <button onClick={() => setRightTab("ideas")}
+              className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-all ${rightTab === "ideas" ? "border-primary/50 bg-primary/10 text-primary" : "border-border/40 text-muted-foreground hover:text-foreground"}`}>
+              💡 Ideas {hasIdeas ? `(${savedIdeas.length})` : ""}
+            </button>
+          </div>
+
+          {/* ── Subscriptions tab ── */}
+          {rightTab === "subscriptions" && (
+            !hasSubs ? (
+              <div className="rounded-xl border border-dashed border-border/40 p-6 text-center">
+                <div className="text-2xl mb-2">📡</div>
+                <p className="text-[11px] text-muted-foreground">Subscribe to a feed on the left to get started.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {subs.map(sub => (
+                  <div key={sub.id} className={`rounded-xl border p-3.5 transition-all ${sub.enabled ? "border-border/50 bg-card" : "border-border/20 bg-muted/10 opacity-60"}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-semibold text-foreground truncate">{sub.label || sub.feed_name || sub.custom_url || "Unnamed feed"}</span>
+                          {sub.feed_category && <span className="rounded-full bg-primary/10 border border-primary/20 px-1.5 py-0.5 text-[10px] text-primary">{sub.feed_category}</span>}
+                          {sub.custom_url && !sub.rss_feed_id && <span className="rounded-full bg-violet-500/10 border border-violet-400/20 px-1.5 py-0.5 text-[10px] text-violet-300">Custom</span>}
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+                          <span>{CONTENT_TYPE_OPTIONS.find(o => o.value === sub.content_type)?.label ?? sub.content_type}</span>
+                          <span>{sub.posting_mode === "auto_post" ? "⚡ Auto-post" : "✋ Manual"}</span>
+                          <span>{sub.frequency === "daily" ? "Daily" : sub.frequency === "weekly" ? `Weekly (${DAYS_OF_WEEK[sub.day_of_week ?? 0]})` : `Monthly (day ${sub.day_of_month ?? 1})`}{" · "}{sub.posts_per_run} post{sub.posts_per_run > 1 ? "s" : ""}/run</span>
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-muted-foreground/60">Last run: {fmtLastRun(sub)} · Next: {fmtNextRun(sub)}</div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button onClick={() => handleToggle(sub)} title={sub.enabled ? "Disable" : "Enable"}
+                          className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border transition-colors ${sub.enabled ? "bg-primary border-primary" : "bg-muted border-border"}`}>
+                          <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform mt-0.5 ${sub.enabled ? "translate-x-4" : "translate-x-0.5"}`} />
+                        </button>
+                        <button onClick={() => setEditModal(sub)} className="rounded-full border border-border/50 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-border transition-all">Edit</button>
+                        <button onClick={() => handleDelete(sub)} className="rounded-full border border-border/30 px-2.5 py-1 text-[11px] text-destructive/70 hover:text-destructive hover:border-destructive/30 transition-all">Delete</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {/* ── Ideas tab ── */}
+          {rightTab === "ideas" && (
+            !hasIdeas ? (
+              <div className="rounded-xl border border-dashed border-border/40 p-6 text-center">
+                <div className="text-2xl mb-2">💡</div>
+                <p className="text-[11px] text-muted-foreground">Click "Get ideas" on any feed to generate article ideas here.</p>
+                <p className="text-[11px] text-muted-foreground/60 mt-1">Ideas are saved for 24 hours.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] text-muted-foreground">{savedIdeas.length} idea{savedIdeas.length !== 1 ? "s" : ""} saved · expire within 24h</p>
+                  <button onClick={clearAllIdeas} className="text-[11px] text-destructive/70 hover:text-destructive">Clear all</button>
+                </div>
+                {savedIdeas.map((idea, idx) => (
+                  <div key={`${idea.savedAt}-${idx}`} className="rounded-xl border border-border/50 bg-card/60 p-3.5 space-y-2.5">
+                    {/* Article info */}
+                    <div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-xs font-semibold text-foreground line-clamp-2 flex-1">{idea.title}</div>
+                        <button onClick={() => dismissIdea(idea)} className="text-muted-foreground/50 hover:text-muted-foreground shrink-0 text-sm">✕</button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">{idea.summary}</p>
+                      <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground/60">
+                        <span>{idea.feedName}</span>
+                        <span>·</span>
+                        <span className="text-amber-400/80">expires in {expiresIn(idea)}</span>
+                        {idea.url && <a href={idea.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline ml-auto">Read ↗</a>}
+                      </div>
+                    </div>
+
+                    {/* Per-idea settings */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5">
+                        <label className="text-[11px] text-muted-foreground whitespace-nowrap">Voice:</label>
+                        <select value={idea.toneStyle}
+                          onChange={e => {
+                            const updated = savedIdeas.map((x, i) => i === idx ? { ...x, toneStyle: e.target.value } : x);
+                            setSavedIdeas(updated); saveSavedIdeas(updated);
+                          }}
+                          className={miniSelCls}>
+                          {TONE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      </div>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={idea.includeLink}
+                          onChange={e => {
+                            const updated = savedIdeas.map((x, i) => i === idx ? { ...x, includeLink: e.target.checked } : x);
+                            setSavedIdeas(updated); saveSavedIdeas(updated);
+                          }}
+                          className="accent-primary h-3.5 w-3.5" />
+                        <span className="text-[11px] text-muted-foreground">Include link</span>
+                      </label>
+                    </div>
+
+                    {/* Tone description */}
+                    {TONE_OPTIONS.find(o => o.value === idea.toneStyle)?.desc && (
+                      <p className="text-[11px] text-muted-foreground/60 leading-snug">{TONE_OPTIONS.find(o => o.value === idea.toneStyle)!.desc}</p>
+                    )}
+
+                    {/* Image scene */}
+                    <div>
+                      <label className="block text-[11px] text-muted-foreground mb-1">🖼 Image scene</label>
+                      <textarea value={idea.imageScene} rows={2}
+                        onChange={e => {
+                          const updated = savedIdeas.map((x, i) => i === idx ? { ...x, imageScene: e.target.value } : x);
+                          setSavedIdeas(updated); saveSavedIdeas(updated);
+                        }}
+                        className="w-full rounded-lg border border-border/40 bg-input/30 px-2.5 py-1.5 text-[11px] text-foreground focus:border-ring focus:outline-none resize-none"
+                        placeholder="Describe the image background…"
+                      />
+                    </div>
+
+                    <button onClick={() => createAdFromIdea(idea)}
+                      className="w-full rounded-full bg-gold-gradient py-2 text-xs font-semibold text-background shadow-[var(--shadow-gold)]">
+                      Create ad →
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </section>
+      </div>
+
+      {/* ── Modals ── */}
+      {subscribeModal && (
+        <SubModal title="Subscribe to feed" initialForm={defaultForm(subscribeModal.feedId)}
+          availableModels={availableModels} connectedPlatformIds={connectedPlatformIds}
+          onSave={handleSubscribe} onClose={() => setSubscribeModal(null)} />
+      )}
+      {customModal && (
+        <SubModal title="Add custom RSS feed" initialForm={defaultForm("")}
+          availableModels={availableModels} connectedPlatformIds={connectedPlatformIds}
+          onSave={handleSubscribe} onClose={() => setCustomModal(false)} />
+      )}
+      {editModal && (
+        <SubModal title="Edit subscription"
+          initialForm={{
+            rss_feed_id: editModal.rss_feed_id || "", custom_url: editModal.custom_url || "",
+            label: editModal.label, content_type: editModal.content_type,
+            image_model_id: editModal.image_model_id || "", video_model_id: editModal.video_model_id || "",
+            platforms: editModal.platforms || [], posting_mode: editModal.posting_mode,
+            frequency: editModal.frequency, day_of_week: editModal.day_of_week ?? 0,
+            day_of_month: editModal.day_of_month ?? 1, posts_per_run: editModal.posts_per_run,
+            article_selection: editModal.article_selection, tone_style: editModal.tone_style,
+            enabled: editModal.enabled,
+          }}
+          availableModels={availableModels} connectedPlatformIds={connectedPlatformIds}
+          onSave={(form) => handleUpdate(editModal.id, form)} onClose={() => setEditModal(null)} />
+      )}
+    </div>
+  );
+}
+
 // ── Root Component ─────────────────────────────────────────────────────
 
 function AgentNiva() {
-  const [tab, setTab] = useState<"website-spark" | "quick-spark" | "events">("website-spark");
+  const [tab, setTab] = useState<"website-spark" | "quick-spark" | "events" | "rss">("website-spark");
+
   return (
     <AppShell eyebrow="Library" title="Agent Niva">
       <p className="mb-6 text-xs text-muted-foreground max-w-2xl">
-        Your AI marketing agent — studies your site for ad ideas, and keeps seasonal ads generating and scheduling themselves throughout the year.
+        Your AI marketing agent — studies your site for ad ideas, keeps seasonal ads generating and scheduling themselves, and turns RSS news into ready-to-post content.
       </p>
-      <div className="flex gap-2 mb-6">
-        {([ ["website-spark", "🌐 Website Spark", "page:quick-start"], ["quick-spark", "💡 Quick Spark", "page:quick-spark"], ["events", "📅 Recurring Events", "page:recurring-events"] ] as const).map(([k, l, hk]) => (
+      <div className="flex flex-wrap gap-2 mb-6">
+        {([ ["website-spark", "🌐 Website Spark", "page:quick-start"], ["quick-spark", "💡 Quick Spark", "page:quick-spark"], ["events", "📅 Recurring Events", "page:recurring-events"], ["rss", "📰 RSS Feeds", ""] ] as const).map(([k, l, hk]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${tab === k ? "border-primary/50 bg-primary/10 text-primary shadow-[0_0_14px_-4px_oklch(0.78_0.12_85/0.3)]" : "border-white/10 text-muted-foreground hover:border-white/20 hover:text-foreground"}`}>
-            {l} <NovaHint hintKey={hk} />
+            {l} {hk && <NovaHint hintKey={hk} />}
           </button>
         ))}
       </div>
-      {tab === "website-spark" ? <WebsiteSparkTab /> : tab === "quick-spark" ? <QuickSparkTab /> : <EventsTab />}
+      {tab === "website-spark" ? <WebsiteSparkTab /> : tab === "quick-spark" ? <QuickSparkTab /> : tab === "events" ? <EventsTab /> : <RssFeedsTab />}
     </AppShell>
   );
 }

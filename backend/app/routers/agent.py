@@ -169,6 +169,7 @@ def _rec_out(r: AgentRecommendation) -> AgentRecommendationOut:
         id=str(r.id), source_url=r.source_url, status=r.status,
         title=r.title, description=r.description, audience=r.audience or "",
         platforms=r.platforms or [], voice=r.voice, reference_style=r.reference_style,
+        image_prompt=r.image_prompt or None,
         product_id=str(r.product_id) if r.product_id else None,
         created_ad_id=str(r.created_ad_id) if r.created_ad_id else None,
         created_at=r.created_at,
@@ -297,12 +298,80 @@ async def regenerate_recommendation(
     if not text_models:
         raise HTTPException(422, "No enabled text model configured.")
 
-    new_desc = text_gen.generate_text(prompt, text_models[0]["model"])
-    if isinstance(new_desc, dict):
-        new_desc = new_desc.get("text") or new_desc.get("description") or rec.description
-    rec.description = str(new_desc).strip()
+    # Prompt returns plain prose — use httpx.AsyncClient to avoid _extract_json crash
+    from app.services.text_gen import CHAT_URL
+    from app.config import settings as _settings
+    import httpx as _httpx
+
+    async with _httpx.AsyncClient(timeout=60) as _client:
+        ai_resp = await _client.post(
+            CHAT_URL,
+            headers={"Authorization": f"Bearer {_settings.OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={"model": text_models[0]["model"], "max_tokens": 400,
+                  "messages": [{"role": "user", "content": prompt}]},
+        )
+    if ai_resp.status_code >= 400:
+        raise HTTPException(502, f"AI error rewriting description: {ai_resp.status_code}")
+    new_desc = (ai_resp.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+    if not new_desc:
+        new_desc = rec.description
+    rec.description = new_desc
     rec.voice = data.voice
     rec.reference_style = data.reference_style
+    await db.commit()
+    await db.refresh(rec)
+    return _rec_out(rec)
+
+
+@router.post("/recommendations/{rec_id}/image-prompt", response_model=AgentRecommendationOut)
+async def generate_image_prompt(
+    rec_id: str,
+    user: User = Depends(require_capability("create_ads")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate (or regenerate) an image prompt for an existing recommendation
+    without re-running the full website scrape. Charges 0.25 credits."""
+    from app.services import text_gen
+    from app.services.credits import get_available_models
+    from app.services.text_gen import CHAT_URL
+    from app.config import settings as _settings
+    import httpx as _httpx
+
+    await _charge_idea_credits(db, user, "idea_gen_image_prompt")
+    rec = await db.get(AgentRecommendation, rec_id)
+    if rec is None or rec.company_id != user.company_id:
+        raise HTTPException(404, "No such recommendation")
+
+    available = await get_available_models(db)
+    text_models = [m for m in available.get("text", []) if m.get("enabled", True)]
+    if not text_models:
+        raise HTTPException(422, "No enabled text model configured.")
+
+    prompt = (
+        f"You are a visual director creating image generation prompts for social media ads.\n\n"
+        f"Ad idea title: {rec.title}\n"
+        f"Ad description: {rec.description}\n"
+        f"Target audience: {rec.audience or 'general audience'}\n\n"
+        f"Write a single detailed image generation prompt for this ad — a specific, vivid scene "
+        f"description suitable for an AI image model. Include setting, mood, lighting, and style. "
+        f"Do NOT include any text, words, logos, or people reading. "
+        f"Output ONLY the image prompt — no preamble, no labels, no quotes."
+    )
+
+    async with _httpx.AsyncClient(timeout=60) as _client:
+        ai_resp = await _client.post(
+            CHAT_URL,
+            headers={"Authorization": f"Bearer {_settings.OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={"model": text_models[0]["model"], "max_tokens": 200,
+                  "messages": [{"role": "user", "content": prompt}]},
+        )
+    if ai_resp.status_code >= 400:
+        raise HTTPException(502, f"AI error: {ai_resp.status_code}")
+    image_prompt = (ai_resp.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+    if not image_prompt:
+        raise HTTPException(500, "No image prompt returned — try again.")
+
+    rec.image_prompt = image_prompt
     await db.commit()
     await db.refresh(rec)
     return _rec_out(rec)

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
-from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, BrandKit, BrandLogo, BrandVideoShot, CreditLedger, GenerationJob, Notification, PlatformConnection, PostJob, Product, ScheduledPost
+from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, BrandKit, BrandLogo, BrandVideoShot, CreditLedger, GenerationJob, Notification, PlatformConnection, PostJob, Product, RssFeed, RssFeedDraft, RssFeedSeenItem, RssFeedSubscription, ScheduledPost
 from app.services import storage
 from app.services import linkedin
 from app.services.agent_scraper import scrape_company_website
@@ -1615,26 +1615,68 @@ def generate_quick_start_recommendations(self, job_id: str):
                 raise RuntimeError("No enabled text model configured.")
             model = text_models[0]["model"]
 
-            prompt = (
-                f"You are a marketing strategist. Below is the visible text content scraped from a company's "
-                f"website. Based ONLY on what's actually there (don't invent products or claims that aren't "
-                f"implied by the content), recommend exactly {job.count} distinct, concrete social media ad ideas "
-                f"this company could run.\n\n"
-                + (
-                    f"The customer has asked you to focus specifically on: \"{job.focus}\". "
-                    f"All {job.count} ideas should be directly relevant to that subject — don't recommend unrelated angles.\n\n"
-                    if job.focus else ""
-                )
-                + f"Respond with ONLY a JSON array (no markdown fences, no preamble), each item shaped exactly as:\n"
-                f'{{"title": "short internal name for this ad idea", '
-                f'"description": "2-3 sentence ad description/angle, written as if briefing a copywriter", '
-                f'"audience": "who this ad should target — age range, interests, lifestyle in one short sentence", '
-                f'"platforms": ["facebook","instagram"]}}\n'
-                f'Valid platform values: facebook, instagram, linkedin, x, tiktok. Pick 1-3 sensible platforms per idea.\n\n'
-                f"Website content:\n{site_text}"
+            # Truncate site text to avoid blowing the context window
+            # ~6000 chars ≈ ~1500 tokens — leaves plenty of room for the JSON output
+            site_text_trimmed = site_text[:6000] + ("…" if len(site_text) > 6000 else "")
+
+            system_prompt = (
+                "You are a marketing strategist and visual director. "
+                "You will be given website content and must recommend distinct, concrete social media ad ideas. "
+                "For EVERY idea you MUST include an image_prompt field — a specific, vivid visual scene for AI image generation. "
+                "No text, words, logos, or UI elements in the image description. "
+                "Respond with ONLY a raw JSON array — no markdown fences, no prose, no preamble."
             )
-            parsed = text_gen.generate_text(prompt, model)
-            ideas = parsed if isinstance(parsed, list) else parsed.get("ideas", [])
+
+            focus_line = (
+                f"Focus specifically on: \"{job.focus}\". All {job.count} ideas must relate to this.\n\n"
+                if job.focus else ""
+            )
+
+            user_prompt = (
+                f"{focus_line}"
+                f"Recommend exactly {job.count} distinct social media ad ideas based on this website content.\n\n"
+                f"Return a JSON array where EVERY item has ALL of these fields:\n"
+                f'[{{"title": "short name", '
+                f'"description": "2-3 sentence ad angle briefing a copywriter", '
+                f'"audience": "target audience in one sentence", '
+                f'"platforms": ["facebook", "instagram"], '
+                f'"image_prompt": "detailed photorealistic scene — setting, mood, lighting, style, NO text or logos"}}]\n\n'
+                f"Valid platforms: facebook, instagram, linkedin, x, tiktok. Pick 1-3 per idea.\n\n"
+                f"Website content:\n{site_text_trimmed}"
+            )
+
+            import json as _json
+            chat_url = f"{settings.OPENROUTER_BASE_URL}/chat/completions"
+            ai_resp = httpx.post(
+                chat_url,
+                headers={
+                    "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": 4000,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": user_prompt},
+                    ],
+                },
+                timeout=90,
+            )
+            if ai_resp.status_code >= 400:
+                raise RuntimeError(f"OpenRouter error {ai_resp.status_code}: {ai_resp.text[:300]}")
+            raw = (ai_resp.json().get("choices") or [{}])[0].get("message", {}).get("content", "[]")
+            logger.info("[agent] quick-start job=%s raw_response_preview=%s", job_id, raw[:300])
+            # Strip markdown fences and parse — expecting a JSON array
+            raw = raw.replace("```json", "").replace("```", "").strip()
+            # Find the outermost array [...] in the response
+            arr_start = raw.find("[")
+            arr_end = raw.rfind("]")
+            if arr_start != -1 and arr_end != -1:
+                raw = raw[arr_start: arr_end + 1]
+            ideas = _json.loads(raw)
+            if not isinstance(ideas, list):
+                ideas = []
             if not ideas:
                 raise RuntimeError("The model didn't return any ad ideas — try a different URL or fewer requested ads.")
 
@@ -1645,6 +1687,7 @@ def generate_quick_start_recommendations(self, job_id: str):
                     description=idea.get("description") or "",
                     audience=(idea.get("audience") or "")[:300],
                     platforms=[p for p in (idea.get("platforms") or []) if p in ("facebook", "instagram", "linkedin", "x", "tiktok")] or ["facebook", "instagram"],
+                    image_prompt=idea.get("image_prompt") or None,
                 ))
             job.status = "ready"
             db.commit()
@@ -2377,3 +2420,627 @@ def reset_monthly_credits(self):
         db.commit()
 
     return f"reset_monthly_credits: {reset_count} subscription(s) reset on {today}"
+
+
+# ── RSS Feed Auto-Posting ─────────────────────────────────────────────────────
+
+def _fetch_rss_articles(url: str, max_items: int = 30) -> list[dict]:
+    """Fetch and parse an RSS/Atom feed. Returns list of
+    {url, title, summary, published_at} dicts, newest first.
+    Uses stdlib xml.etree.ElementTree — no extra dependency needed."""
+    import xml.etree.ElementTree as ET
+    resp = httpx.get(url, timeout=15, follow_redirects=True,
+                     headers={"User-Agent": "NivaSpark/1.0 RSS Reader"})
+    resp.raise_for_status()
+    root = ET.fromstring(resp.text)
+
+    articles: list[dict] = []
+
+    # ── RSS 2.0 ──────────────────────────────────────────────────────
+    ns = {"atom": "http://www.w3.org/2005/Atom",
+          "content": "http://purl.org/rss/1.0/modules/content/"}
+
+    channel = root.find("channel")
+    if channel is not None:
+        for item in channel.findall("item")[:max_items]:
+            link = (item.findtext("link") or "").strip()
+            title = (item.findtext("title") or "").strip()
+            desc = (item.findtext("description") or
+                    item.findtext("content:encoded", namespaces=ns) or "").strip()
+            pub = (item.findtext("pubDate") or "").strip()
+            if link:
+                articles.append({"url": link, "title": title,
+                                  "summary": desc[:600], "published_at": pub})
+        return articles
+
+    # ── Atom ─────────────────────────────────────────────────────────
+    atom_ns = "http://www.w3.org/2005/Atom"
+    for entry in root.findall(f"{{{atom_ns}}}entry")[:max_items]:
+        link_el = entry.find(f"{{{atom_ns}}}link")
+        link = (link_el.get("href") if link_el is not None else "") or ""
+        title = (entry.findtext(f"{{{atom_ns}}}title") or "").strip()
+        summary = (entry.findtext(f"{{{atom_ns}}}summary") or
+                   entry.findtext(f"{{{atom_ns}}}content") or "").strip()
+        published = (entry.findtext(f"{{{atom_ns}}}published") or
+                     entry.findtext(f"{{{atom_ns}}}updated") or "").strip()
+        if link:
+            articles.append({"url": link, "title": title,
+                              "summary": summary[:600], "published_at": published})
+    return articles
+
+
+def _ai_pick_articles(
+    articles: list[dict],
+    count: int,
+    selection_pref: str,
+    company_context: str,
+    model: str,
+) -> list[dict]:
+    """Ask the AI to pick the best `count` articles from the list based on
+    selection_pref and company_context. Returns a list of dicts with
+    {url, title, summary} ordered best-first."""
+    import json as _json
+    if not articles:
+        return []
+
+    pref_desc = {
+        "most_relevant":       "most relevant and useful to this company's audience and products",
+        "most_trending":       "most likely to be trending, viral, or widely shared right now",
+        "most_recent":         "most recently published",
+        "most_educational":    "most educational and informative for a professional audience",
+        "most_controversial":  "most likely to spark discussion and engagement (but not offensive)",
+        "positive_only":       "most positive, uplifting, and good-news focused",
+    }.get(selection_pref, "most relevant")
+
+    articles_json = _json.dumps(
+        [{"index": i, "title": a["title"], "summary": a["summary"][:300],
+          "published_at": a.get("published_at", "")}
+         for i, a in enumerate(articles)],
+        ensure_ascii=False,
+    )
+
+    prompt = (
+        f"You are a content curator selecting articles for a social media strategy.\n\n"
+        f"Company context: {company_context}\n\n"
+        f"Selection goal: Pick the {count} article(s) that are {pref_desc}.\n\n"
+        f"Articles to choose from (JSON array):\n{articles_json}\n\n"
+        f"Respond ONLY with a JSON array of the selected article indices (integers), "
+        f"best-first, e.g. [2, 0, 4]. Pick exactly {count} or fewer if the list is shorter."
+    )
+    try:
+        result = text_gen.generate_text(prompt, model)
+        if isinstance(result, list):
+            indices = [int(x) for x in result if isinstance(x, (int, float))]
+        else:
+            # model returned some other shape — fall back
+            indices = list(range(min(count, len(articles))))
+    except Exception:
+        indices = list(range(min(count, len(articles))))
+
+    picked = []
+    seen_indices = set()
+    for idx in indices:
+        if 0 <= idx < len(articles) and idx not in seen_indices:
+            picked.append(articles[idx])
+            seen_indices.add(idx)
+        if len(picked) >= count:
+            break
+    # fill up if AI returned fewer than requested
+    for i, a in enumerate(articles):
+        if len(picked) >= count:
+            break
+        if i not in seen_indices:
+            picked.append(a)
+    return picked[:count]
+
+
+def _build_rss_post_prompt(
+    article: dict,
+    company_context: str,
+    tone_style: str,
+    platforms: list[str],
+) -> str:
+    """Build the text-generation prompt for one RSS article post."""
+    import json as _json
+
+    # tone_style now reflects the voice/perspective of the copy
+    voice_instruction = {
+        "we":   "Write using 'We' and 'Our' to refer to the company — company voice.",
+        "i":    "Write in first-person using 'I' and 'My' — founder or personal brand voice.",
+        "you":  "Address the reader directly using 'You' and 'Your' throughout — customer-facing voice.",
+        "they": "Write in neutral third-person — refer to companies, researchers, or subjects by name or as 'they'.",
+        "lets": "Use an inclusive, collaborative voice — 'Let's', 'Together', 'Join us' — to bring the reader in.",
+    }.get(tone_style, "Write using 'We' and 'Our' to refer to the company.")
+
+    platform_styles = {p: PLATFORM_STYLE.get(p, "platform-appropriate") for p in platforms}
+    shape = _shape(platforms)
+
+    return (
+        f"You are writing social media posts for a business.\n"
+        f"Voice instruction: {voice_instruction}\n\n"
+        f"## Company context\n{company_context}\n\n"
+        f"## Article to share\n"
+        f"Title: {article['title']}\n"
+        f"Summary: {article['summary']}\n"
+        f"URL: {article['url']}\n\n"
+        f"## Platform styles\n{_json.dumps(platform_styles)}\n\n"
+        f"## Task\n"
+        f"Write one engaging social media post per platform that shares this article with "
+        f"the company's audience. Apply the voice instruction strictly. "
+        f"Include the article URL naturally at the end. "
+        f"Rate the copy 0-100 for predicted engagement and give one improvement tip.\n\n"
+        f"## Output\nRespond with ONLY this raw JSON, no markdown fences, no prose:\n{shape}"
+    )
+
+
+def _get_company_context_sync(db, company_id) -> str:
+    """Build a short company context string for AI prompts."""
+    from app.models import BrandKit, Company, Product
+    company = db.get(Company, company_id)
+    brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == company_id))
+    products = db.scalars(
+        select(Product).where(Product.company_id == company_id).limit(3)
+    ).all()
+
+    ctx_parts = []
+    if company:
+        ctx_parts.append(f"Company: {company.name}")
+    if brand_kit and brand_kit.tagline:
+        ctx_parts.append(f"Tagline: {brand_kit.tagline}")
+    if products:
+        prod_names = ", ".join(p.name for p in products)
+        ctx_parts.append(f"Products/services: {prod_names}")
+    return ". ".join(ctx_parts) or "A business sharing relevant industry content."
+
+
+@celery_app.task(name="app.process_rss_feeds", bind=True, max_retries=0)
+def process_rss_feeds(self):
+    """Celery Beat, runs hourly.
+
+    For each enabled RssFeedSubscription that is due to run:
+    1. Fetch RSS XML from the feed URL
+    2. Filter out already-seen article URLs
+    3. Ask AI to pick the best N articles per subscription's preferences
+    4. For each picked article:
+       a. Generate an Ad (text only, or text+image, or text+video)
+       b. Deduct credits
+       c. Auto-post OR create a pending RssFeedDraft (manual approval)
+       d. Mark the article URL as seen
+    5. Update last_run_at / next_run_at on the subscription
+    6. Clean up expired drafts (>24 hours old, still pending)
+    """
+    from app.models import Company  # local import avoids top-level circular
+
+    now = datetime.utcnow()
+    processed = 0
+    errors = 0
+
+    with Session(sync_engine) as db:
+
+        # ── Step 1: Clean up expired drafts ──────────────────────────
+        expired = db.scalars(
+            select(RssFeedDraft).where(
+                RssFeedDraft.status == "pending",
+                RssFeedDraft.expires_at <= now,
+            )
+        ).all()
+        for draft in expired:
+            draft.status = "dismissed"
+        if expired:
+            db.commit()
+            logger.info("[rss] cleaned up %d expired drafts", len(expired))
+
+        # ── Step 2: Find due subscriptions ──────────────────────────
+        due_subs = db.scalars(
+            select(RssFeedSubscription).where(
+                RssFeedSubscription.enabled == True,  # noqa: E712
+                RssFeedSubscription.next_run_at <= now,
+            )
+        ).all()
+
+        if not due_subs:
+            return "no due subscriptions"
+
+        # Pre-resolve models once
+        try:
+            all_models = get_available_models_sync(db)
+            text_models = [m for m in all_models.get("text", []) if m.get("enabled", True)]
+            image_models = [m for m in all_models.get("image", []) if m.get("enabled", True)]
+            video_models = [m for m in all_models.get("video", []) if m.get("enabled", True)]
+            if not text_models:
+                logger.error("[rss] No enabled text model — aborting RSS run")
+                return "no text model configured"
+            default_text_model = text_models[0]
+        except Exception as exc:
+            logger.error("[rss] Could not load models: %s", exc)
+            return f"model load error: {exc}"
+
+        for sub in due_subs:
+            try:
+                _process_one_subscription(
+                    db=db,
+                    sub=sub,
+                    now=now,
+                    default_text_model=default_text_model,
+                    image_models=image_models,
+                    video_models=video_models,
+                )
+                processed += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[rss] subscription=%s failed: %s", sub.id, exc)
+                db.rollback()
+                errors += 1
+                # Still update next_run_at so we don't retry every hour on a broken feed
+                try:
+                    with Session(sync_engine) as db2:
+                        sub2 = db2.get(RssFeedSubscription, sub.id)
+                        if sub2:
+                            sub2.last_run_at = now
+                            _advance_next_run(sub2, now)
+                            db2.commit()
+                except Exception:
+                    pass
+
+    return f"processed={processed} errors={errors}"
+
+
+def _advance_next_run(sub: RssFeedSubscription, now: datetime) -> None:
+    """Mutate sub.next_run_at to the next scheduled run time (in-place)."""
+    from datetime import timedelta as _td
+    if sub.frequency == "daily":
+        sub.next_run_at = (now + _td(days=1)).replace(
+            hour=6, minute=0, second=0, microsecond=0
+        )
+    elif sub.frequency == "weekly":
+        dow = sub.day_of_week if sub.day_of_week is not None else 0
+        days_ahead = (dow - now.weekday()) % 7 or 7
+        sub.next_run_at = (now + _td(days=days_ahead)).replace(
+            hour=6, minute=0, second=0, microsecond=0
+        )
+    else:  # monthly
+        import calendar
+        dom = sub.day_of_month if sub.day_of_month is not None else 1
+        if now.month == 12:
+            next_month_year, next_month = now.year + 1, 1
+        else:
+            next_month_year, next_month = now.year, now.month + 1
+        last_day = calendar.monthrange(next_month_year, next_month)[1]
+        actual_dom = min(dom, last_day)
+        sub.next_run_at = datetime(next_month_year, next_month, actual_dom, 6, 0, 0)
+
+
+def _process_one_subscription(
+    db,
+    sub: RssFeedSubscription,
+    now: datetime,
+    default_text_model: dict,
+    image_models: list,
+    video_models: list,
+) -> None:
+    """Run one subscription: fetch → deduplicate → AI pick → generate → post/draft."""
+
+    # ── Resolve feed URL ─────────────────────────────────────────────
+    if sub.rss_feed_id:
+        feed = db.get(RssFeed, sub.rss_feed_id)
+        if feed is None or not feed.enabled:
+            logger.info("[rss] sub=%s feed disabled/missing — skipping", sub.id)
+            return
+        feed_url = feed.url
+    elif sub.custom_url:
+        feed_url = sub.custom_url
+    else:
+        logger.warning("[rss] sub=%s has no feed URL — skipping", sub.id)
+        return
+
+    # ── Resolve models ───────────────────────────────────────────────
+    text_model_info = default_text_model
+    text_model_str = text_model_info["model"]
+
+    image_model_info: dict | None = None
+    if sub.content_type in ("text_image", "text_video"):
+        if sub.content_type == "text_image":
+            if sub.image_model_id:
+                image_model_info = next(
+                    (m for m in image_models if m["id"] == sub.image_model_id and m.get("enabled", True)),
+                    image_models[0] if image_models else None,
+                )
+            elif image_models:
+                image_model_info = image_models[0]
+        else:  # text_video
+            video_model_info = None
+            if sub.video_model_id:
+                video_model_info = next(
+                    (m for m in video_models if m["id"] == sub.video_model_id and m.get("enabled", True)),
+                    video_models[0] if video_models else None,
+                )
+            elif video_models:
+                video_model_info = video_models[0]
+            image_model_info = video_model_info  # reuse variable for cost calc
+
+    # ── Credit cost per article ──────────────────────────────────────
+    base_cost = 0.25
+    media_cost = float(image_model_info.get("credits", 0)) if image_model_info else 0.0
+    cost_per_article = base_cost + media_cost
+
+    # ── Check credit balance (quick check before fetching the feed) ──
+    from app.services.credits import balance as _balance_sync
+    bal_result = db.scalar(
+        select(func.coalesce(func.sum(CreditLedger.delta), 0))
+        .where(CreditLedger.company_id == sub.company_id)
+    ) or 0
+    balance = float(bal_result)
+    max_affordable = int(balance // cost_per_article) if cost_per_article > 0 else sub.posts_per_run
+    posts_to_run = min(sub.posts_per_run, max_affordable)
+    if posts_to_run <= 0:
+        logger.info("[rss] sub=%s insufficient credits (%.2f < %.2f) — skipping", sub.id, balance, cost_per_article)
+        sub.last_run_at = now
+        _advance_next_run(sub, now)
+        db.commit()
+        return
+
+    # ── Fetch RSS ────────────────────────────────────────────────────
+    articles = _fetch_rss_articles(feed_url, max_items=50)
+    if not articles:
+        logger.info("[rss] sub=%s feed returned no articles", sub.id)
+        sub.last_run_at = now
+        _advance_next_run(sub, now)
+        db.commit()
+        return
+
+    # ── Deduplicate: filter already-seen URLs ────────────────────────
+    seen_urls: set[str] = set(
+        db.scalars(
+            select(RssFeedSeenItem.article_url)
+            .where(RssFeedSeenItem.subscription_id == sub.id)
+        ).all()
+    )
+    fresh_articles = [a for a in articles if a["url"] not in seen_urls]
+    if not fresh_articles:
+        logger.info("[rss] sub=%s no new articles (all %d seen)", sub.id, len(articles))
+        sub.last_run_at = now
+        _advance_next_run(sub, now)
+        db.commit()
+        return
+
+    # ── AI picks best articles ───────────────────────────────────────
+    company_context = _get_company_context_sync(db, sub.company_id)
+    picked = _ai_pick_articles(
+        articles=fresh_articles,
+        count=posts_to_run,
+        selection_pref=sub.article_selection or "most_recent",
+        company_context=company_context,
+        model=text_model_str,
+    )
+
+    # ── Brand kit for logo compositing ───────────────────────────────
+    brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == sub.company_id))
+    brand_logo_url = brand_kit.logo_url if brand_kit else None
+    brand_logo_placement = brand_kit.logo_placement if brand_kit else "bottom-right"
+    brand_logo_opacity = float(brand_kit.logo_opacity) if brand_kit and brand_kit.logo_opacity is not None else 1.0
+
+    platforms = sub.platforms or ["facebook", "instagram"]
+
+    # ── Generate one Ad per picked article ───────────────────────────
+    for article in picked:
+        try:
+            _generate_rss_article_post(
+                db=db,
+                sub=sub,
+                article=article,
+                company_context=company_context,
+                platforms=platforms,
+                text_model_info=text_model_info,
+                image_model_info=image_model_info if sub.content_type == "text_image" else None,
+                video_model_info=image_model_info if sub.content_type == "text_video" else None,
+                cost_per_article=cost_per_article,
+                brand_logo_url=brand_logo_url,
+                brand_logo_placement=brand_logo_placement,
+                brand_logo_opacity=brand_logo_opacity,
+                now=now,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[rss] sub=%s article=%s generation failed: %s", sub.id, article.get("url"), exc)
+            db.rollback()
+
+    # ── Advance schedule ─────────────────────────────────────────────
+    sub.last_run_at = now
+    _advance_next_run(sub, now)
+    db.commit()
+    logger.info("[rss] sub=%s processed %d article(s)", sub.id, len(picked))
+
+
+def _generate_rss_article_post(
+    db,
+    sub: RssFeedSubscription,
+    article: dict,
+    company_context: str,
+    platforms: list[str],
+    text_model_info: dict,
+    image_model_info: dict | None,
+    video_model_info: dict | None,
+    cost_per_article: float,
+    brand_logo_url: str | None,
+    brand_logo_placement: str,
+    brand_logo_opacity: float,
+    now: datetime,
+) -> None:
+    """Create one Ad from an RSS article, charge credits, then either auto-post
+    or create a manual-approval draft. Marks the article URL as seen."""
+
+    has_image = image_model_info is not None and sub.content_type == "text_image"
+    has_video = video_model_info is not None and sub.content_type == "text_video"
+
+    tone_style = sub.tone_style or "we"
+    text_prompt = _build_rss_post_prompt(article, company_context, tone_style, platforms)
+
+    image_scene = (
+        f"Visual representing this article: {article['title']}. "
+        f"Clean, professional, social-media-ready. No text or words in the image."
+    )
+
+    voice_label = {
+        "we": "Company (We/Our)", "i": "Founder (I/My)",
+        "you": "Customer-facing (You/Your)", "they": "Third-person (They)",
+        "lets": "Inclusive (Let's/Together)",
+    }.get(tone_style, "Company (We/Our)")
+
+    brief: dict = {
+        "product_name": article["title"][:120],
+        "description": article["summary"][:400],
+        "audience": "general audience",
+        "offer": "",
+        "goal": "Engagement",
+        "tone": voice_label,
+        "env": None,
+        "image_scene": image_scene,
+        "text_prompt_override": text_prompt,
+        "brand_logo_url": brand_logo_url,
+        "brand_logo_placement": brand_logo_placement,
+        "brand_logo_opacity": brand_logo_opacity,
+        "text_model": text_model_info["model"],
+        "text_model_credits": text_model_info.get("credits"),
+    }
+    if has_image and image_model_info:
+        brief["image_model"] = image_model_info["model"]
+        brief["image_model_credits"] = image_model_info.get("credits")
+    if has_video and video_model_info:
+        brief["video_model"] = video_model_info["model"]
+        brief["video_model_credits"] = video_model_info.get("credits")
+
+    outputs = {
+        "text": True,
+        "image": has_image,
+        "video": has_video,
+        "format": "single",
+        "variations": 1,
+    }
+
+    ad = Ad(
+        company_id=sub.company_id,
+        created_by=None,
+        brief=brief,
+        platforms=platforms,
+        outputs=outputs,
+        status="generating",
+        agent_source="rss",
+    )
+    db.add(ad)
+    db.flush()
+
+    job = GenerationJob(
+        company_id=sub.company_id,
+        ad_id=ad.id,
+        kind="ad",
+        credits_cost=cost_per_article,
+    )
+    db.add(job)
+    db.add(CreditLedger(
+        company_id=sub.company_id,
+        delta=-cost_per_article,
+        reason="rss_generation",
+        ref_id=str(ad.id),
+    ))
+    db.commit()
+
+    # Generate the ad synchronously (we're already in a Celery worker)
+    generate_ad(str(job.id))
+
+    # Mark article as seen
+    db.add(RssFeedSeenItem(subscription_id=sub.id, article_url=article["url"]))
+    db.commit()
+
+    if sub.posting_mode == "auto_post":
+        # Create PostJob and fire post_ad_now
+        post_job = PostJob(
+            company_id=sub.company_id,
+            ad_id=ad.id,
+            platforms=platforms,
+            status="queued",
+            succeeded=[],
+            failed={},
+        )
+        db.add(post_job)
+        db.commit()
+        post_ad_now(str(post_job.id))  # direct call — already in Celery worker
+        logger.info("[rss] sub=%s auto-posted ad=%s", sub.id, ad.id)
+    else:
+        # Create manual-approval draft (expires in 24 hours)
+        draft = RssFeedDraft(
+            company_id=sub.company_id,
+            subscription_id=sub.id,
+            article_url=article["url"],
+            article_title=article["title"][:500],
+            article_summary=article["summary"][:2000],
+            ad_id=ad.id,
+            status="pending",
+            expires_at=now + timedelta(hours=24),
+        )
+        db.add(draft)
+        # Notify the company about the new draft
+        db.add(Notification(
+            company_id=sub.company_id,
+            type="agent_draft_ready",
+            title=f"📰 RSS draft ready: {article['title'][:80]}",
+            body=(
+                f"Agent Niva generated a post from your RSS feed "
+                f"({sub.label or 'RSS subscription'}). "
+                f"Approve it in Agent Niva → RSS Feeds before it expires in 24 hours."
+            ),
+            action_url="/app/agent-niva",
+            dismissed_by=[],
+        ))
+        db.commit()
+        logger.info("[rss] sub=%s created draft for article=%s", sub.id, article["url"])
+
+
+# ── RSS Feed Health Check ─────────────────────────────────────────────────────
+
+@celery_app.task(name="app.check_rss_feed_health", bind=True, max_retries=0)
+def check_rss_feed_health(self):
+    """Celery Beat, runs daily at 06:00 UTC.
+
+    Checks every enabled RssFeed whose last_checked_at is older than
+    health_check_interval_days (default 7). Updates last_status, last_error,
+    last_article_count, and last_checked_at on every probed feed.
+    """
+    from app.services.retention import get_rss_health_interval_days_sync
+    from app.routers.agent_rss import _probe_feed
+
+    now = datetime.utcnow()
+
+    with Session(sync_engine) as db:
+        interval_days = get_rss_health_interval_days_sync(db)
+        cutoff = now - timedelta(days=interval_days)
+
+        due_feeds = db.scalars(
+            select(RssFeed).where(
+                RssFeed.enabled == True,  # noqa: E712
+                (RssFeed.last_checked_at == None) | (RssFeed.last_checked_at <= cutoff),  # noqa: E711
+            )
+        ).all()
+
+        if not due_feeds:
+            return f"check_rss_feed_health: no feeds due (interval={interval_days}d)"
+
+        checked = 0
+        errors = 0
+        for feed in due_feeds:
+            try:
+                result = _probe_feed(feed.url)
+                feed.last_checked_at = now
+                feed.last_status = "ok" if result["ok"] else "error"
+                feed.last_error = result["error"]
+                if result["ok"]:
+                    feed.last_article_count = result["article_count"]
+                if result["ok"]:
+                    checked += 1
+                else:
+                    errors += 1
+                    logger.warning("[rss-health] feed=%s url=%s error=%s", feed.id, feed.url, result["error"])
+            except Exception as exc:  # noqa: BLE001
+                errors += 1
+                logger.warning("[rss-health] feed=%s unexpected error: %s", feed.id, exc)
+
+        db.commit()
+
+    return f"check_rss_feed_health: ok={checked} errors={errors} interval={interval_days}d"

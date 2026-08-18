@@ -741,6 +741,10 @@ function CreateAd() {
   // Switching between Text Theme Reference and Image Theme Reference
   // previously left the OTHER mode's composed text sitting in the
   // textbox (e.g. an Image Theme's "Product to feature: ..." line was
+  // Holds the image_scene from nivaad_prefill_product — declared here (before the
+  // refMode-clearing effect below) so the ref exists when that effect first runs on mount.
+  const pendingImageSceneRef = useRef<string | null>(null);
+
   // still showing after switching to Text Theme). Clear it first on any
   // switch; the compose effects below (which also depend on refMode, and
   // so re-run in the same commit, in this declared order) then refill it
@@ -748,6 +752,11 @@ function CreateAd() {
   useEffect(() => {
     if (imageReferenceImage) setEnvDesc(""); else setImageScene("");
     setImageTextOverlay(null);
+    // Re-apply pending image scene from prefill (it would be wiped by the clear above)
+    if (pendingImageSceneRef.current && !imageReferenceImage) {
+      setImageScene(pendingImageSceneRef.current);
+      pendingImageSceneRef.current = null;
+    }
   }, [refMode]);
 
   useEffect(() => {
@@ -905,6 +914,17 @@ function CreateAd() {
       }
       // Direct copy_directions string wins if provided (pre-built by caller)
       if (p.copy_directions) setCopyDirections(p.copy_directions);
+      // Image scene — set via setTimeout so it fires after the refMode-clearing
+      // useEffect (which runs synchronously on mount and would wipe a direct setState).
+      if (p.image_scene) {
+        pendingImageSceneRef.current = p.image_scene;
+        setTimeout(() => {
+          if (pendingImageSceneRef.current) {
+            setImageScene(pendingImageSceneRef.current);
+            pendingImageSceneRef.current = null;
+          }
+        }, 0);
+      }
     } catch { /* ignore malformed prefill */ }
   }, []);
 

@@ -78,6 +78,14 @@ celery_app.conf.update(
             "task": "app.reset_monthly_credits",
             "schedule": crontab(hour=0, minute=30),  # 00:30 UTC daily — checks all active multi-month/annual subs for their monthly anniversary and resets plan credits
         },
+        "process-rss-feeds": {
+            "task": "app.process_rss_feeds",
+            "schedule": crontab(minute=0),  # top of every hour — checks all enabled subscriptions for due next_run_at
+        },
+        "check-rss-feed-health": {
+            "task": "app.check_rss_feed_health",
+            "schedule": crontab(hour=6, minute=0),  # 06:00 UTC daily — probes feeds whose last_checked_at is older than health_check_interval_days
+        },
     },
 )
 
