@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DeveloperShell } from "@/components/developer-shell";
 import { useRequireDeveloperPermission, useDevAuthErrorHandler } from "@/hooks/use-developer-auth";
 import { devApi } from "@/lib/dev-api";
@@ -1301,6 +1301,9 @@ function RssFeedsCatalogueTab() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkRechecking, setBulkRechecking] = useState(false);
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{ added: number; skipped: number; errors: string[] } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function load() {
     setLoading(true);
@@ -1454,6 +1457,68 @@ function RssFeedsCatalogueTab() {
     setBulkRechecking(false);
   }
 
+  async function bulkImport(file: File) {
+    setBulkUploading(true);
+    setBulkResult(null);
+    setErr("");
+    try {
+      const text = await file.text();
+      let items: any[];
+      try {
+        items = JSON.parse(text);
+        if (!Array.isArray(items)) throw new Error("JSON must be an array of feed objects.");
+      } catch (e: any) {
+        setErr(`Invalid JSON: ${e.message}`);
+        setBulkUploading(false);
+        return;
+      }
+      let added = 0, skipped = 0;
+      const errors: string[] = [];
+      for (const item of items) {
+        if (!item.name || !item.url) { errors.push(`Skipped: missing name or url (${JSON.stringify(item).slice(0, 60)})`); skipped++; continue; }
+        try {
+          await devApi("/developer/rss/feeds", {
+            method: "POST",
+            body: {
+              name: item.name,
+              url: item.url,
+              category: item.category || "General",
+              description: item.description || "",
+              enabled: item.enabled !== false,
+            },
+          });
+          added++;
+        } catch (e: any) {
+          if (e.status === 409) { skipped++; }  // already exists
+          else { errors.push(`${item.name}: ${e.message || "unknown error"}`); skipped++; }
+        }
+      }
+      setBulkResult({ added, skipped, errors });
+      load();
+    } catch (e: any) {
+      if (!handleAuthError(e)) setErr(e.message || "Bulk import failed");
+    }
+    setBulkUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function exportFeeds() {
+    const exportable = feeds.map(f => ({
+      name: f.name,
+      url: f.url,
+      category: f.category,
+      description: f.description,
+      enabled: f.enabled,
+    }));
+    const blob = new Blob([JSON.stringify(exportable, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `rss_feeds_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function saveInterval() {
     setSavingInterval(true);
     try {
@@ -1492,11 +1557,50 @@ function RssFeedsCatalogueTab() {
             Pro users can also add their own custom URLs on top of these.
           </p>
         </div>
-        <button onClick={() => { setShowAdd(true); setErr(""); }}
-          className="shrink-0 rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90">
-          + Add feed
-        </button>
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {/* Hidden file input for JSON import */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={e => { if (e.target.files?.[0]) bulkImport(e.target.files[0]); }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={bulkUploading}
+            className="rounded-full border border-border/60 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-all disabled:opacity-40">
+            {bulkUploading ? "Importing…" : "⬆ Import JSON"}
+          </button>
+          <button
+            onClick={exportFeeds}
+            disabled={feeds.length === 0}
+            className="rounded-full border border-border/60 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-all disabled:opacity-40">
+            ⬇ Export JSON
+          </button>
+          <button onClick={() => { setShowAdd(true); setErr(""); setBulkResult(null); }}
+            className="rounded-full bg-foreground px-4 py-1.5 text-xs font-semibold text-background hover:bg-foreground/90">
+            + Add feed
+          </button>
+        </div>
       </div>
+
+      {/* Bulk import result banner */}
+      {bulkResult && (
+        <div className={`rounded-xl border px-4 py-3 text-xs ${bulkResult.errors.length > 0 ? "border-amber-500/30 bg-amber-500/5" : "border-emerald-500/30 bg-emerald-500/5"}`}>
+          <div className="flex items-center justify-between gap-2">
+            <span className={bulkResult.errors.length > 0 ? "text-amber-300" : "text-emerald-400"}>
+              ✓ Import complete — {bulkResult.added} added, {bulkResult.skipped} skipped
+            </span>
+            <button onClick={() => setBulkResult(null)} className="text-muted-foreground hover:text-foreground">✕</button>
+          </div>
+          {bulkResult.errors.length > 0 && (
+            <ul className="mt-2 space-y-0.5 text-[11px] text-amber-300/80">
+              {bulkResult.errors.map((e, i) => <li key={i}>· {e}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* Health check interval setting */}
       <div className="rounded-xl border border-border/40 bg-card/50 p-4 flex items-center gap-4 flex-wrap">
