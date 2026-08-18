@@ -1450,7 +1450,7 @@ function RssFeedsCatalogueTab() {
           last_article_count: result.ok ? result.article_count : f.last_article_count,
         }));
       } catch {
-        // continue to next
+        // Continue to next
       }
     }
     setCheckingId(null);
