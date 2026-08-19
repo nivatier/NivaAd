@@ -566,6 +566,7 @@ class RssFeedSubscription(Base):
     posting_mode: Mapped[str] = mapped_column(String(20), default="manual")  # "auto_post" | "manual"
     # Schedule
     frequency: Mapped[str] = mapped_column(String(20), default="daily")  # "daily" | "weekly" | "monthly"
+    post_hour: Mapped[int] = mapped_column(Integer, default=9)  # 0-23 UTC — hour of day to run (beat checks hourly)
     day_of_week: Mapped[int | None] = mapped_column(Integer, nullable=True)   # 0=Mon..6=Sun, used when frequency="weekly"
     day_of_month: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1-31, used when frequency="monthly"
     posts_per_run: Mapped[int] = mapped_column(Integer, default=1)  # 1 | 2 | 3

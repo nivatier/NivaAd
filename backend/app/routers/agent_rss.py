@@ -57,29 +57,28 @@ async def _is_pro(db: AsyncSession, company_id: uuid.UUID) -> bool:
 def _compute_next_run(sub: RssFeedSubscription) -> datetime:
     """Calculate the next run datetime based on frequency settings."""
     now = datetime.utcnow()
+    h = sub.post_hour if sub.post_hour is not None else 9  # default 9 AM UTC
     if sub.frequency == "daily":
-        # Run tomorrow at 06:00 UTC
-        tomorrow = now.replace(hour=6, minute=0, second=0, microsecond=0) + timedelta(days=1)
-        return tomorrow
+        candidate = now.replace(hour=h, minute=0, second=0, microsecond=0)
+        if candidate <= now:
+            candidate += timedelta(days=1)
+        return candidate
     elif sub.frequency == "weekly":
         dow = sub.day_of_week if sub.day_of_week is not None else 0  # default Monday
         days_ahead = (dow - now.weekday()) % 7
         if days_ahead == 0:
             days_ahead = 7
-        next_dt = (now + timedelta(days=days_ahead)).replace(hour=6, minute=0, second=0, microsecond=0)
+        next_dt = (now + timedelta(days=days_ahead)).replace(hour=h, minute=0, second=0, microsecond=0)
         return next_dt
     else:  # monthly
         dom = sub.day_of_month if sub.day_of_month is not None else 1
-        # Try same month first, then next month
         try:
-            candidate = now.replace(day=dom, hour=6, minute=0, second=0, microsecond=0)
+            candidate = now.replace(day=dom, hour=h, minute=0, second=0, microsecond=0)
         except ValueError:
-            # day doesn't exist in this month (e.g. Feb 30) — use last valid day
             import calendar
             last_day = calendar.monthrange(now.year, now.month)[1]
-            candidate = now.replace(day=last_day, hour=6, minute=0, second=0, microsecond=0)
+            candidate = now.replace(day=last_day, hour=h, minute=0, second=0, microsecond=0)
         if candidate <= now:
-            # Move to next month
             if now.month == 12:
                 candidate = candidate.replace(year=now.year + 1, month=1)
             else:
@@ -100,6 +99,7 @@ def _sub_out(sub: RssFeedSubscription, feed: RssFeed | None = None) -> RssFeedSu
         platforms=sub.platforms or [],
         posting_mode=sub.posting_mode,
         frequency=sub.frequency,
+        post_hour=sub.post_hour if sub.post_hour is not None else 9,
         day_of_week=sub.day_of_week,
         day_of_month=sub.day_of_month,
         posts_per_run=sub.posts_per_run,
@@ -254,6 +254,7 @@ async def create_subscription(
         platforms=data.platforms,
         posting_mode=data.posting_mode,
         frequency=data.frequency,
+        post_hour=data.post_hour,
         day_of_week=data.day_of_week,
         day_of_month=data.day_of_month,
         posts_per_run=data.posts_per_run,
@@ -301,10 +302,12 @@ async def update_subscription(
     if data.enabled is not None:
         sub.enabled = data.enabled
 
-    # Re-schedule if frequency/day settings changed
-    freq_changed = any(v is not None for v in [data.frequency, data.day_of_week, data.day_of_month])
+    # Re-schedule if frequency/day/hour settings changed
+    freq_changed = any(v is not None for v in [data.frequency, data.day_of_week, data.day_of_month, data.post_hour])
     if data.frequency is not None:
         sub.frequency = data.frequency
+    if data.post_hour is not None:
+        sub.post_hour = data.post_hour
     if data.day_of_week is not None:
         sub.day_of_week = data.day_of_week
     if data.day_of_month is not None:
@@ -677,4 +680,134 @@ Pick exactly {count} articles."""
     return {
         "feed_name": feed_name,
         "ideas": ideas,
+    }
+
+
+@router.post("/scrape-article")
+async def scrape_article_for_ad(
+    body: dict,
+    user: User = Depends(get_current_user),
+):
+    """Scrape a single article URL and return an LLM-generated summary
+    suitable for pre-filling the Copy Directions field in Create Ad.
+
+    Body:
+      url:   str  — the article URL to scrape
+      title: str  — article title (used in the summary header)
+
+    Returns:
+      { summary: str, title: str, url: str }
+
+    No credits charged — this is a lightweight helper for the Create Ad flow,
+    not a generation step. Scraping is done via httpx (simple GET, not
+    Playwright) since article pages are typically plain HTML without heavy
+    JS rendering requirements.
+    """
+    import httpx as _httpx
+    import re as _re
+    from bs4 import BeautifulSoup as _BS
+    from app.config import settings
+    from app.services.text_gen import CHAT_URL
+
+    url = (body.get("url") or "").strip()
+    title = (body.get("title") or "").strip()
+
+    if not url or not url.startswith(("http://", "https://")):
+        raise HTTPException(422, "A valid article URL is required.")
+
+    # ── Fetch the article page ────────────────────────────────────────
+    try:
+        resp = _httpx.get(
+            url,
+            timeout=20,
+            follow_redirects=True,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/125.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+        )
+        resp.raise_for_status()
+    except _httpx.HTTPStatusError as exc:
+        raise HTTPException(502, f"Could not fetch article: HTTP {exc.response.status_code}")
+    except Exception as exc:
+        raise HTTPException(502, f"Could not fetch article: {exc}")
+
+    # ── Extract readable text ─────────────────────────────────────────
+    soup = _BS(resp.text, "html.parser")
+    # Remove noise tags
+    for tag in soup(["script", "style", "noscript", "nav", "header", "footer",
+                     "aside", "svg", "template", "form", "iframe"]):
+        tag.decompose()
+
+    # Try to find the main article body first
+    article_body = (
+        soup.find("article")
+        or soup.find(attrs={"class": _re.compile(r"article|post|content|entry|story", _re.I)})
+        or soup.find("main")
+        or soup
+    )
+    raw_text = _re.sub(r"\s+", " ", article_body.get_text(separator=" ")).strip()
+
+    # Cap at 6000 chars to stay within LLM context budget
+    article_text = raw_text[:6000]
+
+    if len(article_text) < 100:
+        raise HTTPException(422, "Could not extract meaningful content from this article. The page may require JavaScript or a login.")
+
+    # ── LLM summarise ─────────────────────────────────────────────────
+    system_prompt = """You are a content summariser for a social media ad creation tool.
+Given the full text of a blog article or news post, write a clear, concise summary of 2-3 short paragraphs that captures:
+1. The main topic and key points of the article
+2. Any interesting facts, statistics, or insights mentioned
+3. Why this content is relevant or interesting to a business audience
+
+Write in plain English, third-person perspective. Be factual and informative.
+Do NOT write ad copy — just summarise the article content accurately.
+Keep the total summary under 400 words."""
+
+    user_msg = f"Article title: {title}\n\nArticle content:\n{article_text}"
+
+    try:
+        ai_resp = _httpx.post(
+            CHAT_URL,
+            headers={
+                "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "anthropic/claude-sonnet-4-5",
+                "max_tokens": 600,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+            },
+            timeout=45,
+        )
+        ai_resp.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(502, f"AI summarisation error: {exc}")
+
+    summary_text = (
+        (ai_resp.json().get("choices") or [{}])[0]
+        .get("message", {})
+        .get("content", "")
+        .strip()
+    )
+
+    if not summary_text:
+        raise HTTPException(500, "AI returned an empty summary — please try again.")
+
+    # ── Build the copy directions string ──────────────────────────────
+    # Return just the summary — the frontend appends the explicit URL
+    # instruction separately so the LLM treats it as a hard requirement.
+    return {
+        "summary": summary_text,
+        "title": title,
+        "url": url,
     }

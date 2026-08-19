@@ -446,7 +446,9 @@ def post_to_linkedin(
             }
 
     posts_url = _get_posts_url(db)
+    logger.info("[linkedin] posting commentary length=%d first_100=%r", len(text), text[:100])
     resp = httpx.post(posts_url, headers=hdrs, json=body, timeout=30)
+    logger.info("[linkedin] post response status=%d body=%r", resp.status_code, resp.text[:300])
     if resp.status_code >= 400:
         raise RuntimeError(f"LinkedIn post {resp.status_code}: {resp.text[:500]}")
 

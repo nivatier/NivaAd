@@ -23,12 +23,15 @@ export function PostingProgressModal({
   jobId,
   platforms,
   onDone,
+  onClose,
 }: {
   adId: string;
   jobId: string;
   platforms: PlatformInfo[];
   /** Called when all polling is complete — receives succeeded[] and failed{} */
   onDone: (succeeded: string[], failed: Record<string, string>) => void;
+  /** Called when user dismisses the modal via OK button */
+  onClose?: () => void;
 }) {
   const [rows, setRows] = useState<PlatformRow[]>(
     platforms.map((p) => ({ platform: p, status: "pending" }))
@@ -67,7 +70,11 @@ export function PostingProgressModal({
           if (job.finished) {
             if (!cancelled) {
               setFinished(true);
-              onDone(job.succeeded || [], job.failed || {});
+              // Small delay so the failed/success row states render
+              // visibly before onDone fires (which may auto-close the modal)
+              setTimeout(() => {
+                if (!cancelled) onDone(job.succeeded || [], job.failed || {});
+              }, 800);
             }
             return;
           }
@@ -208,9 +215,9 @@ export function PostingProgressModal({
                   <div className="text-xs font-semibold" style={{ color: "oklch(0.88 0.02 280)" }}>
                     {row.platform.name}
                   </div>
-                  {row.status === "failed" && row.error && (
-                    <div className="mt-0.5 text-[11px] leading-snug" style={{ color: "oklch(0.65 0.18 25)" }}>
-                      {row.error.length > 120 ? row.error.slice(0, 117) + "…" : row.error}
+                  {row.status === "failed" && (
+                    <div className="mt-0.5 text-[11px]" style={{ color: "oklch(0.65 0.18 25)" }}>
+                      Failed
                     </div>
                   )}
                   {row.status === "success" && (
@@ -249,7 +256,7 @@ export function PostingProgressModal({
           {/* OK button — appears when all done */}
           {finished && (
             <button
-              onClick={() => setDismissed(true)}
+              onClick={() => { setDismissed(true); onClose?.(); }}
               className="w-full rounded-full py-2.5 text-sm font-semibold transition-opacity hover:opacity-90"
               style={
                 allSucceeded

@@ -1237,11 +1237,13 @@ function CreateAd() {
   }
 
   async function postPlatform(platformId: string) {
-    if (!adId) return;
+    if (!adId) { console.warn("[postPlatform] adId is null, cannot post"); return; }
     try {
       const job: any = await api(`/ads/${adId}/post`, { method: "POST", body: { platforms: [platformId] } });
-      const platform = PLATFORMS.find((p) => p.id === platformId);
-      if (platform) setPostJob({ jobId: job.job_id, platforms: [platform] });
+      // linkedin_personal and linkedin_company share the LinkedIn platform definition
+      const lookupId = platformId.startsWith("linkedin") ? "linkedin" : platformId;
+      const platform = PLATFORMS.find((p) => p.id === lookupId);
+      if (platform) setPostJob({ jobId: job.job_id, platforms: [{ ...platform, id: platformId }] });
     } catch (e: any) {
       setErrorMsg(e.message || "Could not post");
     }
@@ -1450,14 +1452,14 @@ function CreateAd() {
                         hint="Optional — tell the AI how to write the copy. e.g. 'Use We and Our. Courtesy BBC.com at the start.' Pre-filled automatically from Agent Niva."
                       >
                         <textarea
-                          rows={2}
-                          maxLength={400}
+                          rows={copyDirections.length > 200 ? 6 : 2}
+                          maxLength={2000}
                           placeholder="e.g. Use 'We'. Keep it under 50 words. Courtesy BBC.com at the start."
                           value={copyDirections}
                           onChange={(e) => setCopyDirections(e.target.value)}
                           className="w-full rounded-lg border border-input bg-input/40 p-3 text-sm text-foreground placeholder:text-muted-foreground/70 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary resize-none"
                         />
-                        <div className="mt-1 text-right text-[10px] text-muted-foreground">{copyDirections.length}/400</div>
+                        <div className="mt-1 text-right text-[10px] text-muted-foreground">{copyDirections.length}/2000</div>
                       </Field>
                     </div>
                   </div>
@@ -2564,21 +2566,16 @@ function CreateAd() {
           adId={adId}
           jobId={postJob.jobId}
           platforms={postJob.platforms}
+          onClose={() => setPostJob(null)}
           onDone={(succeeded, failed) => {
-            // Don't close immediately — the modal shows OK button for user to dismiss.
-            // Just update the posted map and error state here; modal closes itself.
+            // Update the posted map
             setPostedMap((m) => {
               const next = { ...m };
               succeeded.forEach((id) => { next[id] = true; });
               return next;
             });
-            if (Object.keys(failed).length > 0 && succeeded.length === 0) {
-              setErrorMsg(`Posting failed: ${Object.values(failed).join("; ")}`);
-            } else if (Object.keys(failed).length > 0) {
-              setErrorMsg(`Posted to ${succeeded.join(", ")}. Failed: ${Object.keys(failed).join(", ")}`);
-            }
-            // Close modal after a short delay so user sees the result
-            setTimeout(() => setPostJob(null), 3000);
+            // Never auto-close — always wait for user to click OK
+            // so they can see the result (success or failure) clearly.
           }}
         />
       )}

@@ -364,8 +364,16 @@ function MyAds() {
                           </span>
                         )}
                         {ad.agent_source && (
-                          <span className="shrink-0 rounded-full border border-primary/40 bg-primary/5 px-2 py-0.5 text-[10px] text-primary">
-                            🤖 Agent Niva{ad.agent_source === "event" ? " · event" : ""}
+                          <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] ${
+                            ad.agent_source === "rss"
+                              ? "border-amber-500/40 bg-amber-500/5 text-amber-400"
+                              : "border-primary/40 bg-primary/5 text-primary"
+                          }`}>
+                            {ad.agent_source === "rss"
+                              ? "📰 RSS Feed"
+                              : ad.agent_source === "event"
+                              ? "🤖 Agent Niva · event"
+                              : "🤖 Agent Niva"}
                           </span>
                         )}
                         {(() => { const t = contentTypeTag(ad); return (

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api, apiDownload, type AdOut } from "@/lib/api";
 import { PostPreviewCard, type BrandKitPreview } from "@/components/create-ad-parts";
 import { useConnectedPlatforms } from "@/hooks/use-connected-platforms";
@@ -59,6 +59,7 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
   const [posting, setPosting] = useState(false);
   const [postJobId, setPostJobId] = useState<string | null>(null);
   const [postJobPlatforms, setPostJobPlatforms] = useState<typeof postablePlatforms>([]);
+  const _lastPostSucceeded = useRef(false); // tracks whether last post had zero failures
   const [scheduling, setScheduling] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleDate, setScheduleDate] = useState(todayPlus(1));
@@ -495,19 +496,18 @@ export function RepostModal({ ad, onClose, onUpdated }: { ad: AdOut; onClose: ()
         adId={ad.id}
         jobId={postJobId}
         platforms={postJobPlatforms}
+        onClose={() => {
+          setPostJobId(null);
+          // If all platforms succeeded, also close the repost modal
+          // (the progress modal already showed "Posted successfully!" to the user)
+          if (_lastPostSucceeded.current) onClose();
+          _lastPostSucceeded.current = false;
+        }}
         onDone={(succeeded, failed) => {
           setPosting(false);
           onUpdated();
-          if (Object.keys(failed).length === 0) {
-            // All succeeded — close modal after delay so user sees success
-            setTimeout(() => { setPostJobId(null); onClose(); }, 3000);
-          } else if (succeeded.length > 0) {
-            setPostJobId(null);
-            setErr(`Partial: posted to ${succeeded.join(", ")}. Failed: ${Object.keys(failed).join(", ")}`);
-          } else {
-            setPostJobId(null);
-            setErr(`Failed: ${Object.values(failed).join("; ")}`);
-          }
+          _lastPostSucceeded.current = Object.keys(failed).length === 0;
+          // Never auto-close — always wait for user to click OK in the modal.
         }}
       />
     )}

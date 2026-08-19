@@ -1714,16 +1714,15 @@ const FREQ_OPTIONS = [
 ];
 const DAYS_OF_WEEK = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 const CONTENT_TYPE_OPTIONS = [
-  { value: "text",       label: "Text only",       cost: "0.25 cr" },
-  { value: "text_image", label: "Text + Image",    cost: "0.25 + image model" },
-  { value: "text_video", label: "Text + Video",    cost: "0.25 + video model" },
+  { value: "text",       label: "Text only",    cost: "0.25 cr" },
+  { value: "text_image", label: "Text + Image", cost: "0.25 + image model" },
 ];
 
 type SubFormState = {
   rss_feed_id: string; custom_url: string; label: string;
   content_type: string; image_model_id: string; video_model_id: string;
   platforms: string[]; posting_mode: string; frequency: string;
-  day_of_week: number; day_of_month: number; posts_per_run: number;
+  post_hour: number; day_of_week: number; day_of_month: number; posts_per_run: number;
   article_selection: string; tone_style: string; enabled: boolean;
 };
 
@@ -1732,18 +1731,19 @@ function defaultForm(feed_id = ""): SubFormState {
     rss_feed_id: feed_id, custom_url: "", label: "", content_type: "text",
     image_model_id: "", video_model_id: "",
     platforms: ["facebook", "instagram"], posting_mode: "manual",
-    frequency: "daily", day_of_week: 0, day_of_month: 1,
+    frequency: "daily", post_hour: 9, day_of_week: 0, day_of_month: 1,
     posts_per_run: 1, article_selection: "most_recent", tone_style: "curator", enabled: true,
   };
 }
 
 function SubModal({
-  initialForm, title, availableModels, connectedPlatformIds,
+  initialForm, title, availableModels, connectedPlatformIds, availPlatforms,
   onSave, onClose,
 }: {
   initialForm: SubFormState; title: string;
   availableModels: { image: any[]; video: any[] };
   connectedPlatformIds: Set<string>;
+  availPlatforms: Platform[];
   onSave: (form: SubFormState) => Promise<void>;
   onClose: () => void;
 }) {
@@ -1818,23 +1818,12 @@ function SubModal({
           </div>
         )}
 
-        {/* Video model (text_video) */}
-        {form.content_type === "text_video" && availableModels.video.length > 0 && (
-          <div>
-            <label className="block text-xs font-medium text-foreground mb-1">Video model</label>
-            <select value={form.video_model_id} onChange={e => set("video_model_id", e.target.value)}
-              className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
-              {availableModels.video.filter((m: any) => m.enabled !== false).map((m: any) => (
-                <option key={m.id} value={m.id}>{m.label} ({m.credits} cr)</option>
-              ))}
-            </select>
-          </div>
-        )}
+        {/* Video model selector removed — text_video not supported for RSS feeds */}
 
         {/* Platforms */}
         <div>
           <label className="block text-xs font-medium text-foreground mb-1.5">Platforms</label>
-          <PlatformChips selected={form.platforms} onToggle={togglePlatform} connectedPlatformIds={connectedPlatformIds} />
+          <PlatformChips selected={form.platforms} onToggle={togglePlatform} platforms={availPlatforms} connectedPlatformIds={connectedPlatformIds} />
         </div>
 
         {/* Posting mode */}
@@ -1872,6 +1861,21 @@ function SubModal({
                 className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none" />
             </div>
           )}
+        </div>
+
+        {/* Post time (UTC hour) */}
+        <div>
+          <label className="block text-xs font-medium text-foreground mb-1">
+            Post time <span className="text-muted-foreground font-normal">(UTC)</span>
+          </label>
+          <select value={form.post_hour} onChange={e => set("post_hour", Number(e.target.value))}
+            className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+            {Array.from({ length: 24 }, (_, i) => {
+              const label = i === 0 ? "12:00 AM" : i < 12 ? `${i}:00 AM` : i === 12 ? "12:00 PM" : `${i - 12}:00 PM`;
+              return <option key={i} value={i}>{label} UTC</option>;
+            })}
+          </select>
+          <p className="mt-1 text-[11px] text-muted-foreground">The beat runs every hour — posts go out at the selected UTC hour.</p>
         </div>
 
         {/* Posts per run */}
@@ -2096,6 +2100,10 @@ function RssFeedsTab() {
   const [customModal, setCustomModal] = useState(false);
   const [editModal, setEditModal] = useState<RssFeedSub | null>(null);
 
+  // Article scraping popup state
+  const [scrapingPopup, setScrapingPopup] = useState<{ title: string; url: string } | null>(null);
+  const [scrapingError, setScrapingError] = useState("");
+
   async function load() {
     setLoading(true); setErr("");
     try {
@@ -2175,11 +2183,57 @@ function RssFeedsTab() {
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
   }
 
-  // ── Create Ad from saved idea ──────────────────────────────────────
-  function createAdFromIdea(idea: SavedIdea) {
+  // ── Create Ad from saved idea (with article scraping) ─────────────
+  async function createAdFromIdea(idea: SavedIdea) {
     const { adTone, direction, voiceKey } = getToneAdFields(idea.toneStyle);
-    const parts = [direction];
-    if (idea.includeLink && idea.url) parts.push(`End the post with the source link on its own line: ${idea.url}`);
+
+    // Show scraping popup
+    setScrapingError("");
+    setScrapingPopup({ title: idea.title, url: idea.url });
+
+    let copyDirections = direction;
+
+    // Try to scrape and summarise the article
+    if (idea.url) {
+      try {
+        const result = await api("/agent/rss/scrape-article", {
+          method: "POST",
+          body: { url: idea.url, title: idea.title },
+        });
+        if (result?.summary) {
+          // Build copy directions: voice direction + article summary
+          const parts: string[] = [];
+          if (direction) parts.push(direction);
+          parts.push(result.summary);
+          // Explicit URL instruction — separate from the summary so the LLM
+          // treats it as a hard requirement, not just background context
+          if (idea.includeLink && idea.url) {
+            parts.push(`IMPORTANT: You MUST end the post with the source URL on its own line: ${idea.url}`);
+          }
+          copyDirections = parts.join("\n\n");
+        } else {
+          // Fallback: no summary, just voice + URL instruction
+          if (idea.includeLink && idea.url) {
+            copyDirections = `${direction}\n\nEnd the post with the source link on its own line: ${idea.url}`;
+          }
+        }
+      } catch (e: any) {
+        // Non-fatal — fall back to basic copy directions without summary
+        setScrapingError(e?.message || "Could not retrieve article content.");
+        if (idea.includeLink && idea.url) {
+          copyDirections = `${direction}\n\nEnd the post with the source link on its own line: ${idea.url}`;
+        }
+        // Wait briefly so user sees the error before navigating
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    } else {
+      if (idea.includeLink && idea.url) {
+        copyDirections += ` End the post with the source link on its own line: ${idea.url}`;
+      }
+    }
+
+    setScrapingPopup(null);
+
     sessionStorage.setItem("nivaad_prefill_product", JSON.stringify({
       name: idea.title,
       description: idea.summary,
@@ -2187,7 +2241,7 @@ function RssFeedsTab() {
       goal: idea.goal,
       tone: adTone,
       voice: voiceKey,
-      copy_directions: parts.join(" "),
+      copy_directions: copyDirections,
       source_url: idea.url,
       image_scene: idea.imageScene || deriveImageScene(idea),
     }));
@@ -2201,6 +2255,7 @@ function RssFeedsTab() {
       label: form.label, content_type: form.content_type,
       image_model_id: form.image_model_id || undefined, video_model_id: form.video_model_id || undefined,
       platforms: form.platforms, posting_mode: form.posting_mode, frequency: form.frequency,
+      post_hour: form.post_hour,
       day_of_week: form.frequency === "weekly" ? form.day_of_week : undefined,
       day_of_month: form.frequency === "monthly" ? form.day_of_month : undefined,
       posts_per_run: form.posts_per_run, article_selection: form.article_selection,
@@ -2215,6 +2270,7 @@ function RssFeedsTab() {
       label: form.label, content_type: form.content_type,
       image_model_id: form.image_model_id || undefined, video_model_id: form.video_model_id || undefined,
       platforms: form.platforms, posting_mode: form.posting_mode, frequency: form.frequency,
+      post_hour: form.post_hour,
       day_of_week: form.frequency === "weekly" ? form.day_of_week : undefined,
       day_of_month: form.frequency === "monthly" ? form.day_of_month : undefined,
       posts_per_run: form.posts_per_run, article_selection: form.article_selection,
@@ -2272,6 +2328,31 @@ function RssFeedsTab() {
 
   return (
     <div className="space-y-6">
+
+      {/* ── Article Scraping Popup ── */}
+      {scrapingPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-sm rounded-2xl border border-white/10 bg-[oklch(0.18_0.02_260)] p-6 shadow-2xl text-center">
+            {scrapingError ? (
+              <>
+                <div className="mb-3 text-2xl">⚠️</div>
+                <div className="text-sm font-semibold text-foreground mb-1">Couldn't retrieve article</div>
+                <div className="text-xs text-muted-foreground mb-4">{scrapingError}</div>
+                <div className="text-xs text-muted-foreground">Continuing to Create Ad with basic info…</div>
+              </>
+            ) : (
+              <>
+                <div className="mb-4 flex justify-center">
+                  <div className="h-10 w-10 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                </div>
+                <div className="text-sm font-semibold text-foreground mb-1">Retrieving article content</div>
+                <div className="mt-1 text-xs text-muted-foreground line-clamp-2 px-2">{scrapingPopup.title}</div>
+                <div className="mt-3 text-[11px] text-muted-foreground/60">Summarising blog for your ad…</div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Pending Drafts ── */}
       {hasDrafts && (
@@ -2590,12 +2671,12 @@ function RssFeedsTab() {
       {/* ── Modals ── */}
       {subscribeModal && (
         <SubModal title="Subscribe to feed" initialForm={defaultForm(subscribeModal.feedId)}
-          availableModels={availableModels} connectedPlatformIds={connectedPlatformIds}
+          availableModels={availableModels} connectedPlatformIds={connectedPlatformIds} availPlatforms={availPlatforms}
           onSave={handleSubscribe} onClose={() => setSubscribeModal(null)} />
       )}
       {customModal && (
         <SubModal title="Add custom RSS feed" initialForm={defaultForm("")}
-          availableModels={availableModels} connectedPlatformIds={connectedPlatformIds}
+          availableModels={availableModels} connectedPlatformIds={connectedPlatformIds} availPlatforms={availPlatforms}
           onSave={handleSubscribe} onClose={() => setCustomModal(false)} />
       )}
       {editModal && (
@@ -2605,12 +2686,13 @@ function RssFeedsTab() {
             label: editModal.label, content_type: editModal.content_type,
             image_model_id: editModal.image_model_id || "", video_model_id: editModal.video_model_id || "",
             platforms: editModal.platforms || [], posting_mode: editModal.posting_mode,
-            frequency: editModal.frequency, day_of_week: editModal.day_of_week ?? 0,
+            frequency: editModal.frequency, post_hour: editModal.post_hour ?? 9,
+            day_of_week: editModal.day_of_week ?? 0,
             day_of_month: editModal.day_of_month ?? 1, posts_per_run: editModal.posts_per_run,
             article_selection: editModal.article_selection, tone_style: editModal.tone_style,
             enabled: editModal.enabled,
           }}
-          availableModels={availableModels} connectedPlatformIds={connectedPlatformIds}
+          availableModels={availableModels} connectedPlatformIds={connectedPlatformIds} availPlatforms={availPlatforms}
           onSave={(form) => handleUpdate(editModal.id, form)} onClose={() => setEditModal(null)} />
       )}
     </div>
@@ -2620,7 +2702,7 @@ function RssFeedsTab() {
 // ── Root Component ─────────────────────────────────────────────────────
 
 function AgentNiva() {
-  const [tab, setTab] = useState<"website-spark" | "quick-spark" | "events" | "rss">("website-spark");
+  const [tab, setTab] = useState<"website-spark" | "quick-spark" | "events" | "rss">("quick-spark");
 
   return (
     <AppShell eyebrow="Library" title="Agent Niva">
@@ -2628,7 +2710,7 @@ function AgentNiva() {
         Your AI marketing agent — studies your site for ad ideas, keeps seasonal ads generating and scheduling themselves, and turns RSS news into ready-to-post content.
       </p>
       <div className="flex flex-wrap gap-2 mb-6">
-        {([ ["website-spark", "🌐 Website Spark", "page:quick-start"], ["quick-spark", "💡 Quick Spark", "page:quick-spark"], ["events", "📅 Recurring Events", "page:recurring-events"], ["rss", "📰 RSS Feeds", ""] ] as const).map(([k, l, hk]) => (
+        {([ ["quick-spark", "💡 Quick Spark", "page:quick-spark"], ["rss", "📰 RSS Feeds", ""], ["website-spark", "🌐 Website Spark", "page:quick-start"], ["events", "📅 Recurring Events", "page:recurring-events"] ] as const).map(([k, l, hk]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${tab === k ? "border-primary/50 bg-primary/10 text-primary shadow-[0_0_14px_-4px_oklch(0.78_0.12_85/0.3)]" : "border-white/10 text-muted-foreground hover:border-white/20 hover:text-foreground"}`}>
             {l} {hk && <NovaHint hintKey={hk} />}

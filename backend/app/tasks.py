@@ -69,9 +69,18 @@ def _sanitize(val: str | None) -> str:
     """Replace straight double-quotes in user input with typographic
     equivalents before injecting into prompts — prevents the LLM from
     echoing them unescaped inside JSON string values, which produces an
-    'Unterminated string' parse error on the output."""
+    'Unterminated string' parse error on the output.
+    Also collapse multiple newlines into a single space so that long
+    multi-paragraph inputs (e.g. article summaries in copy_directions)
+    don't introduce literal newlines inside the JSON brief block, which
+    causes some models to produce malformed JSON with truncated captions."""
     if not val:
         return val or ""
+    import re as _re
+    # Replace newlines with a space — the LLM reconstructs paragraph
+    # breaks in the output naturally; we just need the input to be
+    # JSON-safe inside the prompt's code block.
+    val = _re.sub(r"\r?\n+", " ", val).strip()
     return val.replace('"', '\u201c').replace('"', '\u201d')
 
 
@@ -94,9 +103,9 @@ def _build_prompt(brief: dict, platforms: list[str], outputs: dict, feedback: st
     }
     if brief.get("offer"):
         brief_obj["offer"] = brief["offer"]
-    scene = brief.get("env") or brief.get("image_scene")
-    if scene:
-        brief_obj["image_scene"] = scene
+    # image_scene / env are for the IMAGE prompt only (_image_prompt) —
+    # never include them in the text/copy prompt or the LLM wastes tokens
+    # describing visuals instead of writing the caption.
     if brief.get("tagline"):
         brief_obj["brand_tagline"] = brief["tagline"]
     if brief.get("copy_directions"):
@@ -135,6 +144,21 @@ def _build_prompt(brief: dict, platforms: list[str], outputs: dict, feedback: st
             f"Platform writing styles: {_json.dumps(platform_styles)}."
         )
 
+    # Detect if copy_directions contains a source URL instruction — if so,
+    # extract the URL and add it as a hard task-level requirement so the LLM
+    # can't miss it (buried copy_directions instructions are sometimes ignored).
+    import re as _re
+    source_url: str | None = None
+    copy_dir = brief.get("copy_directions") or ""
+    url_match = _re.search(r'https?://\S+', copy_dir)
+    if url_match and ("url" in copy_dir.lower() or "source" in copy_dir.lower() or "link" in copy_dir.lower()):
+        source_url = url_match.group(0).rstrip(".")
+
+    url_instruction = (
+        f'\nIMPORTANT REQUIREMENT: Every caption MUST end with the source URL on its own line: {source_url}'
+        if source_url else ""
+    )
+
     if variations == 3:
         s = _shape(platforms)
         output_schema = f'{{"variants":[{s},{s},{s}]}}'
@@ -146,7 +170,7 @@ def _build_prompt(brief: dict, platforms: list[str], outputs: dict, feedback: st
         f"## Brief\n```json\n{_json.dumps(brief_obj, indent=2, ensure_ascii=False)}\n```\n\n"
         f"## Task\n{task}\n"
         "For each platform also rate the copy 0-100 for predicted engagement (score) "
-        "and give one concrete improvement tip.\n\n"
+        f"and give one concrete improvement tip.{url_instruction}\n\n"
         f"## Output\nRespond with ONLY this raw JSON, no markdown fences, no prose:\n{output_schema}"
     )
 
@@ -640,7 +664,12 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
             else:
                 prompt = _build_prompt(brief, _resolve_platforms(ad.platforms or []), ad.outputs, feedback)
             text_model = brief.get("text_model") or "google/gemini-2.5-flash"  # resolved once at ad-creation time (ads.py), not re-looked-up here — same pattern as image_model/video_model
+            logger.info("[generate_ad] job=%s text_model=%s prompt_len=%d copy_directions_len=%d", job_id, text_model, len(prompt), len(brief.get("copy_directions") or ""))
             parsed = text_gen.generate_text(prompt, text_model)
+            # Log the raw parsed captions so we can catch truncation at the LLM output stage
+            for plat, pdata in (parsed.items() if isinstance(parsed, dict) else {}.items()):
+                if isinstance(pdata, dict) and "caption" in pdata:
+                    logger.info("[generate_ad] job=%s platform=%s caption_len=%d caption_preview=%r", job_id, plat, len(pdata["caption"]), pdata["caption"][:120])
             models_used = [text_model]  # text/copy generation always happens; image/video append below if used
 
             if feedback:
@@ -2094,7 +2123,7 @@ def post_ad_now(self, post_job_id: str):
                     image_url = platform_image_urls.get(platform) or platform_image_urls.get("linkedin") or variant.get("image_url")
                     platform_video_urls = variant.get("platform_video_urls") or {}
                     video_url = platform_video_urls.get(platform) or platform_video_urls.get("linkedin") or variant.get("video_url")
-                    logger.info("[post_ad_now] job=%s linkedin posting: image_url=%s video_url=%s", post_job_id, image_url, video_url)
+                    logger.info("[post_ad_now] job=%s linkedin caption_len=%d caption_preview=%r image_url=%s video_url=%s", post_job_id, len(caption), caption[:120], image_url, video_url)
                     linkedin.post_to_linkedin(access_token, person_urn, caption, api_version=linkedin_api_version, image_url=image_url, video_url=video_url)
                     succeeded.append(platform)
                     # Remove from failed if it succeeded on retry
@@ -2131,8 +2160,8 @@ def post_ad_now(self, post_job_id: str):
                         if u and u != image_url
                     ]
                     logger.info(
-                        "[post_ad_now] job=%s tiktok posting: image=%s video=%s extra_images=%d",
-                        post_job_id, image_url, video_url, len(extra_images),
+                        "[post_ad_now] job=%s tiktok caption_len=%d caption_preview=%r image=%s video=%s extra_images=%d",
+                        post_job_id, len(caption), caption[:120], image_url, video_url, len(extra_images),
                     )
                     publish_id = tiktok_svc.post_to_tiktok(
                         access_token, caption,
@@ -2173,7 +2202,7 @@ def post_ad_now(self, post_job_id: str):
                     image_url = (variant.get("platform_image_urls") or {}).get("facebook") or variant.get("image_url")
                     platform_video_urls = variant.get("platform_video_urls") or {}
                     video_url = platform_video_urls.get("facebook") or variant.get("video_url")
-                    logger.info("[post_ad_now] job=%s facebook posting: image=%s video=%s", post_job_id, image_url, video_url)
+                    logger.info("[post_ad_now] job=%s facebook caption_len=%d caption_preview=%r image=%s video=%s", post_job_id, len(caption), caption[:120], image_url, video_url)
                     meta_svc.post_to_facebook(page_token, page_id, caption, image_url=image_url, video_url=video_url)
                     succeeded.append(platform)
                     failed.pop(platform, None)
@@ -2202,7 +2231,7 @@ def post_ad_now(self, post_job_id: str):
                     image_url = (variant.get("platform_image_urls") or {}).get("instagram") or variant.get("image_url")
                     platform_video_urls = variant.get("platform_video_urls") or {}
                     video_url = platform_video_urls.get("instagram") or variant.get("video_url")
-                    logger.info("[post_ad_now] job=%s instagram posting: image=%s video=%s", post_job_id, image_url, video_url)
+                    logger.info("[post_ad_now] job=%s instagram caption_len=%d caption_preview=%r image=%s video=%s", post_job_id, len(caption), caption[:120], image_url, video_url)
                     meta_svc.post_to_instagram(page_token, ig_user_id, caption, image_url=image_url, video_url=video_url)
                     succeeded.append(platform)
                     failed.pop(platform, None)
@@ -2232,6 +2261,7 @@ def post_ad_now(self, post_job_id: str):
                     image_url = (variant.get("platform_image_urls") or {}).get("threads") or variant.get("image_url")
                     platform_video_urls = variant.get("platform_video_urls") or {}
                     video_url = platform_video_urls.get("threads") or variant.get("video_url")
+                    logger.info("[post_ad_now] job=%s threads caption_len=%d caption_preview=%r image=%s video=%s", post_job_id, len(caption), caption[:120], image_url, video_url)
                     meta_svc.post_to_threads(user_token, threads_user_id, caption, image_url=image_url, video_url=video_url)
                     succeeded.append(platform)
                     failed.pop(platform, None)
@@ -2688,15 +2718,15 @@ def process_rss_feeds(self):
 def _advance_next_run(sub: RssFeedSubscription, now: datetime) -> None:
     """Mutate sub.next_run_at to the next scheduled run time (in-place)."""
     from datetime import timedelta as _td
+    h = sub.post_hour if sub.post_hour is not None else 9  # default 9 AM UTC
     if sub.frequency == "daily":
-        sub.next_run_at = (now + _td(days=1)).replace(
-            hour=6, minute=0, second=0, microsecond=0
-        )
+        candidate = (now + _td(days=1)).replace(hour=h, minute=0, second=0, microsecond=0)
+        sub.next_run_at = candidate
     elif sub.frequency == "weekly":
         dow = sub.day_of_week if sub.day_of_week is not None else 0
         days_ahead = (dow - now.weekday()) % 7 or 7
         sub.next_run_at = (now + _td(days=days_ahead)).replace(
-            hour=6, minute=0, second=0, microsecond=0
+            hour=h, minute=0, second=0, microsecond=0
         )
     else:  # monthly
         import calendar
@@ -2707,7 +2737,7 @@ def _advance_next_run(sub: RssFeedSubscription, now: datetime) -> None:
             next_month_year, next_month = now.year, now.month + 1
         last_day = calendar.monthrange(next_month_year, next_month)[1]
         actual_dom = min(dom, last_day)
-        sub.next_run_at = datetime(next_month_year, next_month, actual_dom, 6, 0, 0)
+        sub.next_run_at = datetime(next_month_year, next_month, actual_dom, h, 0, 0)
 
 
 def _process_one_subscription(
@@ -2872,12 +2902,125 @@ def _generate_rss_article_post(
     has_video = video_model_info is not None and sub.content_type == "text_video"
 
     tone_style = sub.tone_style or "we"
-    text_prompt = _build_rss_post_prompt(article, company_context, tone_style, platforms)
 
-    image_scene = (
-        f"Visual representing this article: {article['title']}. "
-        f"Clean, professional, social-media-ready. No text or words in the image."
-    )
+    # ── Step 1: Try to scrape the full article for richer content ────────
+    # Falls back to the RSS summary if scraping fails for any reason.
+    article_summary = article.get("summary", "")  # RSS short description (fallback)
+    scraped_successfully = False
+
+    if article.get("url"):
+        try:
+            import httpx as _httpx
+            from bs4 import BeautifulSoup as _BS
+            import re as _re
+
+            resp = _httpx.get(
+                article["url"],
+                timeout=20,
+                follow_redirects=True,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/125.0.0.0 Safari/537.36"
+                    ),
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
+            )
+            resp.raise_for_status()
+
+            soup = _BS(resp.text, "html.parser")
+            for tag in soup(["script", "style", "noscript", "nav", "header",
+                             "footer", "aside", "svg", "template", "form", "iframe"]):
+                tag.decompose()
+
+            # Prefer article body over full page
+            article_body = (
+                soup.find("article")
+                or soup.find(attrs={"class": _re.compile(r"article|post|content|entry|story", _re.I)})
+                or soup.find("main")
+                or soup
+            )
+            raw_text = _re.sub(r"\s+", " ", article_body.get_text(separator=" ")).strip()
+            article_text = raw_text[:6000]
+
+            if len(article_text) >= 100:
+                # LLM summarise the full article
+                from app.config import settings
+                from app.services.text_gen import CHAT_URL
+
+                system_prompt = (
+                    "You are a content summariser for a social media ad creation tool. "
+                    "Given the full text of a blog article or news post, write a clear, concise summary "
+                    "of 2-3 short paragraphs that captures the main topic, key facts/statistics, "
+                    "and why this content is relevant to a business audience. "
+                    "Write in plain English, third-person. Be factual. Keep under 400 words. "
+                    "Do NOT write ad copy — just summarise accurately."
+                )
+                ai_resp = _httpx.post(
+                    CHAT_URL,
+                    headers={
+                        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "anthropic/claude-sonnet-4-5",
+                        "max_tokens": 600,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": f"Article title: {article['title']}\n\nArticle content:\n{article_text}"},
+                        ],
+                    },
+                    timeout=45,
+                )
+                ai_resp.raise_for_status()
+                summary_text = (
+                    (ai_resp.json().get("choices") or [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                    .strip()
+                )
+                if summary_text:
+                    article_summary = summary_text
+                    scraped_successfully = True
+                    logger.info("[rss] sub=%s scraped+summarised article=%s (%d chars)", sub.id, article["url"], len(summary_text))
+
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[rss] sub=%s article scrape failed, using RSS summary: %s", sub.id, exc)
+
+    # ── Step 2: Build copy_directions with summary + URL instruction ─────
+    voice_instruction = {
+        "we":   "Write using 'We' and 'Our' to refer to the company.",
+        "i":    "Write in first-person using 'I' and 'My' — founder voice.",
+        "you":  "Address the reader directly using 'You' and 'Your'.",
+        "they": "Write in neutral third-person — refer to subjects by name or as 'they'.",
+        "lets": "Use an inclusive voice — 'Let's', 'Together', 'Join us'.",
+    }.get(tone_style, "Write using 'We' and 'Our' to refer to the company.")
+
+    copy_directions_parts = [voice_instruction]
+    if scraped_successfully:
+        copy_directions_parts.append(article_summary)
+    if article.get("url"):
+        copy_directions_parts.append(
+            f"IMPORTANT: You MUST end the post with the source URL on its own line: {article['url']}"
+        )
+    copy_directions = "\n\n".join(copy_directions_parts)
+
+    # ── Step 3: Build image prompt ───────────────────────────────────────
+    # Use scraped summary for a richer, more specific image scene
+    if scraped_successfully and has_image:
+        image_scene = (
+            f"Create a compelling social media image for this article: '{article['title']}'. "
+            f"Context: {article_summary[:300]}. "
+            f"Professional, photorealistic or high-quality illustration style. "
+            f"Visually striking, suitable for social media. No text, no words, no logos in the image."
+        )
+    else:
+        image_scene = (
+            f"Visual representing this article: {article['title']}. "
+            f"Clean, professional, social-media-ready. No text or words in the image."
+        )
 
     voice_label = {
         "we": "Company (We/Our)", "i": "Founder (I/My)",
@@ -2885,15 +3028,19 @@ def _generate_rss_article_post(
         "lets": "Inclusive (Let's/Together)",
     }.get(tone_style, "Company (We/Our)")
 
+    # ── Step 4: Build the ad brief ───────────────────────────────────────
+    text_prompt = _build_rss_post_prompt(article, company_context, tone_style, platforms)
+
     brief: dict = {
         "product_name": article["title"][:120],
-        "description": article["summary"][:400],
+        "description": (article_summary if not scraped_successfully else article.get("summary", ""))[:400],
         "audience": "general audience",
         "offer": "",
         "goal": "Engagement",
         "tone": voice_label,
         "env": None,
         "image_scene": image_scene,
+        "copy_directions": copy_directions,
         "text_prompt_override": text_prompt,
         "brand_logo_url": brand_logo_url,
         "brand_logo_placement": brand_logo_placement,
