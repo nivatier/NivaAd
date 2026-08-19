@@ -309,12 +309,9 @@ def post_photos(
         "Content-Type": "application/json; charset=UTF-8",
     }
 
-    # Build photo sources list — TikTok accepts image URLs directly
-    # (FILE_UPLOAD for photos requires pre-signed URLs which TikTok
-    # provides; we use PULL_FROM_URL instead which is simpler and works
-    # as long as our S3/R2 URLs are publicly accessible)
-    photo_sources = [{"url": url} for url in image_urls]
-
+    # TikTok PULL_FROM_URL: photo_images must be a plain list of URL strings,
+    # NOT a list of objects — sending {"url": "..."} objects causes error
+    # "The request parameter type is incorrect" (invalid_params 400).
     init_body = {
         "post_info": {
             "title": caption[:2200] if caption else "",
@@ -323,7 +320,7 @@ def post_photos(
         },
         "source_info": {
             "source": "PULL_FROM_URL",
-            "photo_images": photo_sources,
+            "photo_images": image_urls,
             "photo_cover_index": 0,
         },
         "post_mode": "DIRECT_POST",
