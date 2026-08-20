@@ -2392,7 +2392,7 @@ function RssFeedsTab() {
         {/* ── LEFT: Feed Catalogue + Get Ideas ── */}
         <section className="space-y-3">
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h3 className="text-xs font-bold text-foreground">Browse feeds</h3>
+            <h3 className="text-xs font-bold text-foreground flex items-center gap-1.5">Browse feeds <NovaHint hintKey="page:rss-feeds" /></h3>
             {isPro && (
               <button onClick={() => setCustomModal(true)}
                 className="flex items-center gap-1.5 rounded-full border border-dashed border-primary/30 bg-primary/5 px-3 py-1 text-[11px] text-primary hover:border-primary/50 hover:bg-primary/10 transition-all">
@@ -3016,7 +3016,7 @@ function BrandCampaignStreakTab() {
       {/* ── LEFT PANEL ── */}
       <div className="space-y-5">
         <div className="rounded-2xl border border-border bg-background/30 p-5">
-          <h2 className="text-sm font-semibold text-foreground mb-1">🚀 Brand Campaign Streak</h2>
+          <h2 className="text-sm font-semibold text-foreground mb-1 flex items-center gap-1.5">🚀 Brand Campaign Streak <NovaHint hintKey="page:brand-streak" /></h2>
           <p className="text-xs text-muted-foreground mb-4">
             Enter a website URL, choose a campaign duration — we'll generate a full content calendar ready to review and schedule.
           </p>
@@ -3286,6 +3286,7 @@ function BrandCampaignStreakTab() {
                                           <span className="text-[11px] text-foreground truncate block">{ad.title}</span>
                                           <span className="text-[10px] text-muted-foreground">
                                             {ad.scheduled_date || "No date"} · <span className={STATUS_COLORS[ad.status] || ""}>{ad.status}</span>
+                                            {(ad.platforms || []).length > 0 && ` · ${(ad.platforms || []).map(platformLabel).join(", ")}`}
                                           </span>
                                         </div>
                                         <span className="text-[9px] text-muted-foreground">{isAdExp ? "▲" : "▼"}</span>
@@ -3541,8 +3542,8 @@ function AgentNiva() {
       <div className="flex flex-wrap gap-2 mb-6">
         {([
           ["quick-spark", "💡 Quick Spark", "page:quick-spark"],
-          ["rss", "📰 RSS Feeds", ""],
-          ["streak", "🚀 Brand Campaign Streak", ""],
+          ["rss", "📰 RSS Feeds", "page:rss-feeds"],
+          ["streak", "🚀 Brand Campaign Streak", "page:brand-streak"],
           ["website-spark", "🌐 Website Spark", "page:quick-start"],
           ["events", "📅 Recurring Events", "page:recurring-events"],
         ] as const).map(([k, l, hk]) => (

@@ -2410,8 +2410,8 @@ function CreateAd() {
       {step === 3 && results && (
         <div>
           {retentionMonths != null && (
-            <div className="mb-4 rounded-lg border border-border bg-background/40 px-3 py-2 text-[11px] text-muted-foreground">
-              📦 This media will be stored for {retentionMonths} month{retentionMonths !== 1 ? "s" : ""} from today, then automatically removed as per the platform policy.
+            <div className="mb-4 rounded-lg border border-amber-400/60 bg-amber-400 px-3 py-2 text-[11px] text-black">
+              ⚠ This media will be stored for {retentionMonths} month{retentionMonths !== 1 ? "s" : ""} from today, then automatically removed as per the platform policy.
               {" "}If you're scheduling this ad, it must be posted within that same {retentionMonths}-month window.
               {postRetentionMonths != null && <> The full post record is kept for up to {postRetentionMonths} months, after which it's permanently deleted.</>}
               {" "}Download a copy if you want to keep it longer.

@@ -799,6 +799,55 @@ async def calendar_ads(
     ]
 
 
+@router.get("/calendar/streak-ads")
+async def calendar_streak_ads(
+    month: str = Query(..., pattern=r"^\d{4}-\d{2}$", description="YYYY-MM"),
+    user: User = Depends(require_capability("view_my_ads")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns streak_ads scheduled within the given month for the Calendar page.
+    Streak ads are returned as lightweight dicts (not AdOut) since they
+    live in a separate table and may not have a linked Ad row yet."""
+    from app.models import StreakAd, WebsiteStreak
+
+    year, mo = int(month[:4]), int(month[5:7])
+    month_start = f"{year}-{mo:02d}-01"
+    if mo == 12:
+        month_end = f"{year + 1}-01-32"
+    else:
+        month_end = f"{year}-{mo + 1:02d}-32"
+
+    stmt = (
+        select(StreakAd)
+        .join(WebsiteStreak, WebsiteStreak.id == StreakAd.streak_id)
+        .where(
+            WebsiteStreak.company_id == user.company_id,
+            StreakAd.status.in_(["scheduled", "generating", "generated", "posted"]),
+            StreakAd.scheduled_date >= month_start[:7] + "-01",
+            StreakAd.scheduled_date <= month_end[:7] + "-31",
+        )
+        .order_by(StreakAd.scheduled_date.asc(), StreakAd.scheduled_time.asc())
+    )
+    rows = (await db.scalars(stmt)).all()
+
+    return [
+        {
+            "id": str(ad.id),
+            "streak_id": str(ad.streak_id),
+            "title": ad.title,
+            "status": ad.status,
+            "scheduled_date": ad.scheduled_date,
+            "scheduled_time": ad.scheduled_time,
+            "timezone": ad.timezone,
+            "platforms": ad.platforms or [],
+            "ad_copy": ad.ad_copy[:200] if ad.ad_copy else "",
+            "source": "streak",
+        }
+        for ad in rows
+        if ad.scheduled_date and ad.scheduled_date[:7] == month
+    ]
+
+
 @router.get("/{ad_id}", response_model=AdOut)
 async def get_ad(ad_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     ad = await db.get(Ad, ad_id)

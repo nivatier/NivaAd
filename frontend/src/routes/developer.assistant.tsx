@@ -29,7 +29,7 @@ const GROUP_LABELS: Record<string, string> = {
 // "Pages" group renders them in named sub-sections rather than a flat list.
 const PAGE_SUBGROUPS: { label: string; keys: string[] }[] = [
   { label: "Themes Gallery",  keys: ["page:image-theme-gallery", "page:video-theme-gallery"] },
-  { label: "Agent Niva",      keys: ["page:quick-start", "page:recurring-events"] },
+  { label: "Agent Niva",      keys: ["page:quick-start", "page:quick-spark", "page:recurring-events", "page:rss-feeds", "page:brand-streak"] },
   { label: "Brand Kit",       keys: ["page:brand-logo", "page:image-padding", "page:video-padding", "page:video-shots"] },
   { label: "Admin",           keys: ["page:admin-users", "page:admin-profiles"] },
 ];
@@ -43,6 +43,8 @@ const ALL_PAGE_HINT_KEYS: Record<string, { label: string; group: string }> = {
   "page:quick-start":         { label: "Quick start",            group: "Agent Niva" },
   "page:quick-spark":         { label: "Quick Spark",            group: "Agent Niva" },
   "page:recurring-events":    { label: "Recurring events",       group: "Agent Niva" },
+  "page:rss-feeds":           { label: "RSS Feeds",              group: "Agent Niva" },
+  "page:brand-streak":        { label: "Brand Campaign Streak",  group: "Agent Niva" },
   "page:brand-logo":          { label: "Logo & brand",           group: "Brand Kit" },
   "page:image-padding":       { label: "Image padding",          group: "Brand Kit" },
   "page:video-padding":       { label: "Video padding",          group: "Brand Kit" },

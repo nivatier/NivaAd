@@ -19,7 +19,7 @@ export const PLATFORMS: Platform[] = [
 export function RetentionWarning({ retentionMonths, postRetentionMonths, className = "" }: { retentionMonths: number | null; postRetentionMonths: number | null; className?: string }) {
   if (retentionMonths == null && postRetentionMonths == null) return null;
   return (
-    <div className={`rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-[11px] text-destructive ${className}`}>
+    <div className={`rounded-lg border border-amber-400/60 bg-amber-400 px-3 py-2 text-[11px] text-black ${className}`}>
       ⚠ {retentionMonths != null && (
         <>This ad's media (image/video) is stored for {retentionMonths} month{retentionMonths !== 1 ? "s" : ""} from generation, then automatically removed as per platform policy. </>
       )}
