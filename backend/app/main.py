@@ -7,6 +7,7 @@ from app.routers import (
     admin_capabilities, admin_overview, admin_users, ads, agent, agent_rss, analytics, auth,
     billing, brand_kit, campaigns, connections, connections_linkedin, connections_tiktok,
     connections_meta, connections_threads, developer, moderation, products, schedule, webhooks,
+    streak,
 )
 
 # Attach DB log handler early — before any router imports so startup
@@ -40,6 +41,7 @@ app.include_router(campaigns.router)
 app.include_router(agent.router)
 app.include_router(agent_rss.router)
 app.include_router(agent_rss.dev_router)
+app.include_router(streak.router)
 app.include_router(connections.router)
 app.include_router(connections_tiktok.router)
 app.include_router(connections_meta.router)

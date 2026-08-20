@@ -604,3 +604,57 @@ class RssFeedDraft(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")  # "pending" | "approved" | "dismissed"
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class WebsiteStreak(Base):
+    """A Brand Campaign Streak — a pre-planned content calendar generated from a single website scrape."""
+    __tablename__ = "website_streaks"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    url: Mapped[str] = mapped_column(String(500))
+    site_name: Mapped[str] = mapped_column(String(200), default="")
+    streak_type: Mapped[str] = mapped_column(String(20), default="one_month")
+    # "one_month" | "two_months" | "three_months" | "custom"
+    total_ads: Mapped[int] = mapped_column(Integer, default=30)
+    status: Mapped[str] = mapped_column(String(20), default="generating", index=True)
+    # "generating" | "ideas_ready" | "active" | "completed" | "cancelled" | "failed"
+    generation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scraped_content: Mapped[str | None] = mapped_column(Text, nullable=True)  # cached scrape
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    ads: Mapped[list["StreakAd"]] = relationship(
+        "StreakAd", back_populates="streak",
+        cascade="all, delete-orphan", order_by="StreakAd.sort_order"
+    )
+
+
+class StreakAd(Base):
+    """One ad slot in a WebsiteStreak — idea → scheduled → generated → posted."""
+    __tablename__ = "streak_ads"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
+    streak_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("website_streaks.id", ondelete="CASCADE"), index=True
+    )
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    # Idea content (LLM-generated at idea time)
+    title: Mapped[str] = mapped_column(String(300), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    ad_copy: Mapped[str] = mapped_column(Text, default="")          # editable caption text
+    image_prompt: Mapped[str] = mapped_column(Text, default="")     # editable image scene
+    audience: Mapped[str] = mapped_column(String(200), default="")
+    voice: Mapped[str] = mapped_column(String(30), default="we")    # we|i|you|they|lets
+    platforms: Mapped[list] = mapped_column(JSON, default=list)
+    # Schedule
+    scheduled_date: Mapped[str | None] = mapped_column(String(10), nullable=True)   # "YYYY-MM-DD" local date
+    scheduled_time: Mapped[str | None] = mapped_column(String(5), nullable=True)    # "HH:MM" local time
+    timezone: Mapped[str] = mapped_column(String(60), default="UTC")
+    # Lifecycle
+    status: Mapped[str] = mapped_column(String(20), default="idea", index=True)
+    # "idea"|"scheduled"|"generating"|"generated"|"posted"|"failed"|"cancelled"
+    ad_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ads.id"), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    streak: Mapped["WebsiteStreak"] = relationship("WebsiteStreak", back_populates="ads")

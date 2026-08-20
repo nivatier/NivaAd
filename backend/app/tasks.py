@@ -3192,3 +3192,358 @@ def check_rss_feed_health(self):
         db.commit()
 
     return f"check_rss_feed_health: ok={checked} errors={errors} interval={interval_days}d"
+
+
+# ── Brand Campaign Streak tasks ───────────────────────────────────────────────
+
+@celery_app.task(name="app.generate_due_streak_ads", bind=True, max_retries=0)
+def generate_due_streak_ads(self):
+    """Daily task (02:00 UTC): generate ads for streak_ads scheduled for tomorrow.
+    Uses the stored ad_copy as text_prompt_override and image_prompt as image_scene.
+    Image generation runs synchronously inside the worker."""
+    from app.models import StreakAd, WebsiteStreak, Company, Ad
+    from app.services import credits as credit_svc
+    from sqlalchemy.orm import Session
+    
+    from datetime import date, timedelta
+    import json as _json
+
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    generated = 0
+    failed = 0
+
+    with Session(sync_engine) as db:
+        rows = db.execute(
+            select(StreakAd).where(
+                StreakAd.status == "scheduled",
+                StreakAd.scheduled_date == tomorrow,
+            )
+        ).scalars().all()
+
+        for streak_ad in rows:
+            try:
+                streak_ad.status = "generating"
+                db.commit()
+
+                streak = db.get(WebsiteStreak, streak_ad.streak_id)
+                if not streak:
+                    raise ValueError("Parent streak not found")
+
+                # Resolve text model
+                text_model_info = _get_default_model(db, "text")
+                text_model = (text_model_info or {}).get("model", "google/gemini-2.5-flash")
+
+                # Build brief
+                voice_label = {
+                    "we": "Company (We/Our)", "i": "Founder (I/My)",
+                    "you": "Customer-facing (You/Your)", "they": "Third-person (They)",
+                    "lets": "Inclusive (Let's/Together)",
+                }.get(streak_ad.voice, "Company (We/Our)")
+
+                brief = {
+                    "product_name": streak_ad.title,
+                    "description": streak_ad.description,
+                    "audience": streak_ad.audience or "general audience",
+                    "goal": "Engagement",
+                    "tone": voice_label,
+                    "image_scene": streak_ad.image_prompt,
+                    "text_prompt_override": streak_ad.ad_copy,
+                    "text_model": text_model,
+                }
+
+                # Check if image generation is needed (streak has image model configured)
+                # For now: text-only generation — image is a future enhancement per streak settings
+                outputs = {"text": True, "image": False, "video": False, "format": "single", "variations": 1}
+
+                ad = Ad(
+                    company_id=streak_ad.company_id,
+                    created_by=None,
+                    brief=brief,
+                    platforms=streak_ad.platforms,
+                    outputs=outputs,
+                    status="generating",
+                    agent_source="streak",
+                )
+                db.add(ad)
+                db.flush()
+
+                # Generate synchronously
+                generate_ad(str(ad.id))
+
+                streak_ad.ad_id = ad.id
+                streak_ad.status = "generated"
+                db.commit()
+                generated += 1
+                logger.info("[streak-gen] streak_ad=%s ad=%s generated OK", streak_ad.id, ad.id)
+
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                streak_ad.status = "failed"
+                streak_ad.failure_reason = str(exc)[:500]
+                db.commit()
+                logger.error("[streak-gen] streak_ad=%s failed: %s", streak_ad.id, exc)
+
+    return f"generate_due_streak_ads: generated={generated} failed={failed}"
+
+
+@celery_app.task(name="app.post_due_streak_ads", bind=True, max_retries=0)
+def post_due_streak_ads(self):
+    """Hourly task: post streak_ads that are generated and due now (date+hour match)."""
+    from app.models import StreakAd, Ad, Company
+    from app.services import credits as credit_svc
+    from sqlalchemy.orm import Session
+    
+    from datetime import date
+    import pytz
+
+    now_utc = datetime.utcnow()
+    today = date.today().isoformat()
+    posted = 0
+    failed = 0
+    skipped = 0
+
+    with Session(sync_engine) as db:
+        rows = db.execute(
+            select(StreakAd).where(
+                StreakAd.status == "generated",
+                StreakAd.scheduled_date == today,
+            )
+        ).scalars().all()
+
+        for streak_ad in rows:
+            try:
+                # Convert scheduled local time to UTC hour for comparison
+                tz_name = streak_ad.timezone or "UTC"
+                sched_time = streak_ad.scheduled_time or "09:00"
+                sched_hour_local = int(sched_time.split(":")[0])
+
+                try:
+                    tz = pytz.timezone(tz_name)
+                    local_dt = datetime.strptime(
+                        f"{streak_ad.scheduled_date} {sched_time}", "%Y-%m-%d %H:%M"
+                    )
+                    local_dt = tz.localize(local_dt)
+                    utc_hour = local_dt.astimezone(pytz.utc).hour
+                except Exception:
+                    utc_hour = sched_hour_local  # fallback if tz conversion fails
+
+                if now_utc.hour != utc_hour:
+                    skipped += 1
+                    continue
+
+                if not streak_ad.ad_id:
+                    streak_ad.status = "failed"
+                    streak_ad.failure_reason = "No generated ad linked"
+                    db.commit()
+                    failed += 1
+                    continue
+
+                # Check credits
+                company = db.get(Company, streak_ad.company_id)
+                if not company or (company.credits or 0) < 1:
+                    streak_ad.status = "failed"
+                    streak_ad.failure_reason = "Insufficient credits"
+                    db.commit()
+                    failed += 1
+                    logger.warning("[streak-post] streak_ad=%s insufficient credits", streak_ad.id)
+                    continue
+
+                # Post via existing post_ad_now task
+                post_job_result = post_ad_now(str(streak_ad.ad_id), streak_ad.platforms)
+                streak_ad.status = "posted"
+                db.commit()
+                posted += 1
+                logger.info("[streak-post] streak_ad=%s posted OK", streak_ad.id)
+
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                streak_ad.status = "failed"
+                streak_ad.failure_reason = str(exc)[:500]
+                db.commit()
+                logger.error("[streak-post] streak_ad=%s failed: %s", streak_ad.id, exc)
+
+    return f"post_due_streak_ads: posted={posted} failed={failed} skipped={skipped}"
+
+
+@celery_app.task(name="app.generate_streak_ideas_task", bind=True, max_retries=0)
+def generate_streak_ideas_task(self, streak_id: str, streak_type: str, total_ads: int, timezone: str = "UTC"):
+    """Generate ideas for a WebsiteStreak in batches of 10.
+    Saves StreakAd rows as each batch completes.
+    Updates streak.status to 'ideas_ready' on success, 'failed' on error."""
+    import json as _json
+    import re as _re2
+    import uuid as _uuid
+    from datetime import date as _date, timedelta as _td
+    from app.models import WebsiteStreak, StreakAd
+    from app.config import settings
+    from app.services.text_gen import CHAT_URL
+
+    THREE_PER_WEEK = {0, 2, 4}
+
+    def _auto_dates_sync(stype: str, n: int) -> list[str]:
+        if stype == "custom":
+            return []
+        per_week = 7 if stype == "one_month" else 3
+        today = _date.today()
+        dates: list[str] = []
+        cur = today + _td(days=1)
+        max_d = n * 14
+        d = 0
+        while len(dates) < n and d < max_d:
+            if per_week == 7:
+                dates.append(cur.isoformat())
+            elif per_week == 3 and cur.weekday() in THREE_PER_WEEK:
+                dates.append(cur.isoformat())
+            cur += _td(days=1)
+            d += 1
+        return dates
+
+    def _parse_ideas(raw: str) -> list[dict]:
+        fenced = _re2.sub(r"^```[a-zA-Z]*\s*", "", raw)
+        fenced = _re2.sub(r"\s*```\s*$", "", fenced).strip()
+        start = fenced.find("[")
+        end = fenced.rfind("]") + 1
+        if start == -1 or end == 0:
+            raise ValueError("No JSON array in LLM response")
+        json_str = fenced[start:end]
+        try:
+            return _json.loads(json_str)
+        except _json.JSONDecodeError:
+            # Repair literal newlines
+            repaired = _re2.sub(r'(?<!\\)\n', '\\n', json_str)
+            return _json.loads(repaired)
+
+    def _llm_batch_sync(scraped: str, site_name: str, url: str,
+                        stype: str, total: int, batch_num: int,
+                        batch_size: int, prev_titles: list[str]) -> list[dict]:
+        import httpx as _httpx
+        start_idx = (batch_num - 1) * batch_size + 1
+        end_idx = min(batch_num * batch_size, total)
+        total_batches = -(-total // batch_size)
+
+        streak_label = {
+            "one_month": "1-month campaign (30 ads, 1/day)",
+            "two_months": "2-month campaign (24 ads, 3/week)",
+            "three_months": "3-month campaign (36 ads, 3/week)",
+            "custom": f"custom campaign ({total} ads)",
+        }.get(stype, "campaign")
+
+        prev_text = (
+            "\n\nAlready generated titles (DO NOT repeat):\n"
+            + "\n".join(f"- {t}" for t in prev_titles)
+            if prev_titles else ""
+        )
+
+        system_prompt = (
+            "You are an expert social media campaign strategist and ad copywriter. "
+            "Generate distinct, high-quality ad ideas for a Brand Campaign Streak. "
+            "Each idea must be completely different in angle, product focus, audience, and messaging. "
+            "CRITICAL: Return ONLY a raw JSON array. No markdown. No ```json fences. "
+            "No prose before or after. Start with [ and end with ]."
+        )
+
+        user_msg = (
+            f"Company: {site_name}\nWebsite: {url}\nScraped content: {scraped}\n\n"
+            f"Campaign: {streak_label}\n"
+            f"Batch {batch_num} of {total_batches}. Generate ideas {start_idx} to {end_idx}.{prev_text}\n\n"
+            f"For each idea return a JSON object with:\n"
+            f"- title: string (headline, max 100 chars, no special punctuation)\n"
+            f"- description: string (2-3 sentences, no newlines)\n"
+            f"- ad_copy: string (150-300 word caption, use \\n for line breaks)\n"
+            f"- image_prompt: string (visual scene for AI image gen, 50-100 words, no text/logos)\n"
+            f"- audience: string (target audience, max 100 chars)\n"
+            f"- voice: string (one of: we, i, you, they, lets)\n\n"
+            f"Return a JSON array of {end_idx - start_idx + 1} objects. Start with [ end with ]."
+        )
+
+        resp = _httpx.post(
+            CHAT_URL,
+            headers={
+                "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "google/gemini-2.5-flash",
+                "max_tokens": 4000,
+                "temperature": 0.7,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        raw = (
+            (resp.json().get("choices") or [{}])[0]
+            .get("message", {}).get("content", "").strip()
+        )
+        return _parse_ideas(raw)
+
+    with Session(sync_engine) as db:
+        streak = db.get(WebsiteStreak, _uuid.UUID(streak_id))
+        if not streak:
+            logger.error("[streak-gen] streak %s not found", streak_id)
+            return
+
+        scraped = streak.scraped_content or ""
+        site_name = streak.site_name or streak.url
+        url = streak.url
+
+        try:
+            batch_size = 10
+            total_batches = -(-total_ads // batch_size)
+            all_ideas: list[dict] = []
+            prev_titles: list[str] = []
+
+            for batch_num in range(1, total_batches + 1):
+                logger.info("[streak-gen] streak=%s batch=%d/%d", streak_id, batch_num, total_batches)
+                batch = _llm_batch_sync(
+                    scraped, site_name, url, streak_type, total_ads,
+                    batch_num, batch_size, prev_titles,
+                )
+                all_ideas.extend(batch)
+                prev_titles.extend(idea.get("title", "") for idea in batch)
+                # Save each batch immediately so progress is visible
+                for i, idea in enumerate(batch):
+                    sort_order = (batch_num - 1) * batch_size + i + 1
+                    ad = StreakAd(
+                        id=_uuid.uuid4(),
+                        streak_id=streak.id,
+                        company_id=streak.company_id,
+                        sort_order=sort_order,
+                        title=idea.get("title", "")[:300],
+                        description=idea.get("description", ""),
+                        ad_copy=idea.get("ad_copy", ""),
+                        image_prompt=idea.get("image_prompt", ""),
+                        audience=idea.get("audience", "")[:200],
+                        voice=idea.get("voice", "we") if idea.get("voice") in ("we","i","you","they","lets") else "we",
+                        platforms=[],
+                        scheduled_date=None,
+                        scheduled_time="09:00",
+                        timezone=timezone,
+                        status="idea",
+                        created_at=datetime.utcnow(),
+                    )
+                    db.add(ad)
+                db.flush()
+
+            all_ideas = all_ideas[:total_ads]
+
+            # Assign dates after all ideas are generated
+            dates = _auto_dates_sync(streak_type, len(all_ideas))
+            ads_in_db = db.execute(
+                select(StreakAd).where(StreakAd.streak_id == streak.id).order_by(StreakAd.sort_order)
+            ).scalars().all()
+            for i, ad in enumerate(ads_in_db):
+                ad.scheduled_date = dates[i] if i < len(dates) else None
+
+            streak.status = "ideas_ready"
+            db.commit()
+            logger.info("[streak-gen] streak=%s done — %d ideas saved", streak_id, len(all_ideas))
+
+        except Exception as exc:
+            logger.error("[streak-gen] streak=%s failed: %s", streak_id, exc)
+            streak.status = "failed"
+            streak.generation_error = str(exc)[:500]
+            db.commit()

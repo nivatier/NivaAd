@@ -86,6 +86,14 @@ celery_app.conf.update(
             "task": "app.check_rss_feed_health",
             "schedule": crontab(hour=6, minute=0),  # 06:00 UTC daily — probes feeds whose last_checked_at is older than health_check_interval_days
         },
+        "generate-due-streak-ads": {
+            "task": "app.generate_due_streak_ads",
+            "schedule": crontab(hour=2, minute=0),  # 02:00 UTC daily — generates ads for streak slots due tomorrow
+        },
+        "post-due-streak-ads": {
+            "task": "app.post_due_streak_ads",
+            "schedule": crontab(minute=5),  # :05 past every hour — posts generated streak ads at their scheduled time
+        },
     },
 )
 

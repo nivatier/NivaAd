@@ -2699,10 +2699,741 @@ function RssFeedsTab() {
   );
 }
 
+// ── Brand Campaign Streak Tab ──────────────────────────────────────────────
+
+type StreakType = "one_month" | "two_months" | "three_months" | "custom";
+
+const STREAK_OPTIONS: { value: StreakType; label: string; ads: number; cadence: string }[] = [
+  { value: "one_month",    label: "1 Month",   ads: 30, cadence: "1 ad/day" },
+  { value: "two_months",   label: "2 Months",  ads: 24, cadence: "3 ads/week" },
+  { value: "three_months", label: "3 Months",  ads: 36, cadence: "3 ads/week" },
+  { value: "custom",       label: "Custom",    ads: 0,  cadence: "You choose" },
+];
+
+interface StreakIdeaCard {
+  sort_order: number;
+  title: string;
+  description: string;
+  ad_copy: string;
+  image_prompt: string;
+  audience: string;
+  voice: string;
+  platforms: string[];
+  scheduled_date: string | null;
+  scheduled_time: string;
+  timezone: string;
+  status: "idea" | "scheduled" | "cancelled";
+  // set after saving to DB
+  id?: string;
+  streak_id?: string;
+}
+
+interface ScheduledStreak {
+  id: string;
+  url: string;
+  site_name: string;
+  streak_type: string;
+  total_ads: number;
+  status: string;
+  created_at: string;
+  ads: ScheduledAd[];
+}
+
+interface ScheduledAd {
+  id: string;
+  sort_order: number;
+  title: string;
+  ad_copy: string;
+  scheduled_date: string | null;
+  scheduled_time: string | null;
+  status: string;
+  platforms: string[];
+  failure_reason?: string;
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  idea: "text-muted-foreground",
+  scheduled: "text-blue-400",
+  generating: "text-amber-400",
+  generated: "text-emerald-400",
+  posted: "text-green-400",
+  failed: "text-red-400",
+  cancelled: "text-muted-foreground/40",
+};
+
+const STATUS_ICONS: Record<string, string> = {
+  idea: "💡", scheduled: "📅", generating: "⚙️",
+  generated: "✅", posted: "🚀", failed: "❌", cancelled: "✕",
+};
+
+function getBrowserTimezone(): string {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return "UTC"; }
+}
+
+function BrandCampaignStreakTab() {
+  const tz = getBrowserTimezone();
+  const { platforms: availPlatforms, connected: connectedIds } = useConnectedPlatforms();
+
+  // ── Input state ──────────────────────────────────────────────────────
+  const [url, setUrl] = useState("");
+  const [streakType, setStreakType] = useState<StreakType>("one_month");
+  const [customAds, setCustomAds] = useState(15);
+  const [err, setErr] = useState("");
+
+  // ── Active streak being reviewed (from DB) ───────────────────────────
+  const [activeStreak, setActiveStreak] = useState<ScheduledStreak | null>(null);
+  const [polling, setPolling] = useState(false);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Right panel sub-tab ───────────────────────────────────────────────
+  const [rightTab, setRightTab] = useState<"streaks" | "jobs">("streaks");
+
+  // ── All streaks (scheduled panel) ────────────────────────────────────
+  const [allStreaks, setAllStreaks] = useState<ScheduledStreak[]>([]);
+  const [groupedByUrl, setGroupedByUrl] = useState<Record<string, ScheduledStreak[]>>({});
+  const [collapsedSites, setCollapsedSites] = useState<Set<string>>(new Set());
+  const [expandedStreaks, setExpandedStreaks] = useState<Set<string>>(new Set());
+  const [expandedScheduledAds, setExpandedScheduledAds] = useState<Set<string>>(new Set());
+
+  // ── Ideas editing state ───────────────────────────────────────────────
+  const [expandedIdeas, setExpandedIdeas] = useState<Set<number>>(new Set());
+  const [globalPlatforms, setGlobalPlatforms] = useState<string[]>([]);
+  const [scheduleErr, setScheduleErr] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const totalAds = streakType === "custom" ? customAds
+    : STREAK_OPTIONS.find(o => o.value === streakType)!.ads;
+
+  // ── Load all streaks on mount ─────────────────────────────────────────
+  useEffect(() => {
+    loadAllStreaks();
+    // Resume polling if there's a generating streak
+    resumePollingIfNeeded();
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+  }, []);
+
+  async function loadAllStreaks() {
+    try {
+      const data: ScheduledStreak[] = await api("/agent/streak/streaks") || [];
+      setAllStreaks(data);
+      const grouped: Record<string, ScheduledStreak[]> = {};
+      for (const s of data) {
+        if (!grouped[s.url]) grouped[s.url] = [];
+        grouped[s.url].push(s);
+      }
+      setGroupedByUrl(grouped);
+    } catch { /* silent */ }
+  }
+
+  async function resumePollingIfNeeded() {
+    // Check if there's a generating streak in the DB
+    try {
+      const data: ScheduledStreak[] = await api("/agent/streak/streaks") || [];
+      const generating = data.find(s => s.status === "generating");
+      if (generating) {
+        setActiveStreak(generating as any);
+        setRightTab("jobs");
+        startPolling(generating.id);
+      }
+    } catch { /* silent */ }
+  }
+
+  function startPolling(streakId: string) {
+    setPolling(true);
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    const startTime = Date.now();
+    const MAX_POLL_MS = 10 * 60 * 1000; // 10 minutes max
+
+    pollingRef.current = setInterval(async () => {
+      // Safety timeout — stop polling after 10 minutes regardless
+      if (Date.now() - startTime > MAX_POLL_MS) {
+        clearInterval(pollingRef.current!);
+        pollingRef.current = null;
+        setPolling(false);
+        setActiveStreak(prev => prev ? { ...prev, status: "failed", generation_error: "Generation timed out. Please try again." } as any : prev);
+        return;
+      }
+      try {
+        const data = await api(`/agent/streak/streaks/${streakId}`);
+        setActiveStreak(data);
+        if (data.status !== "generating") {
+          clearInterval(pollingRef.current!);
+          pollingRef.current = null;
+          setPolling(false);
+          await loadAllStreaks();
+        }
+      } catch {
+        clearInterval(pollingRef.current!);
+        pollingRef.current = null;
+        setPolling(false);
+      }
+    }, 3000);
+  }
+
+  // ── Generate ──────────────────────────────────────────────────────────
+  async function handleGenerate() {
+    if (!url.trim()) { setErr("Enter a website URL first."); return; }
+    setErr("");
+    setScheduleErr("");
+    setActiveStreak(null);
+    setExpandedIdeas(new Set());
+    setGlobalPlatforms([]);
+
+    try {
+      // API creates streak row + fires Celery task, returns immediately
+      const data = await api("/agent/streak/generate-ideas", {
+        method: "POST",
+        body: { url: url.trim(), streak_type: streakType, total_ads: totalAds, timezone: tz },
+      });
+      setActiveStreak(data);
+      setRightTab("jobs");
+      startPolling(data.id);
+      await loadAllStreaks();
+    } catch (e: any) {
+      setErr(e.message || "Failed to start generation.");
+    }
+  }
+
+  // ── Update idea field locally ─────────────────────────────────────────
+  function updateIdea(adId: string, patch: Partial<ScheduledAd>) {
+    setActiveStreak(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        ads: prev.ads.map(a => a.id === adId ? { ...a, ...patch } : a),
+      };
+    });
+  }
+
+  // ── Save edits to DB ──────────────────────────────────────────────────
+  async function saveAdEdits(ad: ScheduledAd) {
+    try {
+      await api(`/agent/streak/ads/${ad.id}`, {
+        method: "PATCH",
+        body: {
+          ad_copy: ad.ad_copy,
+          image_prompt: (ad as any).image_prompt,
+          platforms: ad.platforms,
+          scheduled_date: ad.scheduled_date,
+          scheduled_time: ad.scheduled_time,
+        },
+      });
+    } catch { /* silent — will retry on schedule */ }
+  }
+
+  // ── Schedule one ad ───────────────────────────────────────────────────
+  async function handleScheduleOne(ad: ScheduledAd) {
+    if (!ad.platforms.length) { setScheduleErr("Select at least one platform."); return; }
+    if (!ad.scheduled_date) { setScheduleErr("Set a date for this ad."); return; }
+    setScheduleErr("");
+    try {
+      await saveAdEdits(ad);
+      await api(`/agent/streak/ads/${ad.id}/schedule`, { method: "POST" });
+      updateIdea(ad.id, { status: "scheduled" });
+      await loadAllStreaks();
+    } catch (e: any) { setScheduleErr(e.message || "Failed to schedule."); }
+  }
+
+  // ── Schedule all ─────────────────────────────────────────────────────
+  async function handleScheduleAll() {
+    if (!activeStreak) return;
+    const toSchedule = activeStreak.ads.filter(a =>
+      a.status === "idea" && a.platforms.length > 0 && a.scheduled_date
+    );
+    if (toSchedule.length === 0) {
+      setScheduleErr("No ads ready to schedule. Make sure all have platforms and dates.");
+      return;
+    }
+    setScheduleErr("");
+    setSaving(true);
+    try {
+      // Save all edits first
+      await Promise.all(toSchedule.map(a => saveAdEdits(a)));
+      // Schedule all
+      await api("/agent/streak/ads/schedule-all", {
+        method: "POST",
+        body: { streak_id: activeStreak.id },
+      });
+      // Refresh
+      const updated = await api(`/agent/streak/streaks/${activeStreak.id}`);
+      setActiveStreak(updated);
+      await loadAllStreaks();
+    } catch (e: any) {
+      setScheduleErr(e.message || "Failed to schedule all.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleCancelAd(adId: string) {
+    try {
+      await api(`/agent/streak/ads/${adId}/cancel`, { method: "DELETE" });
+      updateIdea(adId, { status: "cancelled" });
+      await loadAllStreaks();
+    } catch { /* silent */ }
+  }
+
+  async function handleDeleteStreak(streakId: string) {
+    try {
+      await api(`/agent/streak/streaks/${streakId}`, { method: "DELETE" });
+      if (activeStreak?.id === streakId) setActiveStreak(null);
+      await loadAllStreaks();
+    } catch { /* silent */ }
+  }
+
+  const platformLabel = (id: string) => {
+    const p = availPlatforms.find(p => p.id === id);
+    return p ? (p.label || p.name) : id;
+  };
+
+  const ideaAds = activeStreak?.ads?.filter(a => a.status === "idea") || [];
+  const scheduledAds = activeStreak?.ads?.filter(a => a.status === "scheduled") || [];
+
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+      {/* ── LEFT PANEL ── */}
+      <div className="space-y-5">
+        <div className="rounded-2xl border border-border bg-background/30 p-5">
+          <h2 className="text-sm font-semibold text-foreground mb-1">🚀 Brand Campaign Streak</h2>
+          <p className="text-xs text-muted-foreground mb-4">
+            Enter a website URL, choose a campaign duration — we'll generate a full content calendar ready to review and schedule.
+          </p>
+
+          {/* URL */}
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-foreground mb-1.5">Company website URL</label>
+            <input type="url" value={url} onChange={e => setUrl(e.target.value)}
+              placeholder="https://example.com"
+              className="w-full rounded-lg border border-border bg-input/40 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" />
+          </div>
+
+          {/* Streak type */}
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-foreground mb-2">Campaign streak</label>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {STREAK_OPTIONS.map(opt => (
+                <button key={opt.value} type="button" onClick={() => setStreakType(opt.value)}
+                  className={`rounded-xl border p-3 text-left transition-all ${streakType === opt.value ? "border-primary bg-primary/10" : "border-border/50 hover:border-primary/30"}`}>
+                  <div className="text-xs font-semibold text-foreground">{opt.label}</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                    {opt.value === "custom" ? `max ${customAds} ads` : `${opt.ads} ads · ${opt.cadence}`}
+                  </div>
+                </button>
+              ))}
+            </div>
+            {streakType === "custom" && (
+              <div className="mt-3 flex items-center gap-3">
+                <label className="text-xs text-muted-foreground shrink-0">Number of ads (max 48):</label>
+                <input type="number" min={1} max={48} value={customAds}
+                  onChange={e => setCustomAds(Math.min(48, Math.max(1, Number(e.target.value))))}
+                  className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none" />
+              </div>
+            )}
+          </div>
+
+          {err && <p className="mb-3 text-xs text-destructive">{err}</p>}
+
+          <button onClick={handleGenerate}
+            disabled={!url.trim() || polling}
+            className="w-full rounded-full bg-gold-gradient py-2.5 text-sm font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50">
+            {polling ? "⚙️ Generating in background…" : `✦ Generate ${totalAds} Ideas`}
+          </button>
+        </div>
+
+        {/* Ideas list — shown when activeStreak is ideas_ready or active */}
+        {activeStreak && (activeStreak.status === "ideas_ready" || activeStreak.status === "active") && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">{activeStreak.ads?.length || 0} Ideas Ready</h3>
+                <p className="text-[10px] text-muted-foreground">{activeStreak.site_name} · {STREAK_OPTIONS.find(o => o.value === activeStreak.streak_type)?.label || activeStreak.streak_type}</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setExpandedIdeas(new Set(activeStreak.ads?.map(a => a.sort_order) || []))}
+                  className="text-[11px] text-primary hover:underline">Expand all</button>
+                <span className="text-muted-foreground/40">·</span>
+                <button onClick={() => setExpandedIdeas(new Set())}
+                  className="text-[11px] text-muted-foreground hover:underline">Collapse all</button>
+              </div>
+            </div>
+
+            {scheduleErr && <p className="text-xs text-destructive">{scheduleErr}</p>}
+
+            {/* Global platform selector */}
+            <div className="rounded-xl border border-border/40 bg-background/20 p-3 space-y-2">
+              <div className="text-[11px] font-medium text-foreground">Apply platforms to all ideas</div>
+              <div className="flex flex-wrap gap-1.5">
+                {availPlatforms.map(p => {
+                  const isConn = connectedIds.has(p.id);
+                  const isSel = globalPlatforms.includes(p.id);
+                  return (
+                    <button key={p.id} type="button" disabled={!isConn}
+                      onClick={() => {
+                        if (!isConn) return;
+                        const next = isSel ? globalPlatforms.filter(x => x !== p.id) : [...globalPlatforms, p.id];
+                        setGlobalPlatforms(next);
+                        setActiveStreak(prev => prev ? {
+                          ...prev, ads: prev.ads.map(a => ({ ...a, platforms: next }))
+                        } : prev);
+                      }}
+                      className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all ${!isConn ? "border-border/20 text-muted-foreground/30 cursor-not-allowed opacity-40" : isSel ? "border-primary/60 bg-primary/15 text-primary" : "border-border/40 text-muted-foreground hover:border-primary/30"}`}>
+                      {p.label || p.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Schedule All */}
+            <button onClick={handleScheduleAll} disabled={saving}
+              className="w-full rounded-full border border-primary/50 bg-primary/10 py-2 text-sm font-semibold text-primary hover:bg-primary/20 disabled:opacity-50">
+              {saving ? "Scheduling…" : `📅 Schedule All ${ideaAds.length} Ideas`}
+            </button>
+
+            {/* Ideas */}
+            {(activeStreak.ads || []).filter(a => a.status !== "cancelled").map(ad => {
+              const isExpanded = expandedIdeas.has(ad.sort_order);
+              return (
+                <div key={ad.id} className={`rounded-xl border transition-all ${ad.status === "scheduled" ? "border-blue-500/30 bg-blue-500/5" : "border-border/50 bg-background/20"}`}>
+                  <button onClick={() => setExpandedIdeas(prev => {
+                    const next = new Set(prev);
+                    next.has(ad.sort_order) ? next.delete(ad.sort_order) : next.add(ad.sort_order);
+                    return next;
+                  })} className="flex w-full items-start justify-between gap-3 p-3 text-left">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-muted-foreground shrink-0">#{ad.sort_order}</span>
+                        <span className="text-xs font-semibold text-foreground truncate">{ad.title}</span>
+                        {ad.status === "scheduled" && <span className="text-[10px] text-blue-400 shrink-0">✓ Scheduled</span>}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">
+                        {ad.scheduled_date || "No date"} · {(ad as any).scheduled_time || "09:00"}
+                        {ad.platforms?.length > 0 && ` · ${ad.platforms.map(platformLabel).join(", ")}`}
+                      </div>
+                    </div>
+                    <span className="text-muted-foreground text-xs">{isExpanded ? "▲" : "▼"}</span>
+                  </button>
+
+                  {isExpanded && (
+                    <div className="border-t border-border/30 p-3 space-y-3">
+                      <div>
+                        <label className="block text-[10px] font-medium text-muted-foreground mb-1">Ad copy (editable)</label>
+                        <textarea rows={5} value={ad.ad_copy}
+                          onChange={e => updateIdea(ad.id, { ad_copy: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-input/40 p-2.5 text-xs text-foreground focus:border-primary focus:outline-none resize-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-muted-foreground mb-1">Image prompt (editable)</label>
+                        <textarea rows={2} value={(ad as any).image_prompt || ""}
+                          onChange={e => updateIdea(ad.id, { image_prompt: e.target.value } as any)}
+                          className="w-full rounded-lg border border-border bg-input/40 p-2.5 text-xs text-foreground focus:border-primary focus:outline-none resize-none" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-medium text-muted-foreground mb-1">Scheduled date</label>
+                          <input type="date" value={ad.scheduled_date || ""}
+                            onChange={e => updateIdea(ad.id, { scheduled_date: e.target.value })}
+                            className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-medium text-muted-foreground mb-1">Time (local)</label>
+                          <input type="time" value={(ad as any).scheduled_time || "09:00"}
+                            onChange={e => updateIdea(ad.id, { scheduled_time: e.target.value } as any)}
+                            className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-muted-foreground mb-1.5">Platforms</label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {availPlatforms.map(p => {
+                            const isConn = connectedIds.has(p.id);
+                            const isSel = ad.platforms?.includes(p.id);
+                            return (
+                              <button key={p.id} type="button" disabled={!isConn}
+                                onClick={() => {
+                                  if (!isConn) return;
+                                  const cur = ad.platforms || [];
+                                  updateIdea(ad.id, { platforms: isSel ? cur.filter(x => x !== p.id) : [...cur, p.id] });
+                                }}
+                                className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all ${!isConn ? "border-border/20 text-muted-foreground/30 cursor-not-allowed opacity-40" : isSel ? "border-primary/60 bg-primary/15 text-primary" : "border-border/40 text-muted-foreground hover:border-primary/30"}`}>
+                                {p.label || p.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        {ad.status === "idea" && (
+                          <button onClick={() => handleScheduleOne(ad)}
+                            className="flex-1 rounded-full border border-primary/50 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10">
+                            📅 Schedule this idea
+                          </button>
+                        )}
+                        {ad.status === "scheduled" && (
+                          <button onClick={() => handleCancelAd(ad.id)}
+                            className="flex-1 rounded-full border border-destructive/40 py-1.5 text-xs text-destructive hover:bg-destructive/10">
+                            Cancel
+                          </button>
+                        )}
+                        {ad.status === "idea" && (
+                          <button onClick={() => handleCancelAd(ad.id)}
+                            className="rounded-full border border-border/40 px-3 py-1.5 text-[10px] text-muted-foreground hover:text-destructive">
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── RIGHT PANEL ── */}
+      <div className="space-y-4">
+        {/* Sub-tab switcher */}
+        <div className="flex gap-2">
+          {([["streaks", "📅 Scheduled Streaks"], ["jobs", "⚙️ Running Jobs"]] as const).map(([k, l]) => (
+            <button key={k} onClick={() => setRightTab(k)}
+              className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${rightTab === k ? "border-primary/50 bg-primary/10 text-primary" : "border-border/40 text-muted-foreground hover:border-primary/30"}`}>
+              {l}
+              {k === "jobs" && polling && (
+                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Scheduled Streaks tab ── */}
+        {rightTab === "streaks" && (
+          <>
+            {Object.keys(groupedByUrl).length === 0 && (
+              <div className="rounded-xl border border-border/30 bg-background/20 p-6 text-center">
+                <p className="text-xs text-muted-foreground">No streaks scheduled yet.</p>
+              </div>
+            )}
+            {Object.entries(groupedByUrl).map(([siteUrl, siteStreaks]) => {
+              const siteName = siteStreaks[0]?.site_name || siteUrl;
+              const isCollapsed = collapsedSites.has(siteUrl);
+              const totalSched = siteStreaks.reduce((n, s) =>
+                n + (s.ads || []).filter(a => ["scheduled","generated","posted"].includes(a.status)).length, 0);
+              return (
+                <div key={siteUrl} className="rounded-xl border border-border/50 bg-background/20 overflow-hidden">
+                  <button onClick={() => setCollapsedSites(prev => {
+                    const next = new Set(prev); next.has(siteUrl) ? next.delete(siteUrl) : next.add(siteUrl); return next;
+                  })} className="flex w-full items-center justify-between gap-3 p-3 text-left hover:bg-white/5">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold text-foreground truncate">🌐 {siteName}</div>
+                      <div className="text-[10px] text-muted-foreground truncate">{siteUrl} · {totalSched} ads scheduled</div>
+                    </div>
+                    <span className="text-muted-foreground text-xs">{isCollapsed ? "▼" : "▲"}</span>
+                  </button>
+                  {!isCollapsed && (
+                    <div className="border-t border-border/30 divide-y divide-border/20">
+                      {siteStreaks.filter(s => s.status !== "generating").map(streak => {
+                        const isExp = expandedStreaks.has(streak.id);
+                        const sched = (streak.ads || []).filter(a => a.status !== "cancelled" && a.status !== "idea");
+                        return (
+                          <div key={streak.id}>
+                            <button onClick={() => setExpandedStreaks(prev => {
+                              const next = new Set(prev); next.has(streak.id) ? next.delete(streak.id) : next.add(streak.id); return next;
+                            })} className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-white/3">
+                              <div className="flex-1 min-w-0">
+                                <span className="text-[11px] font-medium text-foreground">
+                                  {STREAK_OPTIONS.find(o => o.value === streak.streak_type)?.label || streak.streak_type} Streak
+                                </span>
+                                <span className="ml-2 text-[10px] text-muted-foreground">
+                                  {sched.length}/{streak.total_ads} ads · {new Date(streak.created_at).toLocaleDateString()}
+                                </span>
+                              </div>
+                              <span className="text-muted-foreground text-[10px]">{isExp ? "▲" : "▼"}</span>
+                            </button>
+                            {isExp && (
+                              <div className="px-4 pb-3 space-y-1.5">
+                                {(streak.ads || []).filter(a => a.status !== "cancelled").sort((a,b) => a.sort_order - b.sort_order).map(ad => {
+                                  const isAdExp = expandedScheduledAds.has(ad.id);
+                                  return (
+                                    <div key={ad.id} className="rounded-lg border border-border/30 bg-background/10">
+                                      <button onClick={() => setExpandedScheduledAds(prev => {
+                                        const next = new Set(prev); next.has(ad.id) ? next.delete(ad.id) : next.add(ad.id); return next;
+                                      })} className="flex w-full items-center gap-2 p-2 text-left">
+                                        <span className="text-[10px]">{STATUS_ICONS[ad.status] || "•"}</span>
+                                        <div className="flex-1 min-w-0">
+                                          <span className="text-[11px] text-foreground truncate block">{ad.title}</span>
+                                          <span className="text-[10px] text-muted-foreground">
+                                            {ad.scheduled_date || "No date"} · <span className={STATUS_COLORS[ad.status] || ""}>{ad.status}</span>
+                                          </span>
+                                        </div>
+                                        <span className="text-[9px] text-muted-foreground">{isAdExp ? "▲" : "▼"}</span>
+                                      </button>
+                                      {isAdExp && (
+                                        <div className="border-t border-border/20 p-2 space-y-2">
+                                          <p className="text-[10px] text-muted-foreground line-clamp-3">{ad.ad_copy}</p>
+                                          <div className="flex items-center justify-between gap-2">
+                                            <span className="text-[10px] text-muted-foreground">{(ad.platforms || []).map(platformLabel).join(", ")}</span>
+                                            {ad.status === "scheduled" && (
+                                              <button onClick={() => handleCancelAd(ad.id)}
+                                                className="text-[10px] text-destructive hover:underline">Cancel</button>
+                                            )}
+                                          </div>
+                                          {ad.failure_reason && <p className="text-[10px] text-red-400">{ad.failure_reason}</p>}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {/* ── Running Jobs tab ── */}
+        {rightTab === "jobs" && (
+          <div className="space-y-3">
+            {!activeStreak && (
+              <div className="rounded-xl border border-border/30 bg-background/20 p-6 text-center">
+                <p className="text-xs text-muted-foreground">No active generation job. Generate ideas to see progress here.</p>
+              </div>
+            )}
+
+            {activeStreak && (
+              <div className="rounded-xl border border-border/50 bg-background/20 p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold text-foreground">{activeStreak.site_name}</div>
+                    <div className="text-[10px] text-muted-foreground truncate">{activeStreak.url}</div>
+                  </div>
+                  <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${
+                    activeStreak.status === "generating" ? "border-amber-500/40 bg-amber-500/10 text-amber-400" :
+                    activeStreak.status === "ideas_ready" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400" :
+                    activeStreak.status === "failed" ? "border-red-500/40 bg-red-500/10 text-red-400" :
+                    "border-border/40 text-muted-foreground"
+                  }`}>
+                    {activeStreak.status === "generating" ? "⚙️ Generating…" :
+                     activeStreak.status === "ideas_ready" ? "✅ Ideas ready" :
+                     activeStreak.status === "failed" ? "❌ Failed" :
+                     activeStreak.status}
+                  </span>
+                </div>
+
+                {/* Progress bar */}
+                {activeStreak.status === "generating" && (
+                  <div className="space-y-1.5">
+                    <div className="h-1.5 w-full rounded-full bg-border/30 overflow-hidden">
+                      <div className="h-full rounded-full bg-primary animate-pulse" style={{ width: `${Math.min(90, ((activeStreak.ads?.length || 0) / activeStreak.total_ads) * 100)}%` }} />
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      {activeStreak.ads?.length || 0} of {activeStreak.total_ads} ideas generated…
+                    </p>
+                  </div>
+                )}
+
+                {activeStreak.status === "generating" && (
+                  <p className="text-[10px] text-amber-400/80">
+                    💡 You can navigate away — generation continues in the background. Come back to this tab to see results.
+                  </p>
+                )}
+
+                {activeStreak.status === "ideas_ready" && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-emerald-400">
+                      ✅ {activeStreak.ads?.length || 0} ideas generated successfully!
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Review and edit them in the left panel, then schedule.
+                    </p>
+                  </div>
+                )}
+
+                {activeStreak.status === "failed" && (
+                  <p className="text-[10px] text-red-400">{activeStreak.generation_error || "Generation failed. Please try again."}</p>
+                )}
+
+                {/* Per-batch progress dots */}
+                {activeStreak.status === "generating" && activeStreak.total_ads > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {Array.from({ length: Math.ceil(activeStreak.total_ads / 10) }, (_, i) => {
+                      const done = (activeStreak.ads?.length || 0) > i * 10;
+                      return (
+                        <div key={i} className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] ${done ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400" : "border-border/30 text-muted-foreground/40"}`}>
+                          {done ? "✓" : "○"} Batch {i + 1}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="text-[10px] text-muted-foreground">
+                  Started {new Date(activeStreak.created_at).toLocaleTimeString()} ·{" "}
+                  {STREAK_OPTIONS.find(o => o.value === activeStreak.streak_type)?.label || activeStreak.streak_type} streak
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex gap-2 pt-1">
+                  {activeStreak.status === "failed" && (
+                    <button onClick={() => handleDeleteStreak(activeStreak.id)}
+                      className="text-[10px] text-destructive border border-destructive/30 rounded-full px-3 py-1 hover:bg-destructive/10">
+                      🗑 Delete
+                    </button>
+                  )}
+                  {activeStreak.status === "generating" && (
+                    <button onClick={() => handleDeleteStreak(activeStreak.id)}
+                      className="text-[10px] text-muted-foreground border border-border/40 rounded-full px-3 py-1 hover:text-destructive hover:border-destructive/30">
+                      ✕ Cancel generation
+                    </button>
+                  )}
+                  {(activeStreak.status === "ideas_ready" || activeStreak.status === "active") && (
+                    <button onClick={() => handleDeleteStreak(activeStreak.id)}
+                      className="text-[10px] text-muted-foreground border border-border/40 rounded-full px-3 py-1 hover:text-destructive hover:border-destructive/30">
+                      ✕ Cancel streak
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Recent jobs from allStreaks */}
+            {allStreaks.filter(s => s.id !== activeStreak?.id && ["ideas_ready","failed","active"].includes(s.status)).slice(0, 5).map(s => (
+              <div key={s.id} className="rounded-lg border border-border/30 bg-background/10 px-3 py-2 flex items-center justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] text-foreground truncate">{s.site_name}</div>
+                  <div className="text-[10px] text-muted-foreground">{new Date(s.created_at).toLocaleDateString()} · {s.ads?.length || 0} ideas</div>
+                </div>
+                <span className={`text-[10px] shrink-0 ${s.status === "ideas_ready" || s.status === "active" ? "text-emerald-400" : "text-red-400"}`}>
+                  {s.status === "ideas_ready" ? "✅ Ready" : s.status === "active" ? "📅 Active" : "❌ Failed"}
+                </span>
+                {(s.status === "ideas_ready" || s.status === "active") && (
+                  <button onClick={() => { setActiveStreak(s as any); setRightTab("jobs"); }}
+                    className="text-[10px] text-primary hover:underline shrink-0">Review</button>
+                )}
+                {s.status === "failed" && (
+                  <button onClick={() => handleDeleteStreak(s.id)}
+                    className="text-[10px] text-destructive hover:underline shrink-0">🗑 Delete</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Root Component ─────────────────────────────────────────────────────
 
 function AgentNiva() {
-  const [tab, setTab] = useState<"website-spark" | "quick-spark" | "events" | "rss">("quick-spark");
+  const [tab, setTab] = useState<"streak" | "quick-spark" | "rss" | "website-spark" | "events">("quick-spark");
 
   return (
     <AppShell eyebrow="Library" title="Agent Niva">
@@ -2710,14 +3441,24 @@ function AgentNiva() {
         Your AI marketing agent — studies your site for ad ideas, keeps seasonal ads generating and scheduling themselves, and turns RSS news into ready-to-post content.
       </p>
       <div className="flex flex-wrap gap-2 mb-6">
-        {([ ["quick-spark", "💡 Quick Spark", "page:quick-spark"], ["rss", "📰 RSS Feeds", ""], ["website-spark", "🌐 Website Spark", "page:quick-start"], ["events", "📅 Recurring Events", "page:recurring-events"] ] as const).map(([k, l, hk]) => (
+        {([
+          ["quick-spark", "💡 Quick Spark", "page:quick-spark"],
+          ["rss", "📰 RSS Feeds", ""],
+          ["streak", "🚀 Brand Campaign Streak", ""],
+          ["website-spark", "🌐 Website Spark", "page:quick-start"],
+          ["events", "📅 Recurring Events", "page:recurring-events"],
+        ] as const).map(([k, l, hk]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${tab === k ? "border-primary/50 bg-primary/10 text-primary shadow-[0_0_14px_-4px_oklch(0.78_0.12_85/0.3)]" : "border-white/10 text-muted-foreground hover:border-white/20 hover:text-foreground"}`}>
-            {l} {hk && <NovaHint hintKey={hk} />}
+            {l} {hk && <NovaHint hintKey={hk as any} />}
           </button>
         ))}
       </div>
-      {tab === "website-spark" ? <WebsiteSparkTab /> : tab === "quick-spark" ? <QuickSparkTab /> : tab === "events" ? <EventsTab /> : <RssFeedsTab />}
+      {tab === "streak" ? <BrandCampaignStreakTab />
+        : tab === "website-spark" ? <WebsiteSparkTab />
+        : tab === "quick-spark" ? <QuickSparkTab />
+        : tab === "events" ? <EventsTab />
+        : <RssFeedsTab />}
     </AppShell>
   );
 }

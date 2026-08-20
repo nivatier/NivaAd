@@ -1588,3 +1588,70 @@ class RssFeedDraftOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── Brand Campaign Streak schemas ─────────────────────────────────────────────
+
+class StreakAdOut(BaseModel):
+    id: uuid.UUID
+    streak_id: uuid.UUID
+    company_id: uuid.UUID
+    sort_order: int
+    title: str
+    description: str
+    ad_copy: str
+    image_prompt: str
+    audience: str
+    voice: str
+    platforms: list
+    scheduled_date: str | None = None
+    scheduled_time: str | None = None
+    timezone: str
+    status: str
+    ad_id: uuid.UUID | None = None
+    failure_reason: str | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class WebsiteStreakOut(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    created_by: uuid.UUID | None = None
+    url: str
+    site_name: str
+    streak_type: str
+    total_ads: int
+    status: str
+    generation_error: str | None = None
+    created_at: datetime
+    ads: list[StreakAdOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+class StreakGenerateIn(BaseModel):
+    """Request to scrape a URL and generate streak ideas."""
+    url: str = Field(..., max_length=500)
+    streak_type: str = Field(..., pattern="^(one_month|two_months|three_months|custom)$")
+    total_ads: int = Field(default=30, ge=1, le=48)
+    timezone: str = Field(default="UTC", max_length=60)
+
+
+class StreakAdPatchIn(BaseModel):
+    ad_copy: str | None = None
+    image_prompt: str | None = None
+    audience: str | None = None
+    voice: str | None = Field(default=None, pattern="^(we|i|you|they|lets)$")
+    platforms: list[str] | None = None
+    scheduled_date: str | None = None
+    scheduled_time: str | None = None
+    timezone: str | None = None
+    status: str | None = Field(default=None, pattern="^(idea|scheduled|cancelled)$")
+
+
+class StreakScheduleAllIn(BaseModel):
+    streak_id: uuid.UUID
