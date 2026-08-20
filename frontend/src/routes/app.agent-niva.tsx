@@ -2794,6 +2794,8 @@ function BrandCampaignStreakTab() {
   const [collapsedSites, setCollapsedSites] = useState<Set<string>>(new Set());
   const [expandedStreaks, setExpandedStreaks] = useState<Set<string>>(new Set());
   const [expandedScheduledAds, setExpandedScheduledAds] = useState<Set<string>>(new Set());
+  const [editingScheduledAd, setEditingScheduledAd] = useState<ScheduledAd | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
 
   // ── Ideas editing state ───────────────────────────────────────────────
   const [expandedIdeas, setExpandedIdeas] = useState<Set<number>>(new Set());
@@ -2979,6 +2981,25 @@ function BrandCampaignStreakTab() {
       if (activeStreak?.id === streakId) setActiveStreak(null);
       await loadAllStreaks();
     } catch { /* silent */ }
+  }
+
+  async function handleSaveScheduledAdEdit(ad: ScheduledAd) {
+    setEditSaving(true);
+    try {
+      await api(`/agent/streak/ads/${ad.id}`, {
+        method: "PATCH",
+        body: {
+          scheduled_date: ad.scheduled_date,
+          scheduled_time: (ad as any).scheduled_time,
+          platforms: ad.platforms,
+          ad_copy: ad.ad_copy,
+        },
+      });
+      setEditingScheduledAd(null);
+      await loadAllStreaks();
+    } catch { /* silent */ } finally {
+      setEditSaving(false);
+    }
   }
 
   const platformLabel = (id: string) => {
@@ -3272,12 +3293,18 @@ function BrandCampaignStreakTab() {
                                       {isAdExp && (
                                         <div className="border-t border-border/20 p-2 space-y-2">
                                           <p className="text-[10px] text-muted-foreground line-clamp-3">{ad.ad_copy}</p>
-                                          <div className="flex items-center justify-between gap-2">
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
                                             <span className="text-[10px] text-muted-foreground">{(ad.platforms || []).map(platformLabel).join(", ")}</span>
-                                            {ad.status === "scheduled" && (
-                                              <button onClick={() => handleCancelAd(ad.id)}
-                                                className="text-[10px] text-destructive hover:underline">Cancel</button>
-                                            )}
+                                            <div className="flex gap-2">
+                                              {ad.status === "scheduled" && (
+                                                <button onClick={() => setEditingScheduledAd({ ...ad })}
+                                                  className="text-[10px] text-primary hover:underline">✏️ Edit</button>
+                                              )}
+                                              {ad.status === "scheduled" && (
+                                                <button onClick={() => handleCancelAd(ad.id)}
+                                                  className="text-[10px] text-destructive hover:underline">Cancel</button>
+                                              )}
+                                            </div>
                                           </div>
                                           {ad.failure_reason && <p className="text-[10px] text-red-400">{ad.failure_reason}</p>}
                                         </div>
@@ -3426,6 +3453,77 @@ function BrandCampaignStreakTab() {
           </div>
         )}
       </div>
+
+      {/* ── Edit Scheduled Ad Modal ── */}
+      {editingScheduledAd && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[oklch(0.18_0.02_260)] p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">✏️ Edit Scheduled Ad</h3>
+              <button onClick={() => setEditingScheduledAd(null)} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+            </div>
+
+            <div className="text-xs text-muted-foreground truncate">{editingScheduledAd.title}</div>
+
+            {/* Date & Time */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] font-medium text-foreground mb-1">Scheduled date</label>
+                <input type="date" value={editingScheduledAd.scheduled_date || ""}
+                  onChange={e => setEditingScheduledAd(prev => prev ? { ...prev, scheduled_date: e.target.value } : prev)}
+                  className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-medium text-foreground mb-1">Time (local)</label>
+                <input type="time" value={(editingScheduledAd as any).scheduled_time || "09:00"}
+                  onChange={e => setEditingScheduledAd(prev => prev ? { ...prev, scheduled_time: e.target.value } as any : prev)}
+                  className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none" />
+              </div>
+            </div>
+
+            {/* Platforms */}
+            <div>
+              <label className="block text-[10px] font-medium text-foreground mb-1.5">Platforms</label>
+              <div className="flex flex-wrap gap-1.5">
+                {availPlatforms.map(p => {
+                  const isConn = connectedIds.has(p.id);
+                  const isSel = (editingScheduledAd.platforms || []).includes(p.id);
+                  return (
+                    <button key={p.id} type="button" disabled={!isConn}
+                      onClick={() => setEditingScheduledAd(prev => {
+                        if (!prev) return prev;
+                        const cur = prev.platforms || [];
+                        return { ...prev, platforms: isSel ? cur.filter(x => x !== p.id) : [...cur, p.id] };
+                      })}
+                      className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all ${!isConn ? "border-border/20 text-muted-foreground/30 cursor-not-allowed opacity-40" : isSel ? "border-primary/60 bg-primary/15 text-primary" : "border-border/40 text-muted-foreground hover:border-primary/30"}`}>
+                      {p.label || p.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Ad copy */}
+            <div>
+              <label className="block text-[10px] font-medium text-foreground mb-1">Ad copy</label>
+              <textarea rows={5} value={editingScheduledAd.ad_copy}
+                onChange={e => setEditingScheduledAd(prev => prev ? { ...prev, ad_copy: e.target.value } : prev)}
+                className="w-full rounded-lg border border-border bg-input/40 p-2.5 text-xs text-foreground focus:border-primary focus:outline-none resize-none" />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setEditingScheduledAd(null)}
+                className="rounded-full border border-border px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+                Cancel
+              </button>
+              <button onClick={() => handleSaveScheduledAdEdit(editingScheduledAd)} disabled={editSaving}
+                className="rounded-full bg-gold-gradient px-4 py-1.5 text-xs font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50">
+                {editSaving ? "Saving…" : "Save changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
