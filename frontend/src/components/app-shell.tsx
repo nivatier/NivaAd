@@ -1,5 +1,5 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   BarChart3, Bell, Bot, CalendarDays, Crown, GalleryHorizontal, Images, Link2, Megaphone, Package, Palette,
   Settings as SettingsIcon, ShieldCheck, Sparkles, User, type LucideIcon,
@@ -48,6 +48,197 @@ function visibleNav(role: string | undefined, capabilities: Record<string, boole
 // Must match the backend's monthly credit grant per tier (see backend/app/services/billing.py TIER_CREDITS).
 // NOTE: do NOT hardcode this — use me.plan_credits which comes from the backend directly.
 const TIER_MONTHLY_FALLBACK: Record<string, number> = { free: 3, starter: 150, pro: 500 };
+
+// ---------- Liquid glass nav item ----------
+//
+// GPU budget for this effect:
+//   • ONE overlay <span> per item (was 4) — a single composited layer
+//   • NO backdrop-filter — eliminated; was the heaviest GPU cost
+//   • Cursor position written as CSS custom props directly on the DOM
+//     node via ref.style — bypasses React re-render entirely on mousemove
+//   • Single drop-shadow filter on the icon (was 3 stacked)
+//   • box-shadow on the Link itself for the neon ring — stays on the
+//     element's own layer, no extra composite promotion
+//   • rAF used only to batch the DOM write, not React setState
+//
+const GLASS_NAV_STYLE = `
+  /* ── Base ───────────────────────────────────────────── */
+  a[data-glass-nav] {
+    --gnx: 50%;
+    --gny: 50%;
+    opacity: 0.60;
+    transition: opacity 0.16s ease, box-shadow 0.16s ease,
+                color 0.16s ease, text-shadow 0.16s ease;
+    background: transparent !important;
+  }
+  a[data-glass-nav]:hover  { opacity: 1; background: transparent !important; }
+  a[data-glass-nav][data-active="true"] { opacity: 1; }
+
+  /* Single overlay — background uses CSS vars updated by JS */
+  a[data-glass-nav] .gni-overlay {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    opacity: 0;
+    transition: opacity 0.18s ease;
+    background: radial-gradient(
+      ellipse 110% 200% at var(--gnx) var(--gny),
+      var(--glass-nav-fill-center) 0%,
+      var(--glass-nav-fill-mid)    38%,
+      transparent 68%
+    );
+  }
+  a[data-glass-nav]:hover .gni-overlay { opacity: 1; }
+
+  /* ── DARK mode ──────────────────────────────────────── */
+  html.dark {
+    --glass-nav-fill-center: oklch(0.92 0.20 205 / 0.26);
+    --glass-nav-fill-mid:    oklch(0.80 0.16 212 / 0.13);
+  }
+  html.dark a[data-glass-nav] { color: oklch(0.72 0.07 278); }
+  html.dark a[data-glass-nav]:hover {
+    color: oklch(0.97 0.06 215) !important;
+    text-shadow: 0 0 14px oklch(0.90 0.22 210 / 0.65),
+                 0 0 30px oklch(0.85 0.20 210 / 0.28) !important;
+    box-shadow:
+      inset 0 1.5px 0 oklch(1 0 0 / 0.50),
+      inset 0 -1.5px 0 oklch(0 0 0 / 0.24),
+      0 0 0 1px oklch(0.88 0.24 210 / 0.48),
+      0 0 10px 1px oklch(0.85 0.22 210 / 0.26),
+      0 0 24px 2px oklch(0.80 0.20 215 / 0.14) !important;
+  }
+  html.dark a[data-glass-nav][data-active="true"] {
+    color: oklch(0.92 0.20 215) !important;
+    text-shadow: 0 0 12px oklch(0.90 0.22 210 / 0.55),
+                 0 0 26px oklch(0.85 0.20 210 / 0.22) !important;
+  }
+  html.dark a[data-glass-nav] .glass-nav-icon {
+    color: oklch(0.58 0.09 278);
+    transition: color 0.16s ease, filter 0.16s ease;
+  }
+  html.dark a[data-glass-nav]:hover .glass-nav-icon {
+    color: oklch(0.95 0.22 210);
+    filter: drop-shadow(0 0 8px oklch(0.90 0.24 210 / 0.90));
+  }
+  html.dark a[data-glass-nav][data-active="true"] .glass-nav-icon {
+    color: oklch(0.95 0.24 210);
+    filter: drop-shadow(0 0 10px oklch(0.92 0.26 210 / 1.00));
+  }
+
+  /* ── LIGHT mode ─────────────────────────────────────── */
+  html.light {
+    --glass-nav-fill-center: oklch(0.52 0.16 52 / 0.18);
+    --glass-nav-fill-mid:    oklch(0.46 0.12 55 / 0.08);
+  }
+  html.light a[data-glass-nav] { color: oklch(0.40 0.06 58); }
+  html.light a[data-glass-nav]:hover {
+    color: oklch(0.18 0.07 48) !important;
+    text-shadow: 0 0 10px oklch(0.55 0.18 52 / 0.22) !important;
+    box-shadow:
+      inset 0 1.5px 0 oklch(1 0 0 / 0.85),
+      inset 0 -1.5px 0 oklch(0 0 0 / 0.06),
+      0 0 0 1px oklch(0.60 0.18 52 / 0.28),
+      0 0 10px 1px oklch(0.60 0.16 52 / 0.12) !important;
+  }
+  html.light a[data-glass-nav][data-active="true"] {
+    color: oklch(0.42 0.20 52) !important;
+    text-shadow: 0 0 8px oklch(0.55 0.18 52 / 0.20) !important;
+  }
+  html.light a[data-glass-nav] .glass-nav-icon {
+    color: oklch(0.52 0.07 60);
+    transition: color 0.16s ease, filter 0.16s ease;
+  }
+  html.light a[data-glass-nav]:hover .glass-nav-icon {
+    color: oklch(0.38 0.22 52);
+    filter: drop-shadow(0 0 6px oklch(0.55 0.22 52 / 0.65));
+  }
+  html.light a[data-glass-nav][data-active="true"] .glass-nav-icon {
+    color: oklch(0.36 0.24 52);
+    filter: drop-shadow(0 0 8px oklch(0.55 0.24 52 / 0.75));
+  }
+`;
+
+let _glassNavStyleInjected = false;
+function useGlassNavStyle() {
+  useEffect(() => {
+    if (_glassNavStyleInjected) return;
+    _glassNavStyleInjected = true;
+    const el = document.createElement("style");
+    el.id = "glass-nav-style";
+    el.textContent = GLASS_NAV_STYLE;
+    document.head.appendChild(el);
+  }, []);
+}
+
+function GlassNavItem({
+  to,
+  label,
+  icon: Icon,
+  active,
+  hintKey,
+}: {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  active: boolean;
+  hintKey?: string;
+}) {
+  useGlassNavStyle();
+
+  const linkRef = useRef<HTMLAnchorElement>(null);
+  const rafRef  = useRef<number>(0);
+
+  // Write cursor position directly to CSS custom props on the DOM node —
+  // zero React re-renders on mousemove, no useState, no stale closure.
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+    const el = linkRef.current;
+    if (!el) return;
+    // Capture values before rAF (avoids stale SyntheticEvent)
+    const cx = e.clientX;
+    const cy = e.clientY;
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      const r = el.getBoundingClientRect();
+      el.style.setProperty("--gnx", `${((cx - r.left) / r.width)  * 100}%`);
+      el.style.setProperty("--gny", `${((cy - r.top)  / r.height) * 100}%`);
+    });
+  }, []);
+
+  useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
+
+  return (
+    <Link
+      ref={linkRef}
+      to={to}
+      data-glass-nav
+      data-active={active ? "true" : undefined}
+      data-robot-hint-key={hintKey || undefined}
+      onMouseMove={handleMouseMove}
+      className="relative flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm overflow-hidden"
+      style={active
+        ? { background: "color-mix(in oklch, var(--primary) 14%, transparent)" }
+        : undefined}
+    >
+      {/* Active left accent bar */}
+      {active && (
+        <span className="absolute inset-y-1 left-0 w-0.5 rounded-r bg-gold-gradient" />
+      )}
+
+      {/* Single overlay — position driven by CSS vars, no re-render */}
+      <span aria-hidden className="gni-overlay" />
+
+      {/* Icon */}
+      <Icon
+        className="glass-nav-icon relative z-10 h-4 w-4 shrink-0"
+        strokeWidth={active ? 2.5 : 2}
+      />
+
+      {/* Label */}
+      <span className="relative z-10">{label}</span>
+    </Link>
+  );
+}
 
 // ---------- Mobile bottom sheet grid ----------
 function MobileNavSheet({
@@ -439,25 +630,19 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
     <nav className="flex-1 space-y-4 overflow-y-auto px-3 pt-10 pb-6">
       {nav.map((group) => (
         <div key={group.section}>
-          <div className="px-3 pb-1 text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">{group.section}</div>
+          <div className="px-3 pb-1 text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground/60">{group.section}</div>
           <ul className="space-y-0.5">
             {group.items.map((it) => {
               const active = pathname === it.to;
               return (
                 <li key={it.to}>
-                  <Link
+                  <GlassNavItem
                     to={it.to}
-                    data-robot-hint-key={it.hintKey || undefined}
-                    className={`relative flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm transition ${
-                      active
-                        ? "bg-primary/10 text-primary neon-ring"
-                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-foreground"
-                    }`}
-                  >
-                    {active && <span className="absolute inset-y-1 left-0 w-0.5 rounded-r bg-gold-gradient" />}
-                    <it.icon className={`h-4 w-4 shrink-0 ${active ? "text-primary" : "text-muted-foreground"}`} strokeWidth={2} />
-                    <span>{it.label}</span>
-                  </Link>
+                    label={it.label}
+                    icon={it.icon}
+                    active={active}
+                    hintKey={(it as any).hintKey}
+                  />
                 </li>
               );
             })}

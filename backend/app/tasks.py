@@ -3229,9 +3229,9 @@ def generate_due_streak_ads(self):
                 if not streak:
                     raise ValueError("Parent streak not found")
 
-                # Resolve text model
-                text_model_info = _get_default_model(db, "text")
-                text_model = (text_model_info or {}).get("model", "google/gemini-2.5-flash")
+                # Resolve text model using existing helper
+                text_models = [m for m in get_available_models_sync(db).get("text", []) if m.get("enabled", True)]
+                text_model = text_models[0]["model"] if text_models else "google/gemini-2.5-flash"
 
                 # Build brief
                 voice_label = {
@@ -3292,9 +3292,8 @@ def post_due_streak_ads(self):
     from app.models import StreakAd, Ad, Company
     from app.services import credits as credit_svc
     from sqlalchemy.orm import Session
-    
     from datetime import date
-    import pytz
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
     now_utc = datetime.utcnow()
     today = date.today().isoformat()
@@ -3318,13 +3317,12 @@ def post_due_streak_ads(self):
                 sched_hour_local = int(sched_time.split(":")[0])
 
                 try:
-                    tz = pytz.timezone(tz_name)
+                    tz = ZoneInfo(tz_name)
                     local_dt = datetime.strptime(
                         f"{streak_ad.scheduled_date} {sched_time}", "%Y-%m-%d %H:%M"
-                    )
-                    local_dt = tz.localize(local_dt)
-                    utc_hour = local_dt.astimezone(pytz.utc).hour
-                except Exception:
+                    ).replace(tzinfo=tz)
+                    utc_hour = local_dt.astimezone(ZoneInfo("UTC")).hour
+                except (ZoneInfoNotFoundError, Exception):
                     utc_hour = sched_hour_local  # fallback if tz conversion fails
 
                 if now_utc.hour != utc_hour:

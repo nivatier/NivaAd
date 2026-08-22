@@ -167,11 +167,13 @@ html.dark body {
 }
 
 /* Dark mode nav — explicit overrides so nav items are clearly readable
-   on the semi-transparent frosted sidebar glass                        */
-html.dark nav a:not([class*="bg-primary"]) {
+   on the semi-transparent frosted sidebar glass.
+   Scoped to :not([data-glass-nav]) so the GlassNavItem component
+   manages its own colours via its injected stylesheet.               */
+html.dark nav a:not([class*="bg-primary"]):not([data-glass-nav]) {
   color: oklch(0.88 0.03 278);
 }
-html.dark nav a:not([class*="bg-primary"]):hover {
+html.dark nav a:not([class*="bg-primary"]):not([data-glass-nav]):hover {
   background: oklch(0.32 0.08 275 / 0.55) !important;
   color: oklch(0.97 0.02 280) !important;
 }
