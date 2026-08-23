@@ -113,7 +113,7 @@ celery_app.conf.update(
         },
         "process-rss-feeds": {
             "task": "app.process_rss_feeds",
-            "schedule": crontab(minute=0),  # top of every hour — checks all enabled subscriptions for due next_run_at
+            "schedule": schedule(run_every=300),  # every 5 minutes — checks all enabled subscriptions for due next_run_at, same cadence as posting tasks so generation and posting windows align
         },
         "check-rss-feed-health": {
             "task": "app.check_rss_feed_health",
