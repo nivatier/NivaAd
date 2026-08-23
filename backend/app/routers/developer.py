@@ -2737,11 +2737,12 @@ async def infrastructure_status(
                 if rev_match:
                     rev_map[down_match] = rev_match
                     rev_to_file[rev_match] = fname
-            # Walk the chain to find the tip (revision no other revision points down to)
+            # Walk the chain to find the tip(s) — revision(s) no other revision points down to.
+            # Normally one tip; multiple tips means a branch (two migrations with same down_revision).
             all_revs = set(rev_map.values())
             all_downs = set(rev_map.keys()) - {None}
             tips = all_revs - all_downs
-            head_rev = tips.pop() if tips else "unknown"
+            head_rev = ", ".join(sorted(tips)) if tips else "unknown"
         except Exception as e:
             head_rev = f"error reading migrations: {e}"
 
@@ -2894,7 +2895,7 @@ async def run_migrations(_: str = Depends(require_developer)):
             os.path.join(os.path.dirname(__file__), "..", "..")
         )
         proc = await asyncio.create_subprocess_exec(
-            "alembic", "upgrade", "head",
+            "alembic", "upgrade", "heads",  # "heads" handles multiple branch tips gracefully
             cwd=backend_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
