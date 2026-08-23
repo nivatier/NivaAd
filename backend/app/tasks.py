@@ -2762,10 +2762,21 @@ def process_rss_feeds(self):
             logger.info("[rss] cleaned up %d expired drafts", len(expired))
 
         # ── Step 2: Find due subscriptions ──────────────────────────
+        # Window: past (overdue catch-up) → now + 12 hours (pre-generation).
+        # Pre-generating 12 hours ahead means:
+        #   • Auto-post: ad is ready and visible in My Ads well before it posts,
+        #     user can still edit or cancel if needed
+        #   • Manual approval: user gets notified ~12 hours before the post time,
+        #     giving them a comfortable window to review, edit, and approve —
+        #     e.g. a 9 AM post generates the evening before
+        #   • Overdue subscriptions are always caught up on the next 5-min run
+        # next_run_at is advanced BEFORE dispatching generation so the same
+        # subscription is never double-processed on the next 5-min beat run.
+        lookahead = now + timedelta(hours=12)
         due_subs = db.scalars(
             select(RssFeedSubscription).where(
                 RssFeedSubscription.enabled == True,  # noqa: E712
-                RssFeedSubscription.next_run_at <= now,
+                RssFeedSubscription.next_run_at <= lookahead,
             )
         ).all()
 
@@ -2850,6 +2861,18 @@ def _process_one_subscription(
 ) -> None:
     """Run one subscription: fetch → deduplicate → AI pick → generate → post/draft."""
 
+    # ── Advance next_run_at immediately ──────────────────────────────
+    # Must happen BEFORE any work so that if the 5-minute beat fires again
+    # while generation is still running (async), this subscription is not
+    # picked up a second time and duplicate ads are not generated.
+    # This is especially important now that the lookahead window is 1 hour —
+    # without this, every 5-min run for the next hour would re-process the
+    # same subscription.
+    sub.last_run_at = now
+    _advance_next_run(sub, now)
+    db.commit()
+    logger.info("[rss] sub=%s next_run_at advanced to %s", sub.id, sub.next_run_at)
+
     # ── Resolve feed URL ─────────────────────────────────────────────
     if sub.rss_feed_id:
         feed = db.get(RssFeed, sub.rss_feed_id)
@@ -2904,18 +2927,14 @@ def _process_one_subscription(
     posts_to_run = min(sub.posts_per_run, max_affordable)
     if posts_to_run <= 0:
         logger.info("[rss] sub=%s insufficient credits (%.2f < %.2f) — skipping", sub.id, balance, cost_per_article)
-        sub.last_run_at = now
-        _advance_next_run(sub, now)
-        db.commit()
+        # next_run_at already advanced at top of function
         return
 
     # ── Fetch RSS ────────────────────────────────────────────────────
     articles = _fetch_rss_articles(feed_url, max_items=50)
     if not articles:
         logger.info("[rss] sub=%s feed returned no articles", sub.id)
-        sub.last_run_at = now
-        _advance_next_run(sub, now)
-        db.commit()
+        # next_run_at already advanced at top of function
         return
 
     # ── Deduplicate: filter already-seen URLs ────────────────────────
@@ -2928,9 +2947,7 @@ def _process_one_subscription(
     fresh_articles = [a for a in articles if a["url"] not in seen_urls]
     if not fresh_articles:
         logger.info("[rss] sub=%s no new articles (all %d seen)", sub.id, len(articles))
-        sub.last_run_at = now
-        _advance_next_run(sub, now)
-        db.commit()
+        # next_run_at already advanced at top of function
         return
 
     # ── AI picks best articles ───────────────────────────────────────
@@ -2973,10 +2990,7 @@ def _process_one_subscription(
             logger.warning("[rss] sub=%s article=%s generation failed: %s", sub.id, article.get("url"), exc)
             db.rollback()
 
-    # ── Advance schedule ─────────────────────────────────────────────
-    sub.last_run_at = now
-    _advance_next_run(sub, now)
-    db.commit()
+    # next_run_at already advanced at top of _process_one_subscription
     logger.info("[rss] sub=%s processed %d article(s)", sub.id, len(picked))
 
 
