@@ -2356,12 +2356,15 @@ function RssFeedsTab() {
   const pageFeeds = filteredFeeds.slice(page * RSS_PAGE_SIZE, (page + 1) * RSS_PAGE_SIZE);
 
   const fmtDate = (s: string | null) => s ? new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : null;
+  // Backend returns naive UTC strings (no "Z") — append "Z" to force correct UTC
+  // interpretation before converting to the user's local timezone for display.
+  const toLocalDate = (utcStr: string) => new Date(utcStr.endsWith("Z") ? utcStr : utcStr + "Z");
   const fmtNextRun = (s: RssFeedSub) => {
     if (!s.next_run_at) return "—";
-    const d = new Date(s.next_run_at);
+    const d = toLocalDate(s.next_run_at);
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   };
-  const fmtLastRun = (s: RssFeedSub) => s.last_run_at ? new Date(s.last_run_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Never";
+  const fmtLastRun = (s: RssFeedSub) => s.last_run_at ? toLocalDate(s.last_run_at).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Never";
   const expiresInDraft = (d: RssDraft) => {
     const ms = new Date(d.expires_at).getTime() - Date.now();
     const h = Math.max(0, Math.floor(ms / 3600000));

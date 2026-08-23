@@ -1518,6 +1518,7 @@ class RssFeedSubscriptionOut(BaseModel):
     posting_mode: str
     frequency: str
     post_hour: int = 9
+    post_minute: int = 0
     day_of_week: int | None = None
     day_of_month: int | None = None
     posts_per_run: int
@@ -1563,6 +1564,7 @@ class RssFeedSubscriptionPatchIn(BaseModel):
     posting_mode: str | None = Field(default=None, pattern="^(auto_post|manual)$")
     frequency: str | None = Field(default=None, pattern="^(daily|weekly|monthly)$")
     post_hour: int | None = Field(default=None, ge=0, le=23)
+    post_minute: int | None = Field(default=None, ge=0, le=59)
     day_of_week: int | None = Field(default=None, ge=0, le=6)
     day_of_month: int | None = Field(default=None, ge=1, le=31)
     posts_per_run: int | None = Field(default=None, ge=1, le=3)

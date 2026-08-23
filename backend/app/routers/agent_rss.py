@@ -57,9 +57,10 @@ async def _is_pro(db: AsyncSession, company_id: uuid.UUID) -> bool:
 def _compute_next_run(sub: RssFeedSubscription) -> datetime:
     """Calculate the next run datetime based on frequency settings."""
     now = datetime.utcnow()
-    h = sub.post_hour if sub.post_hour is not None else 9  # default 9 AM UTC
+    h = sub.post_hour   if sub.post_hour   is not None else 9   # default 9 AM UTC
+    m = sub.post_minute if sub.post_minute is not None else 0   # default :00
     if sub.frequency == "daily":
-        candidate = now.replace(hour=h, minute=0, second=0, microsecond=0)
+        candidate = now.replace(hour=h, minute=m, second=0, microsecond=0)
         if candidate <= now:
             candidate += timedelta(days=1)
         return candidate
@@ -68,16 +69,16 @@ def _compute_next_run(sub: RssFeedSubscription) -> datetime:
         days_ahead = (dow - now.weekday()) % 7
         if days_ahead == 0:
             days_ahead = 7
-        next_dt = (now + timedelta(days=days_ahead)).replace(hour=h, minute=0, second=0, microsecond=0)
+        next_dt = (now + timedelta(days=days_ahead)).replace(hour=h, minute=m, second=0, microsecond=0)
         return next_dt
     else:  # monthly
         dom = sub.day_of_month if sub.day_of_month is not None else 1
         try:
-            candidate = now.replace(day=dom, hour=h, minute=0, second=0, microsecond=0)
+            candidate = now.replace(day=dom, hour=h, minute=m, second=0, microsecond=0)
         except ValueError:
             import calendar
             last_day = calendar.monthrange(now.year, now.month)[1]
-            candidate = now.replace(day=last_day, hour=h, minute=0, second=0, microsecond=0)
+            candidate = now.replace(day=last_day, hour=h, minute=m, second=0, microsecond=0)
         if candidate <= now:
             if now.month == 12:
                 candidate = candidate.replace(year=now.year + 1, month=1)
@@ -100,6 +101,7 @@ def _sub_out(sub: RssFeedSubscription, feed: RssFeed | None = None) -> RssFeedSu
         posting_mode=sub.posting_mode,
         frequency=sub.frequency,
         post_hour=sub.post_hour if sub.post_hour is not None else 9,
+        post_minute=sub.post_minute if sub.post_minute is not None else 0,
         day_of_week=sub.day_of_week,
         day_of_month=sub.day_of_month,
         posts_per_run=sub.posts_per_run,
@@ -255,6 +257,7 @@ async def create_subscription(
         posting_mode=data.posting_mode,
         frequency=data.frequency,
         post_hour=data.post_hour,
+        post_minute=data.post_minute,
         day_of_week=data.day_of_week,
         day_of_month=data.day_of_month,
         posts_per_run=data.posts_per_run,
@@ -302,12 +305,14 @@ async def update_subscription(
     if data.enabled is not None:
         sub.enabled = data.enabled
 
-    # Re-schedule if frequency/day/hour settings changed
-    freq_changed = any(v is not None for v in [data.frequency, data.day_of_week, data.day_of_month, data.post_hour])
+    # Re-schedule if frequency/day/hour/minute settings changed
+    freq_changed = any(v is not None for v in [data.frequency, data.day_of_week, data.day_of_month, data.post_hour, data.post_minute])
     if data.frequency is not None:
         sub.frequency = data.frequency
     if data.post_hour is not None:
         sub.post_hour = data.post_hour
+    if data.post_minute is not None:
+        sub.post_minute = data.post_minute
     if data.day_of_week is not None:
         sub.day_of_week = data.day_of_week
     if data.day_of_month is not None:
