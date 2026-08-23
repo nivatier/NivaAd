@@ -626,6 +626,38 @@ def _stitch_intro_outro(db: Session, brief: dict, company_id, video_url: str, lo
         return video_url
 
 
+# ── Streak ad completion hook ────────────────────────────────────────────────
+# When generate_ad is dispatched by generate_due_streak_ads, the streak_ad_id
+# is passed in the task headers. On success we flip streak_ad.status from
+# "generating" → "generated" so post_due_streak_ads can pick it up.
+# Using a task_success signal scoped to generate_ad keeps the hook out of the
+# hot path of generate_ad itself — no changes needed inside that function.
+from celery.signals import task_success as _task_success
+
+@_task_success.connect(sender=None)
+def _on_generate_ad_success(sender=None, result=None, **kwargs):
+    # sender is the task instance; only act for generate_ad with a streak header
+    if not sender or getattr(sender, "name", None) != "app.generate_ad":
+        return
+    request = getattr(sender, "request", None)
+    if not request:
+        return
+    streak_ad_id = (request.headers or {}).get("streak_ad_id")
+    if not streak_ad_id:
+        return
+    try:
+        from sqlalchemy.orm import Session as _Session
+        from app.models import StreakAd as _StreakAd
+        with _Session(sync_engine) as db:
+            sad = db.get(_StreakAd, streak_ad_id)
+            if sad and sad.status == "generating":
+                sad.status = "generated"
+                db.commit()
+                logger.info("[streak-gen] streak_ad=%s marked generated via success hook", streak_ad_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[streak-gen] success hook failed for streak_ad=%s: %s", streak_ad_id, exc)
+
+
 @celery_app.task(name="app.generate_ad", bind=True, max_retries=0)
 def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0, skip_reference: bool = False):
     with Session(sync_engine) as db:
@@ -3198,27 +3230,71 @@ def check_rss_feed_health(self):
 
 @celery_app.task(name="app.generate_due_streak_ads", bind=True, max_retries=0)
 def generate_due_streak_ads(self):
-    """Daily task (02:00 UTC): generate ads for streak_ads scheduled for tomorrow.
+    """Hourly task (:10 past every hour): generate ads for streak_ads whose
+    scheduled local time is within the next 24 hours.
     Uses the stored ad_copy as text_prompt_override and image_prompt as image_scene.
-    Image generation runs synchronously inside the worker."""
+    Image generation runs synchronously inside the worker.
+
+    Why hourly instead of a fixed daily window:
+      A fixed 02:00 UTC run only gives ~3 hours lead time for an ad
+      scheduled at 05:00 UTC (e.g. 9 AM Gulf time), and may miss ads
+      scheduled near midnight UTC entirely. Running hourly and checking
+      whether the ad's local scheduled time falls within the next 24 hours
+      means every ad gets generated exactly ~24 hours before it posts,
+      regardless of what timezone or time the user picked.
+    """
     from app.models import StreakAd, WebsiteStreak, Company, Ad
     from app.services import credits as credit_svc
     from sqlalchemy.orm import Session
-    
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
     from datetime import date, timedelta
     import json as _json
 
-    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    now_utc = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC"))
+    # Generation window: ads whose scheduled moment falls between now and 25 hours
+    # from now (25 not 24 so we don't miss ads right on the boundary when the
+    # beat fires a few minutes late).
+    window_start = now_utc
+    window_end   = now_utc + timedelta(hours=25)
+
     generated = 0
     failed = 0
 
     with Session(sync_engine) as db:
+        # Fetch all scheduled ads in roughly the right date range first
+        # (today + tomorrow) — then filter precisely by local scheduled
+        # datetime inside the loop where we have timezone info.
+        today    = date.today().isoformat()
+        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+        day_after = (date.today() + timedelta(days=2)).isoformat()
+
         rows = db.execute(
             select(StreakAd).where(
                 StreakAd.status == "scheduled",
-                StreakAd.scheduled_date == tomorrow,
+                StreakAd.scheduled_date.in_([today, tomorrow, day_after]),
             )
         ).scalars().all()
+
+        # Filter to only ads whose local scheduled datetime is within the window
+        due_rows = []
+        for streak_ad in rows:
+            try:
+                tz = ZoneInfo(streak_ad.timezone or "UTC")
+            except Exception:
+                tz = ZoneInfo("UTC")
+            sched_time = streak_ad.scheduled_time or "09:00"
+            try:
+                local_dt = datetime.strptime(
+                    f"{streak_ad.scheduled_date} {sched_time}", "%Y-%m-%d %H:%M"
+                ).replace(tzinfo=tz)
+                sched_utc = local_dt.astimezone(ZoneInfo("UTC"))
+            except Exception:
+                continue
+            if window_start <= sched_utc <= window_end:
+                due_rows.append(streak_ad)
+
+        rows = due_rows
 
         for streak_ad in rows:
             try:
@@ -3229,9 +3305,20 @@ def generate_due_streak_ads(self):
                 if not streak:
                     raise ValueError("Parent streak not found")
 
-                # Resolve text model using existing helper
-                text_models = [m for m in get_available_models_sync(db).get("text", []) if m.get("enabled", True)]
-                text_model = text_models[0]["model"] if text_models else "google/gemini-2.5-flash"
+                # Resolve text + image models using the same helper used by other agent tasks
+                all_models = get_available_models_sync(db)
+                text_models  = [m for m in all_models.get("text",  []) if m.get("enabled", True)]
+                image_models = [m for m in all_models.get("image", []) if m.get("enabled", True)]
+                text_model  = text_models[0]["model"]  if text_models  else "google/gemini-2.5-flash"
+                image_model = image_models[0]["model"] if image_models else "google/gemini-2.5-flash-image"
+
+                # Resolve the platform's preferred aspect ratio for image generation.
+                # Streak ads can target multiple platforms — use the first platform's ratio,
+                # falling back to square (1:1) if none is configured.
+                from app.services.platform_config import get_ad_targeting_ratios_sync
+                ratio_map = get_ad_targeting_ratios_sync(db)
+                first_platform = (streak_ad.platforms or ["instagram"])[0]
+                image_aspect_ratio = ratio_map.get(first_platform, "1:1")
 
                 # Build brief
                 voice_label = {
@@ -3249,11 +3336,11 @@ def generate_due_streak_ads(self):
                     "image_scene": streak_ad.image_prompt,
                     "text_prompt_override": streak_ad.ad_copy,
                     "text_model": text_model,
+                    "image_model": image_model,
+                    "image_aspect_ratio": image_aspect_ratio,
                 }
 
-                # Check if image generation is needed (streak has image model configured)
-                # For now: text-only generation — image is a future enhancement per streak settings
-                outputs = {"text": True, "image": False, "video": False, "format": "single", "variations": 1}
+                outputs = {"text": True, "image": True, "video": False, "format": "single", "variations": 1}
 
                 ad = Ad(
                     company_id=streak_ad.company_id,
@@ -3266,15 +3353,34 @@ def generate_due_streak_ads(self):
                 )
                 db.add(ad)
                 db.flush()
+                ad_id_str = str(ad.id)
 
-                # Generate synchronously
-                generate_ad(str(ad.id))
-
+                # Link the ad to the streak slot NOW (before dispatching) so
+                # post_due_streak_ads can find it even if generation is still
+                # running. Status stays "generating" until generate_ad finishes
+                # and flips it to "ready" — post_due_streak_ads already checks
+                # for "generated" on the streak_ad, which we only set in the
+                # on_success callback below.
                 streak_ad.ad_id = ad.id
-                streak_ad.status = "generated"
                 db.commit()
+
+                # Dispatch to the generation queue — non-blocking.
+                # The streak_ad status is flipped to "generated" by a dedicated
+                # on_success Celery signal registered below rather than inline,
+                # so this loop moves on immediately and all due ads are queued
+                # in one fast pass instead of waiting 20-60s each.
+                from app.worker import celery_app as _app
+                _app.send_task(
+                    "app.generate_ad",
+                    args=[ad_id_str],
+                    queue="generation",
+                    kwargs={},
+                    # Pass streak_ad id via headers so the success hook can
+                    # flip streak_ad.status without a separate DB lookup
+                    headers={"streak_ad_id": str(streak_ad.id)},
+                )
                 generated += 1
-                logger.info("[streak-gen] streak_ad=%s ad=%s generated OK", streak_ad.id, ad.id)
+                logger.info("[streak-gen] streak_ad=%s ad=%s dispatched to generation queue", streak_ad.id, ad_id_str)
 
             except Exception as exc:  # noqa: BLE001
                 failed += 1
@@ -3325,7 +3431,12 @@ def post_due_streak_ads(self):
                 except (ZoneInfoNotFoundError, Exception):
                     utc_hour = sched_hour_local  # fallback if tz conversion fails
 
-                if now_utc.hour != utc_hour:
+                # Post if:
+                #  • current UTC hour matches the scheduled hour (normal case), OR
+                #  • the scheduled hour has already passed today (catch-up: covers
+                #    ads that became "generated" after their scheduled hour because
+                #    generate_due_streak_ads ran late or was catching up itself)
+                if now_utc.hour < utc_hour:
                     skipped += 1
                     continue
 
@@ -3346,12 +3457,31 @@ def post_due_streak_ads(self):
                     logger.warning("[streak-post] streak_ad=%s insufficient credits", streak_ad.id)
                     continue
 
-                # Post via existing post_ad_now task
-                post_job_result = post_ad_now(str(streak_ad.ad_id), streak_ad.platforms)
+                # Create a PostJob row (same pattern as POST /ads/{id}/post in routers/ads.py)
+                # then dispatch post_ad_now to the posting queue — non-blocking.
+                # streak_ad.status is set to "posted" optimistically here; if the
+                # PostJob fails, the failure is recorded on PostJob.failed and visible
+                # in the ad's posting status UI — the streak_ad row itself is not
+                # rolled back since the attempt was genuine.
+                post_job = PostJob(
+                    company_id=streak_ad.company_id,
+                    ad_id=streak_ad.ad_id,
+                    platforms=streak_ad.platforms,
+                    status="queued",
+                    succeeded=[],
+                    failed={},
+                )
+                db.add(post_job)
+                db.flush()
+                post_job_id = str(post_job.id)
+
                 streak_ad.status = "posted"
                 db.commit()
+
+                from app.worker import celery_app as _app
+                _app.send_task("app.post_ad_now", args=[post_job_id], queue="posting")
                 posted += 1
-                logger.info("[streak-post] streak_ad=%s posted OK", streak_ad.id)
+                logger.info("[streak-post] streak_ad=%s post_job=%s dispatched to posting queue", streak_ad.id, post_job_id)
 
             except Exception as exc:  # noqa: BLE001
                 failed += 1

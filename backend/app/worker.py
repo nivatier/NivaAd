@@ -25,6 +25,39 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     imports=["app.tasks"],
+
+    # ── Queue routing ────────────────────────────────────────────────────────
+    # Three queues so long-running generation never blocks fast posting:
+    #
+    #   generation  — AI text + image generation (20–90s per ad). CPU/network
+    #                 bound. Scaled by adding more worker replicas on Railway.
+    #
+    #   posting     — Social platform API calls (2–10s per platform). I/O
+    #                 bound. Needs low latency so posts fire on time.
+    #
+    #   default     — Beat orchestration tasks (generate_due_streak_ads,
+    #                 post_due_streak_ads, fire_due_scheduled_posts, etc.)
+    #                 These are fast dispatchers — they find due work and
+    #                 fan it out to generation/posting queues, then exit.
+    #                 Keeping them on default means they're never queued
+    #                 behind a 60-second image generation job.
+    #
+    # Railway scaling recipe:
+    #   • Start: 1 worker consuming all three queues (--queues=generation,posting,default)
+    #   • Growing: add a dedicated posting worker (--queues=posting) so posting
+    #     is never delayed by generation backlog
+    #   • At scale: separate generation workers (--queues=generation) per region
+    #
+    task_routes={
+        # Generation tasks → generation queue
+        "app.generate_ad":                 {"queue": "generation"},
+        "app.generate_campaign_ad_image":  {"queue": "generation"},
+        "app.edit_ad_image":               {"queue": "generation"},
+        # Posting tasks → posting queue
+        "app.post_ad_now":                 {"queue": "posting"},
+        # Beat orchestrators + everything else → default queue
+    },
+    task_default_queue="default",
     # Reliability settings — closes the real gap between Redis-as-broker
     # and a dedicated message queue (e.g. RabbitMQ) for THIS app's
     # actual failure mode: a worker crashing mid-task. Without these, a
@@ -88,7 +121,7 @@ celery_app.conf.update(
         },
         "generate-due-streak-ads": {
             "task": "app.generate_due_streak_ads",
-            "schedule": crontab(hour=2, minute=0),  # 02:00 UTC daily — generates ads for streak slots due tomorrow
+            "schedule": crontab(minute=10),  # :10 past every hour — picks up streak ads due in the next 24 hours
         },
         "post-due-streak-ads": {
             "task": "app.post_due_streak_ads",
