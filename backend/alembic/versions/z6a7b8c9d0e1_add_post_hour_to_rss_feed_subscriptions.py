@@ -1,4 +1,4 @@
-"""add post_hour to rss_feed_subscriptions
+"""add post_hour t rss_feed_subscriptions
 
 Revision ID: z6a7b8c9d0e1
 Revises: y5z6a7b8c9d0
