@@ -1546,7 +1546,8 @@ class RssFeedSubscriptionIn(BaseModel):
     platforms: list[str] = Field(default_factory=list)
     posting_mode: str = Field(default="manual", pattern="^(auto_post|manual)$")
     frequency: str = Field(default="daily", pattern="^(daily|weekly|monthly)$")
-    post_hour: int = Field(default=9, ge=0, le=23)  # UTC hour 0-23
+    post_hour: int = Field(default=9, ge=0, le=23)    # UTC hour 0-23
+    post_minute: int = Field(default=0, ge=0, le=59)  # UTC minute 0-59
     day_of_week: int | None = Field(default=None, ge=0, le=6)
     day_of_month: int | None = Field(default=None, ge=1, le=31)
     posts_per_run: int = Field(default=1, ge=1, le=3)
