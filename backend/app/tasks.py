@@ -2681,17 +2681,21 @@ def _on_rss_generate_done(sender=None, result=None, **kwargs):
         from datetime import timedelta as _td
 
         with _Session(sync_engine) as db:
-            # Find the Ad that was just generated — sender.request.args[0] is job_id
-            job_id = (request.args or [None])[0]
-            if not job_id:
-                return
-            from app.models import GenerationJob as _GJ
-            gj = db.get(_GJ, job_id)
-            if not gj:
-                return
-            ad = db.get(_Ad, gj.ad_id)
+            import uuid as _uuid
+            # Prefer rss_ad_id header (set directly) — fall back to GenerationJob lookup
+            rss_ad_id = headers.get("rss_ad_id")
+            if rss_ad_id:
+                ad = db.get(_Ad, _uuid.UUID(rss_ad_id))
+            else:
+                job_id = (request.args or [None])[0]
+                if not job_id:
+                    return
+                from app.models import GenerationJob as _GJ
+                gj = db.get(_GJ, job_id)
+                ad = db.get(_Ad, gj.ad_id) if gj else None
             sub = db.get(_Sub, rss_sub_id)
             if not ad or not sub:
+                logger.error("[rss-signal] could not find ad or sub — ad_id=%s sub_id=%s", rss_ad_id, rss_sub_id)
                 return
 
             now = datetime.utcnow()
@@ -2829,15 +2833,16 @@ def process_rss_feeds(self):
 def _advance_next_run(sub: RssFeedSubscription, now: datetime) -> None:
     """Mutate sub.next_run_at to the next scheduled run time (in-place)."""
     from datetime import timedelta as _td
-    h = sub.post_hour if sub.post_hour is not None else 9  # default 9 AM UTC
+    h = sub.post_hour   if sub.post_hour   is not None else 9  # default 9 AM UTC
+    m = sub.post_minute if sub.post_minute is not None else 0  # default :00
     if sub.frequency == "daily":
-        candidate = (now + _td(days=1)).replace(hour=h, minute=0, second=0, microsecond=0)
+        candidate = (now + _td(days=1)).replace(hour=h, minute=m, second=0, microsecond=0)
         sub.next_run_at = candidate
     elif sub.frequency == "weekly":
         dow = sub.day_of_week if sub.day_of_week is not None else 0
         days_ahead = (dow - now.weekday()) % 7 or 7
         sub.next_run_at = (now + _td(days=days_ahead)).replace(
-            hour=h, minute=0, second=0, microsecond=0
+            hour=h, minute=m, second=0, microsecond=0
         )
     else:  # monthly
         import calendar
@@ -2848,7 +2853,7 @@ def _advance_next_run(sub: RssFeedSubscription, now: datetime) -> None:
             next_month_year, next_month = now.year, now.month + 1
         last_day = calendar.monthrange(next_month_year, next_month)[1]
         actual_dom = min(dom, last_day)
-        sub.next_run_at = datetime(next_month_year, next_month, actual_dom, h, 0, 0)
+        sub.next_run_at = datetime(next_month_year, next_month, actual_dom, h, m, 0)
 
 
 def _process_one_subscription(
@@ -3250,10 +3255,16 @@ def _generate_rss_article_post(
             "app.generate_ad",
             args=[str(job.id)],
             queue="generation",
-            headers={"rss_sub_id": str(sub.id), "rss_article_title": article.get("title", "")[:500], "rss_article_url": article.get("url", ""), "rss_article_summary": article.get("summary", "")[:2000]},
+            headers={
+                "rss_sub_id":          str(sub.id),
+                "rss_ad_id":           str(ad.id),   # fallback — avoids GenerationJob lookup in signal
+                "rss_article_title":   article.get("title", "")[:500],
+                "rss_article_url":     article.get("url", ""),
+                "rss_article_summary": article.get("summary", "")[:2000],
+            },
         )
         logger.info("[rss] sub=%s ad=%s dispatched generation (manual approval mode)", sub.id, ad.id)
-        # Draft + notification created by the rss_draft_on_generate_done signal below
+        # Draft + notification created by _on_rss_generate_done signal
         return  # exit here — draft creation handled by signal
 
 
