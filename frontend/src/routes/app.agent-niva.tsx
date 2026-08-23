@@ -1645,6 +1645,7 @@ type RssFeedSub = {
   id: string; company_id: string; rss_feed_id: string | null; custom_url: string | null;
   label: string; content_type: string; image_model_id: string | null; video_model_id: string | null;
   platforms: string[]; posting_mode: string; frequency: string;
+  post_hour: number; post_minute: number;
   day_of_week: number | null; day_of_month: number | null; posts_per_run: number;
   article_selection: string; tone_style: string; enabled: boolean;
   last_run_at: string | null; next_run_at: string | null; created_at: string;
@@ -1722,7 +1723,7 @@ type SubFormState = {
   rss_feed_id: string; custom_url: string; label: string;
   content_type: string; image_model_id: string; video_model_id: string;
   platforms: string[]; posting_mode: string; frequency: string;
-  post_hour: number; day_of_week: number; day_of_month: number; posts_per_run: number;
+  post_hour: number; post_minute: number; day_of_week: number; day_of_month: number; posts_per_run: number;
   article_selection: string; tone_style: string; enabled: boolean;
 };
 
@@ -1731,7 +1732,7 @@ function defaultForm(feed_id = ""): SubFormState {
     rss_feed_id: feed_id, custom_url: "", label: "", content_type: "text",
     image_model_id: "", video_model_id: "",
     platforms: ["facebook", "instagram"], posting_mode: "manual",
-    frequency: "daily", post_hour: 9, day_of_week: 0, day_of_month: 1,
+    frequency: "daily", post_hour: 9, post_minute: 0, day_of_week: 0, day_of_month: 1,
     posts_per_run: 1, article_selection: "most_recent", tone_style: "curator", enabled: true,
   };
 }
@@ -1863,20 +1864,70 @@ function SubModal({
           )}
         </div>
 
-        {/* Post time (UTC hour) */}
-        <div>
-          <label className="block text-xs font-medium text-foreground mb-1">
-            Post time <span className="text-muted-foreground font-normal">(UTC)</span>
-          </label>
-          <select value={form.post_hour} onChange={e => set("post_hour", Number(e.target.value))}
-            className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
-            {Array.from({ length: 24 }, (_, i) => {
-              const label = i === 0 ? "12:00 AM" : i < 12 ? `${i}:00 AM` : i === 12 ? "12:00 PM" : `${i - 12}:00 PM`;
-              return <option key={i} value={i}>{label} UTC</option>;
-            })}
-          </select>
-          <p className="mt-1 text-[11px] text-muted-foreground">The beat runs every hour — posts go out at the selected UTC hour.</p>
-        </div>
+        {/* Post time — local timezone with 15-min intervals, stored as UTC */}
+        {(() => {
+          const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+          const tzShort = (() => { try { return new Intl.DateTimeFormat("en-US", { timeZone: userTz, timeZoneName: "short" }).formatToParts(new Date()).find(p => p.type === "timeZoneName")?.value ?? userTz; } catch { return userTz; } })();
+
+          // Convert stored UTC hour+minute → local for display in the picker
+          const toLocal = (utcH: number, utcM: number) => {
+            const d = new Date(); d.setUTCHours(utcH, utcM, 0, 0);
+            return { h: d.getHours(), m: d.getMinutes() };
+          };
+          // Snap local minutes to nearest 15
+          const snapTo15 = (m: number) => Math.round(m / 15) * 15 % 60;
+
+          const localVal = toLocal(form.post_hour, form.post_minute ?? 0);
+          const localH = localVal.h;
+          const localM = snapTo15(localVal.m);
+
+          const handleLocalChange = (newLocalH: number, newLocalM: number) => {
+            const d = new Date(); d.setHours(newLocalH, newLocalM, 0, 0);
+            set("post_hour", d.getUTCHours());
+            set("post_minute", d.getUTCMinutes());
+          };
+
+          const fmt12 = (h: number, m: number) => {
+            const period = h < 12 ? "AM" : "PM";
+            const h12 = h % 12 === 0 ? 12 : h % 12;
+            return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+          };
+
+          return (
+            <div>
+              <label className="block text-xs font-medium text-foreground mb-1">
+                Post time <span className="text-muted-foreground font-normal">({tzShort})</span>
+              </label>
+              <div className="flex gap-2">
+                {/* Hour picker */}
+                <select
+                  value={localH}
+                  onChange={e => handleLocalChange(Number(e.target.value), localM)}
+                  className="flex-1 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                >
+                  {Array.from({ length: 24 }, (_, h) => (
+                    <option key={h} value={h}>
+                      {h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`}
+                    </option>
+                  ))}
+                </select>
+                {/* Minute picker — 15-min intervals */}
+                <select
+                  value={localM}
+                  onChange={e => handleLocalChange(localH, Number(e.target.value))}
+                  className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                >
+                  {[0, 15, 30, 45].map(m => (
+                    <option key={m} value={m}>{String(m).padStart(2, "0")}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Posts at {fmt12(localH, localM)} {tzShort} · saved as {String(form.post_hour).padStart(2,"0")}:{String(form.post_minute ?? 0).padStart(2,"0")} UTC
+              </p>
+            </div>
+          );
+        })()}
 
         {/* Posts per run */}
         <div>
@@ -2256,6 +2307,7 @@ function RssFeedsTab() {
       image_model_id: form.image_model_id || undefined, video_model_id: form.video_model_id || undefined,
       platforms: form.platforms, posting_mode: form.posting_mode, frequency: form.frequency,
       post_hour: form.post_hour,
+      post_minute: form.post_minute ?? 0,
       day_of_week: form.frequency === "weekly" ? form.day_of_week : undefined,
       day_of_month: form.frequency === "monthly" ? form.day_of_month : undefined,
       posts_per_run: form.posts_per_run, article_selection: form.article_selection,
@@ -2271,6 +2323,7 @@ function RssFeedsTab() {
       image_model_id: form.image_model_id || undefined, video_model_id: form.video_model_id || undefined,
       platforms: form.platforms, posting_mode: form.posting_mode, frequency: form.frequency,
       post_hour: form.post_hour,
+      post_minute: form.post_minute ?? 0,
       day_of_week: form.frequency === "weekly" ? form.day_of_week : undefined,
       day_of_month: form.frequency === "monthly" ? form.day_of_month : undefined,
       posts_per_run: form.posts_per_run, article_selection: form.article_selection,
@@ -2686,7 +2739,7 @@ function RssFeedsTab() {
             label: editModal.label, content_type: editModal.content_type,
             image_model_id: editModal.image_model_id || "", video_model_id: editModal.video_model_id || "",
             platforms: editModal.platforms || [], posting_mode: editModal.posting_mode,
-            frequency: editModal.frequency, post_hour: editModal.post_hour ?? 9,
+            frequency: editModal.frequency, post_hour: editModal.post_hour ?? 9, post_minute: editModal.post_minute ?? 0,
             day_of_week: editModal.day_of_week ?? 0,
             day_of_month: editModal.day_of_month ?? 1, posts_per_run: editModal.posts_per_run,
             article_selection: editModal.article_selection, tone_style: editModal.tone_style,

@@ -89,7 +89,7 @@ celery_app.conf.update(
     beat_schedule={
         "fire-due-scheduled-posts": {
             "task": "app.fire_due_scheduled_posts",
-            "schedule": schedule(run_every=60),  # check every 60 seconds
+            "schedule": schedule(run_every=300),  # every 5 minutes — fine-grained enough for scheduling precision without hammering the DB every second
         },
         "cleanup-expired-logs": {
             "task": "app.cleanup_expired_logs",
@@ -125,7 +125,7 @@ celery_app.conf.update(
         },
         "post-due-streak-ads": {
             "task": "app.post_due_streak_ads",
-            "schedule": crontab(minute=5),  # :05 past every hour — posts generated streak ads at their scheduled time
+            "schedule": schedule(run_every=300),  # every 5 minutes — same cadence as fire_due_scheduled_posts for consistent timing across all posting paths
         },
     },
 )

@@ -1404,14 +1404,23 @@ def generate_campaign_ad_image(self, job_id: str, skip_reference: bool = False):
 
 @celery_app.task(name="app.fire_due_scheduled_posts")
 def fire_due_scheduled_posts():
-    """Celery Beat periodic task: finds scheduled posts whose time has come
-    and posts them. For platforms with a real, connected integration
-    (currently just LinkedIn — see services/linkedin.py) and
-    MOCK_POSTING=False, this actually publishes; a failed real post is
-    marked "failed" (not "posted") and left for the customer to retry
-    manually from My Ads, rather than silently pretending it went out.
-    Everything else still uses the same honest simulated-posting
-    behavior the app has always had."""
+    """Celery Beat periodic task (every 5 min): finds ScheduledPosts whose
+    UTC scheduled_at has passed and fans each one out to the posting queue
+    via post_ad_now. All times are stored as naive UTC in the DB — the
+    frontend converts the user's chosen local wall-clock time to UTC before
+    sending (see frontend/src/lib/timezone.ts), so the comparison here is
+    always apples-to-apples without any timezone logic needed.
+
+    Why fan-out instead of posting inline:
+      Previously this task posted to every platform synchronously in the
+      loop — a single LinkedIn image upload (5–8s) per post per platform
+      meant 10 scheduled posts × 3 platforms = 90s of blocking the worker,
+      during which no other tasks (generation, RSS, streak posting) could
+      run. Now each due ScheduledPost gets a PostJob row + a send_task to
+      the posting queue and this task exits in milliseconds.
+    """
+    from app.worker import celery_app as _app
+
     with Session(sync_engine) as db:
         due = db.scalars(
             select(ScheduledPost).where(
@@ -1422,98 +1431,46 @@ def fire_due_scheduled_posts():
         if not due:
             return "nothing due"
 
-        posted_count = 0
-        failed_count = 0
+        dispatched = 0
+        skipped = 0
+
         for sp in due:
             ad = db.get(Ad, sp.ad_id)
-            # linkedin_personal is the real integration ID — "linkedin" was the
-            # old pre-split id used before personal/company were separated.
-            # Ad.platforms stores the ad-targeting id ("linkedin") but
-            # ScheduledPost.platform stores the connection id ("linkedin_personal").
-            # Match on both so ads targeted to "linkedin" post via "linkedin_personal".
-            is_linkedin_personal = sp.platform in ("linkedin_personal", "linkedin")
-            # Read mock_posting and linkedin api_version from DB config (sync session — works fine here)
-            from app.models import get_config_row_sync as _gcr
-            from app.services.platform_config import get_platform_integrations_sync as _get_platforms
-            _platform_cfg = (_gcr(db, "platform").config or {})
-            _launch_cfg = _platform_cfg.get("launch", {})
-            mock_posting = _launch_cfg.get("mock_posting", settings.MOCK_POSTING)
-            _li_cfg = next((p for p in _get_platforms(db) if p.get("id") in ("linkedin_personal", "linkedin_company", "linkedin")), {})
-            linkedin_api_version = (_li_cfg.get("api_version") or "").strip() or linkedin.LINKEDIN_API_VERSION
-            if is_linkedin_personal and not mock_posting:
-                conn = db.scalar(select(PlatformConnection).where(
-                    PlatformConnection.company_id == sp.company_id,
-                    PlatformConnection.platform.in_(["linkedin_personal", "linkedin"]),
-                ))
-                if not (conn and conn.status == "connected"):
-                    sp.status = "failed"
-                    failed_count += 1
-                    continue
-                try:
-                    access_token = decrypt_token(conn.encrypted_token)
-                    person_urn = linkedin.get_person_urn(access_token)
-                    variant = (ad.results or {}).get("variants", [{}])[0] if ad and ad.results else {}
-                    caption = (variant.get("linkedin") or variant.get("linkedin_personal") or {}).get("caption") or ""
-                    platform_image_urls = variant.get("platform_image_urls") or {}
-                    image_url = platform_image_urls.get(sp.platform) or platform_image_urls.get("linkedin") or variant.get("image_url")
-                    platform_video_urls = variant.get("platform_video_urls") or {}
-                    video_url = platform_video_urls.get(sp.platform) or platform_video_urls.get("linkedin") or variant.get("video_url")
-                    linkedin.post_to_linkedin(access_token, person_urn, caption, api_version=linkedin_api_version, image_url=image_url, video_url=video_url)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("[schedule] scheduled_post=%s LinkedIn post failed: %s", sp.id, exc)
-                    sp.status = "failed"
-                    failed_count += 1
-                    continue
+            if ad is None:
+                sp.status = "failed"
+                skipped += 1
+                db.commit()
+                continue
 
-            elif sp.platform == "tiktok" and not mock_posting:
-                from app.services import tiktok as tiktok_svc
-                import json as _json
-                conn = db.scalar(select(PlatformConnection).where(
-                    PlatformConnection.company_id == sp.company_id,
-                    PlatformConnection.platform == "tiktok",
-                ))
-                if not (conn and conn.status == "connected"):
-                    sp.status = "failed"
-                    failed_count += 1
-                    continue
-                try:
-                    stored = _json.loads(decrypt_token(conn.encrypted_token))
-                    access_token = stored["access_token"]
-                    variant = (ad.results or {}).get("variants", [{}])[0] if ad and ad.results else {}
-                    caption = (variant.get("tiktok") or {}).get("caption") or ""
-                    platform_image_urls = variant.get("platform_image_urls") or {}
-                    image_url = platform_image_urls.get("tiktok") or variant.get("image_url")
-                    platform_video_urls = variant.get("platform_video_urls") or {}
-                    video_url = platform_video_urls.get("tiktok") or variant.get("video_url")
-                    extra_images = [
-                        u for u in (variant.get("carousel_image_urls") or [])
-                        if u and u != image_url
-                    ]
-                    tiktok_svc.post_to_tiktok(
-                        access_token, caption,
-                        image_url=image_url,
-                        video_url=video_url,
-                        extra_image_urls=extra_images or None,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("[schedule] scheduled_post=%s TikTok post failed: %s", sp.id, exc)
-                    sp.status = "failed"
-                    failed_count += 1
-                    continue
+            # Mark as queued immediately so the next 5-min run doesn't
+            # double-dispatch the same ScheduledPost.
+            sp.status = "queued"
+            db.flush()
 
-            sp.status = "posted"
-            sp.posted_at = datetime.utcnow()
-            if ad:
-                current = set(ad.posted_platforms or [])
-                current.add(sp.platform)
-                ad.posted_platforms = list(current)
-                flag_modified(ad, "posted_platforms")
-                if ad.posted_at is None:
-                    ad.posted_at = sp.posted_at
-                ad.status = "posted"
-            posted_count += 1
+            # Create a PostJob scoped to this single platform (one
+            # ScheduledPost = one platform) so post_ad_now can track
+            # per-platform success/failure the same way it does for
+            # manual posts.
+            post_job = PostJob(
+                company_id=sp.company_id,
+                ad_id=sp.ad_id,
+                platforms=[sp.platform],
+                status="queued",
+                succeeded=[],
+                failed={},
+            )
+            db.add(post_job)
+            db.flush()
+
+            _app.send_task("app.post_ad_now", args=[str(post_job.id)], queue="posting")
+            dispatched += 1
+            logger.info(
+                "[schedule] scheduled_post=%s ad=%s platform=%s dispatched post_job=%s",
+                sp.id, sp.ad_id, sp.platform, post_job.id,
+            )
+
         db.commit()
-        return f"posted {posted_count}, failed {failed_count}"
+        return f"dispatched={dispatched} skipped={skipped}"
 
 
 @celery_app.task(name="app.cleanup_expired_media")
@@ -2322,12 +2279,15 @@ def post_ad_now(self, post_job_id: str):
                 ad.posted_at = datetime.utcnow()
             ad.status = "posted"
 
-            # Resolve any pending scheduled posts for these platforms
+            # Resolve any pending/queued scheduled posts for these platforms.
+            # Includes "queued" status because fire_due_scheduled_posts now
+            # flips ScheduledPost.status to "queued" before dispatching — so
+            # checking only "pending" would miss them.
             pending_scheduled = db.scalars(
                 select(ScheduledPost).where(
                     ScheduledPost.ad_id == ad.id,
                     ScheduledPost.platform.in_(succeeded),
-                    ScheduledPost.status == "pending",
+                    ScheduledPost.status.in_(["pending", "queued"]),
                 )
             ).all()
             for sp in pending_scheduled:
@@ -2654,6 +2614,114 @@ def _get_company_context_sync(db, company_id) -> str:
         prod_names = ", ".join(p.name for p in products)
         ctx_parts.append(f"Products/services: {prod_names}")
     return ". ".join(ctx_parts) or "A business sharing relevant industry content."
+
+
+# ── RSS completion signals ───────────────────────────────────────────────────
+# When generate_ad completes for an RSS ad, these handlers either:
+#   a) dispatch post_ad_now to the posting queue (auto_post mode), or
+#   b) create the RssFeedDraft + Notification (manual approval mode)
+# Both are driven by headers set on the generate_ad task by _generate_rss_article_post.
+
+@_task_success.connect(sender=None)
+def _on_rss_generate_done(sender=None, result=None, **kwargs):
+    if not sender or getattr(sender, "name", None) != "app.generate_ad":
+        return
+    request = getattr(sender, "request", None)
+    if not request:
+        return
+    headers = request.headers or {}
+
+    # ── Auto-post path — create ScheduledPost rows, fire_due_scheduled_posts handles the rest ──
+    if headers.get("rss_auto_post") == "1":
+        try:
+            from sqlalchemy.orm import Session as _Session
+            from app.models import ScheduledPost as _SP, Ad as _Ad
+            import uuid as _uuid
+
+            company_id  = headers.get("rss_company_id")
+            ad_id       = headers.get("rss_ad_id")
+            platforms   = [p for p in (headers.get("rss_platforms") or "").split(",") if p]
+            sched_str   = headers.get("rss_scheduled_at")
+
+            if not all([company_id, ad_id, platforms, sched_str]):
+                logger.error("[rss-signal] auto-post missing headers: %s", headers)
+                return
+
+            scheduled_at = datetime.strptime(sched_str, "%Y-%m-%dT%H:%M:%S")
+
+            with _Session(sync_engine) as db:
+                ad = db.get(_Ad, _uuid.UUID(ad_id))
+                if ad:
+                    ad.status = "scheduled"
+
+                for platform in platforms:
+                    db.add(_SP(
+                        company_id=_uuid.UUID(company_id),
+                        ad_id=_uuid.UUID(ad_id),
+                        platform=platform,
+                        scheduled_at=scheduled_at,
+                        status="pending",
+                    ))
+                db.commit()
+                logger.info(
+                    "[rss-signal] ad=%s scheduled for %s UTC on platforms=%s",
+                    ad_id, sched_str, platforms,
+                )
+        except Exception as exc:
+            logger.error("[rss-signal] auto-post scheduling failed for ad=%s: %s", headers.get("rss_ad_id"), exc)
+        return
+
+    # ── Manual approval path — create draft + notification ───────────────────
+    rss_sub_id = headers.get("rss_sub_id")
+    if not rss_sub_id:
+        return
+    try:
+        from sqlalchemy.orm import Session as _Session
+        from app.models import Ad as _Ad, RssFeedDraft as _Draft, Notification as _Notif, RssFeedSubscription as _Sub
+        from datetime import timedelta as _td
+
+        with _Session(sync_engine) as db:
+            # Find the Ad that was just generated — sender.request.args[0] is job_id
+            job_id = (request.args or [None])[0]
+            if not job_id:
+                return
+            from app.models import GenerationJob as _GJ
+            gj = db.get(_GJ, job_id)
+            if not gj:
+                return
+            ad = db.get(_Ad, gj.ad_id)
+            sub = db.get(_Sub, rss_sub_id)
+            if not ad or not sub:
+                return
+
+            now = datetime.utcnow()
+            draft = _Draft(
+                company_id=sub.company_id,
+                subscription_id=sub.id,
+                article_url=headers.get("rss_article_url", ""),
+                article_title=headers.get("rss_article_title", "")[:500],
+                article_summary=headers.get("rss_article_summary", "")[:2000],
+                ad_id=ad.id,
+                status="pending",
+                expires_at=now + _td(hours=24),
+            )
+            db.add(draft)
+            db.add(_Notif(
+                company_id=sub.company_id,
+                type="agent_draft_ready",
+                title=f"📰 RSS draft ready: {headers.get('rss_article_title', '')[:80]}",
+                body=(
+                    f"Agent Niva generated a post from your RSS feed "
+                    f"({sub.label or 'RSS subscription'}). "
+                    f"Approve it in Agent Niva → RSS Feeds before it expires in 24 hours."
+                ),
+                action_url="/app/agent-niva",
+                dismissed_by=[],
+            ))
+            db.commit()
+            logger.info("[rss-signal] draft created for sub=%s ad=%s", sub.id, ad.id)
+    except Exception as exc:
+        logger.error("[rss-signal] draft creation failed for sub=%s: %s", rss_sub_id, exc)
 
 
 @celery_app.task(name="app.process_rss_feeds", bind=True, max_retries=0)
@@ -3120,57 +3188,61 @@ def _generate_rss_article_post(
         reason="rss_generation",
         ref_id=str(ad.id),
     ))
-    db.commit()
 
-    # Generate the ad synchronously (we're already in a Celery worker)
-    generate_ad(str(job.id))
-
-    # Mark article as seen
+    # Mark article as seen NOW (before dispatching) so if the worker
+    # restarts mid-batch this article isn't re-processed next run.
     db.add(RssFeedSeenItem(subscription_id=sub.id, article_url=article["url"]))
     db.commit()
 
+    from app.worker import celery_app as _app
+
     if sub.posting_mode == "auto_post":
-        # Create PostJob and fire post_ad_now
-        post_job = PostJob(
-            company_id=sub.company_id,
-            ad_id=ad.id,
-            platforms=platforms,
-            status="queued",
-            succeeded=[],
-            failed={},
-        )
-        db.add(post_job)
+        # Dispatch generation — pass scheduling info in headers so the
+        # success signal can create a ScheduledPost at the right time,
+        # decoupling generation (happens now) from posting (happens at
+        # the subscription's configured post_hour:post_minute).
         db.commit()
-        post_ad_now(str(post_job.id))  # direct call — already in Celery worker
-        logger.info("[rss] sub=%s auto-posted ad=%s", sub.id, ad.id)
+
+        # Compute the scheduled UTC posting datetime for today.
+        # next_run_at was already advanced by _advance_next_run before
+        # this function is called, so we use today's date + post_hour/minute.
+        post_h = sub.post_hour if sub.post_hour is not None else 13
+        post_m = sub.post_minute if sub.post_minute is not None else 0
+        scheduled_at_utc = now.replace(hour=post_h, minute=post_m, second=0, microsecond=0)
+        # If the scheduled posting time has already passed today (e.g. feed
+        # ran right at the post_hour and generation took a few seconds past it),
+        # push to the same time tomorrow so we don't post in the past.
+        if scheduled_at_utc <= now:
+            scheduled_at_utc = scheduled_at_utc + timedelta(days=1)
+
+        _app.send_task(
+            "app.generate_ad",
+            args=[str(job.id)],
+            queue="generation",
+            headers={
+                "rss_auto_post": "1",
+                "rss_company_id": str(sub.company_id),
+                "rss_ad_id": str(ad.id),
+                "rss_platforms": ",".join(platforms),
+                "rss_scheduled_at": scheduled_at_utc.strftime("%Y-%m-%dT%H:%M:%S"),
+            },
+        )
+        logger.info("[rss] sub=%s ad=%s dispatched generation (auto-post mode, will post at %s UTC)", sub.id, ad.id, scheduled_at_utc.strftime("%H:%M"))
     else:
-        # Create manual-approval draft (expires in 24 hours)
-        draft = RssFeedDraft(
-            company_id=sub.company_id,
-            subscription_id=sub.id,
-            article_url=article["url"],
-            article_title=article["title"][:500],
-            article_summary=article["summary"][:2000],
-            ad_id=ad.id,
-            status="pending",
-            expires_at=now + timedelta(hours=24),
-        )
-        db.add(draft)
-        # Notify the company about the new draft
-        db.add(Notification(
-            company_id=sub.company_id,
-            type="agent_draft_ready",
-            title=f"📰 RSS draft ready: {article['title'][:80]}",
-            body=(
-                f"Agent Niva generated a post from your RSS feed "
-                f"({sub.label or 'RSS subscription'}). "
-                f"Approve it in Agent Niva → RSS Feeds before it expires in 24 hours."
-            ),
-            action_url="/app/agent-niva",
-            dismissed_by=[],
-        ))
+        # Manual approval — dispatch generation only; draft created after
+        # user approves from the RSS Feeds UI.
         db.commit()
-        logger.info("[rss] sub=%s created draft for article=%s", sub.id, article["url"])
+        _app.send_task(
+            "app.generate_ad",
+            args=[str(job.id)],
+            queue="generation",
+            headers={"rss_sub_id": str(sub.id), "rss_article_title": article.get("title", "")[:500], "rss_article_url": article.get("url", ""), "rss_article_summary": article.get("summary", "")[:2000]},
+        )
+        logger.info("[rss] sub=%s ad=%s dispatched generation (manual approval mode)", sub.id, ad.id)
+        # Draft + notification created by the rss_draft_on_generate_done signal below
+        return  # exit here — draft creation handled by signal
+
+
 
 
 # ── RSS Feed Health Check ─────────────────────────────────────────────────────
