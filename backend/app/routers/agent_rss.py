@@ -441,11 +441,26 @@ async def approve_draft(draft_id: str, user: User = Depends(get_current_user), d
 
 @router.delete("/drafts/{draft_id}", status_code=204)
 async def dismiss_draft(draft_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Dismiss a pending draft without posting it."""
+    """Dismiss a pending draft without posting it.
+    Also deletes the associated Ad so it doesn't linger in My Ads —
+    keeping both views in sync regardless of which one the user acts from."""
+    from sqlalchemy import delete as _delete
+    from app.models import GenerationJob, PostJob, ScheduledPost
     draft = await db.get(RssFeedDraft, uuid.UUID(draft_id))
     if draft is None or draft.company_id != user.company_id:
         raise HTTPException(404, "Draft not found.")
-    draft.status = "dismissed"
+    ad_id = draft.ad_id
+    # Delete the draft first (FK constraint on ads)
+    await db.delete(draft)
+    await db.flush()
+    # Delete the associated ad and its dependents if it exists
+    if ad_id:
+        ad = await db.get(Ad, ad_id)
+        if ad and ad.company_id == user.company_id:
+            await db.execute(_delete(GenerationJob).where(GenerationJob.ad_id == ad_id))
+            await db.execute(_delete(PostJob).where(PostJob.ad_id == ad_id))
+            await db.execute(_delete(ScheduledPost).where(ScheduledPost.ad_id == ad_id))
+            await db.delete(ad)
     await db.commit()
 
 

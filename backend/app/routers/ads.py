@@ -14,7 +14,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user, require_capability
-from app.models import Ad, AuditLog, BrandKit, Campaign, CreditLedger, GenerationJob, PlatformConnection, PostJob, Product, ScheduledPost, User
+from app.models import Ad, AuditLog, BrandKit, Campaign, CreditLedger, GenerationJob, PlatformConnection, PostJob, Product, RssFeedDraft, ScheduledPost, User
 from app.schemas import (
     AdCreateIn, AdCreatedOut, AdListOut, AdOut, AdPatchIn, AdScheduledPostOut, AssistantHintOut,
     AssistantSettingsOut, AvailableModelOut, AvailableModelsOut, CameraStylePresetOut, MusicPresetOut,
@@ -1426,6 +1426,7 @@ async def delete_ad(ad_id: uuid.UUID, user: User = Depends(require_capability("c
     await db.execute(delete(GenerationJob).where(GenerationJob.ad_id == ad.id))
     await db.execute(delete(PostJob).where(PostJob.ad_id == ad.id))
     await db.execute(delete(ScheduledPost).where(ScheduledPost.ad_id == ad.id))
+    await db.execute(delete(RssFeedDraft).where(RssFeedDraft.ad_id == ad.id))
     await db.delete(ad)
     db.add(AuditLog(company_id=user.company_id, user_id=user.id, action="ad.deleted", detail={"ad_id": str(ad_id)}))
     await db.commit()
