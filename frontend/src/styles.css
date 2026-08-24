@@ -179,7 +179,7 @@ html.dark nav a:not([class*="bg-primary"]):not([data-glass-nav]):hover {
 }
 /* Section labels: LIBRARY, SETUP, INSIGHTS, CREATE */
 html.dark nav div[class*="text-muted-foreground"] {
-  color: oklch(0.72 0.08 282) !important;
+  color: oklch(0.58 0.05 282) !important;
 }
 
 /* ── LIGHT MODE: Golden Sand "Warm Premium" ────────────────────────────

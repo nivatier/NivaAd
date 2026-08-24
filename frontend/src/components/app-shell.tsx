@@ -76,7 +76,7 @@ const GLASS_NAV_STYLE = `
   a[data-glass-nav] {
     --gnx: 50%;
     --gny: 50%;
-    opacity: 0.60;
+    opacity: 0.85;
     transition: opacity 0.16s ease, box-shadow 0.16s ease,
                 color 0.16s ease, text-shadow 0.16s ease;
     background: transparent !important;
@@ -106,7 +106,7 @@ const GLASS_NAV_STYLE = `
     --glass-nav-fill-center: oklch(0.92 0.20 205 / 0.26);
     --glass-nav-fill-mid:    oklch(0.80 0.16 212 / 0.13);
   }
-  html.dark a[data-glass-nav] { color: oklch(0.72 0.07 278); }
+  html.dark a[data-glass-nav] { color: oklch(0.88 0.03 280); }
   html.dark a[data-glass-nav]:hover {
     color: oklch(0.97 0.06 215) !important;
     text-shadow: 0 0 14px oklch(0.90 0.22 210 / 0.65),
@@ -124,7 +124,7 @@ const GLASS_NAV_STYLE = `
                  0 0 26px oklch(0.85 0.20 210 / 0.22) !important;
   }
   html.dark a[data-glass-nav] .glass-nav-icon {
-    color: oklch(0.58 0.09 278);
+    color: oklch(0.82 0.04 280);
     transition: color 0.16s ease, filter 0.16s ease;
   }
   html.dark a[data-glass-nav]:hover .glass-nav-icon {
@@ -752,7 +752,7 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
           </Link>
           <div className="ml-auto flex items-center gap-2">
             {/* Notifications bell — mobile */}
-            <div className="relative">
+            <div className="relative" ref={notifRef}>
               <button
                 onClick={() => setShowNotifications((v) => !v)}
                 title="Notifications"
@@ -760,11 +760,69 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
               >
                 <Bell className="h-3.5 w-3.5" strokeWidth={2} />
                 {notifications.length > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-red-500 text-[8px] font-bold text-white">
+                  <span className="absolute -top-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-red-500 text-[8px] font-bold text-white animate-pulse shadow-[0_0_6px_1px_rgba(239,68,68,0.5)]">
                     {notifications.length > 9 ? "9+" : notifications.length}
                   </span>
                 )}
               </button>
+              {showNotifications && (
+                <div className="absolute right-0 top-9 z-50 w-[min(320px,calc(100vw-2rem))] rounded-2xl border border-white/[0.09] overflow-hidden
+                  bg-gradient-to-b from-[oklch(from_var(--card)_l_c_h_/_0.92)] to-[oklch(from_var(--card)_l_c_h_/_0.80)]
+                  backdrop-blur-2xl
+                  shadow-[0_0_0_1px_oklch(1_0_0_/_0.08),0_16px_48px_-8px_oklch(0_0_0_/_0.6),inset_0_1px_0_oklch(1_0_0_/_0.14)]">
+                  <div className="border-b border-white/[0.07] px-4 py-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-foreground">Notifications</span>
+                      {notifications.length > 0 && (
+                        <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400">{notifications.length} new</span>
+                      )}
+                    </div>
+                    {notifications.length > 0 && (
+                      <button onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          const res = await fetch(`${API_BASE}/agent/notifications/dismiss-all`, { method: "POST", headers: { Authorization: `Bearer ${getAuthToken()}` } });
+                          if (res.ok) setNotifications(await res.json());
+                        } catch { /* ignore */ }
+                      }} className="text-[10px] text-muted-foreground hover:text-red-400 transition">Clear all</button>
+                    )}
+                  </div>
+                  <div className="max-h-72 overflow-y-auto divide-y divide-white/[0.05]">
+                    {notifications.length === 0 ? (
+                      <div className="px-4 py-8 text-center text-xs text-muted-foreground">No notifications</div>
+                    ) : notifications.map((n) => (
+                      <div key={n.id}
+                        onClick={() => {
+                          if (n.action_url) {
+                            setShowNotifications(false);
+                            const [path, qs] = n.action_url.split("?");
+                            const search = qs ? Object.fromEntries(new URLSearchParams(qs)) : {};
+                            navigate({ to: path as any, search: (prev: any) => ({ ...prev, ...search }) });
+                          }
+                        }}
+                        className={`group relative px-4 py-3 transition ${n.action_url ? "cursor-pointer hover:bg-white/[0.05]" : "hover:bg-white/[0.03]"}`}
+                      >
+                        <div className="text-xs font-semibold text-foreground pr-6">{n.title}</div>
+                        {n.body && <div className="mt-0.5 text-[11px] text-muted-foreground leading-relaxed line-clamp-2">{n.body}</div>}
+                        {n.action_url && (
+                          <div className="mt-2">
+                            <span className="rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">Review →</span>
+                          </div>
+                        )}
+                        <button onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            const res = await fetch(`${API_BASE}/agent/notifications/${n.id}/dismiss`, { method: "POST", headers: { Authorization: `Bearer ${getAuthToken()}` } });
+                            if (res.ok) setNotifications(await res.json());
+                          } catch { /* ignore */ }
+                        }} className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition text-muted-foreground hover:text-foreground" title="Clear">
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <ThemeToggle />
             <button
