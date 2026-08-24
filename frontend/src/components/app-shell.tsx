@@ -791,32 +791,42 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
                     {notifications.length === 0 ? (
                       <div className="px-4 py-8 text-center text-xs text-muted-foreground">No notifications</div>
                     ) : notifications.map((n) => (
-                      <div key={n.id}
-                        onClick={() => {
-                          if (n.action_url) {
-                            setShowNotifications(false);
-                            const [path, qs] = n.action_url.split("?");
-                            const search = qs ? Object.fromEntries(new URLSearchParams(qs)) : {};
-                            navigate({ to: path as any, search: (prev: any) => ({ ...prev, ...search }) });
-                          }
-                        }}
-                        className={`group relative px-4 py-3 transition ${n.action_url ? "cursor-pointer hover:bg-white/[0.05]" : "hover:bg-white/[0.03]"}`}
-                      >
-                        <div className="text-xs font-semibold text-foreground pr-6">{n.title}</div>
-                        {n.body && <div className="mt-0.5 text-[11px] text-muted-foreground leading-relaxed line-clamp-2">{n.body}</div>}
-                        {n.action_url && (
-                          <div className="mt-2">
-                            <span className="rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">Review →</span>
-                          </div>
-                        )}
-                        <button onClick={async (e) => {
-                          e.stopPropagation();
-                          try {
-                            const res = await fetch(`${API_BASE}/agent/notifications/${n.id}/dismiss`, { method: "POST", headers: { Authorization: `Bearer ${getAuthToken()}` } });
-                            if (res.ok) setNotifications(await res.json());
-                          } catch { /* ignore */ }
-                        }} className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition text-muted-foreground hover:text-foreground" title="Clear">
-                          <X className="h-3 w-3" />
+                      <div key={n.id} className="group relative flex items-stretch divide-x divide-white/[0.05]">
+                        {/* Main row — navigate on tap */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (n.action_url) {
+                              setShowNotifications(false);
+                              const [path, qs] = n.action_url.split("?");
+                              const search = qs ? Object.fromEntries(new URLSearchParams(qs)) : {};
+                              navigate({ to: path as any, search: (prev: any) => ({ ...prev, ...search }) });
+                            }
+                          }}
+                          className="flex-1 text-left px-4 py-3 transition hover:bg-white/[0.05] active:bg-white/[0.08]"
+                        >
+                          <div className="text-xs font-semibold text-foreground pr-2">{n.title}</div>
+                          {n.body && <div className="mt-0.5 text-[11px] text-muted-foreground leading-relaxed line-clamp-2">{n.body}</div>}
+                          {n.action_url && (
+                            <div className="mt-2">
+                              <span className="rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">Review →</span>
+                            </div>
+                          )}
+                        </button>
+                        {/* Clear button — separate tap target */}
+                        <button
+                          type="button"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              const res = await fetch(`${API_BASE}/agent/notifications/${n.id}/dismiss`, { method: "POST", headers: { Authorization: `Bearer ${getAuthToken()}` } });
+                              if (res.ok) setNotifications(await res.json());
+                            } catch { /* ignore */ }
+                          }}
+                          className="flex items-center px-3 text-muted-foreground hover:text-foreground active:text-foreground transition"
+                          title="Clear"
+                        >
+                          <X className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     ))}
@@ -902,28 +912,29 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
                       {notifications.length === 0 ? (
                         <div className="px-4 py-8 text-center text-xs text-muted-foreground">No notifications</div>
                       ) : notifications.map((n) => (
-                        <div key={n.id}
-                          onClick={() => {
-                            if (n.action_url) {
-                              setShowNotifications(false);
-                              const [path, qs] = n.action_url.split("?");
-                              const search = qs ? Object.fromEntries(new URLSearchParams(qs)) : {};
-                              navigate({ to: path as any, search: (prev: any) => ({ ...prev, ...search }) });
-                            }
-                          }}
-                          className={`group relative px-4 py-3 transition ${n.action_url ? "cursor-pointer hover:bg-white/[0.05]" : "hover:bg-white/[0.03]"}`}
-                        >
-                          <div className="text-xs font-semibold text-foreground pr-6">{n.title}</div>
-                          {n.body && <div className="mt-0.5 text-[11px] text-muted-foreground leading-relaxed line-clamp-2">{n.body}</div>}
-                          <div className="mt-2 flex items-center gap-2">
-                            {n.action_url && (
-                              <span className="rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">
-                                Review →
-                              </span>
-                            )}
-                          </div>
-                          {/* Clear button — top right of each row */}
+                        <div key={n.id} className="group relative flex items-stretch divide-x divide-white/[0.05]">
                           <button
+                            type="button"
+                            onClick={() => {
+                              if (n.action_url) {
+                                setShowNotifications(false);
+                                const [path, qs] = n.action_url.split("?");
+                                const search = qs ? Object.fromEntries(new URLSearchParams(qs)) : {};
+                                navigate({ to: path as any, search: (prev: any) => ({ ...prev, ...search }) });
+                              }
+                            }}
+                            className="flex-1 text-left px-4 py-3 transition hover:bg-white/[0.05] active:bg-white/[0.08]"
+                          >
+                            <div className="text-xs font-semibold text-foreground">{n.title}</div>
+                            {n.body && <div className="mt-0.5 text-[11px] text-muted-foreground leading-relaxed line-clamp-2">{n.body}</div>}
+                            {n.action_url && (
+                              <div className="mt-2">
+                                <span className="rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">Review →</span>
+                              </div>
+                            )}
+                          </button>
+                          <button
+                            type="button"
                             onClick={async (e) => {
                               e.stopPropagation();
                               try {
@@ -931,10 +942,10 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
                                 if (res.ok) setNotifications(await res.json());
                               } catch { /* ignore */ }
                             }}
-                            className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition text-muted-foreground hover:text-foreground"
+                            className="flex items-center px-3 text-muted-foreground hover:text-foreground active:text-foreground transition"
                             title="Clear"
                           >
-                            <X className="h-3 w-3" />
+                            <X className="h-3.5 w-3.5" />
                           </button>
                         </div>
                       ))}
