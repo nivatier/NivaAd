@@ -14,7 +14,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user, require_capability
-from app.models import Ad, AuditLog, BrandKit, Campaign, CreditLedger, GenerationJob, PlatformConnection, PostJob, Product, RssFeedDraft, ScheduledPost, User
+from app.models import Ad, AgentRecommendation, AuditLog, BrandKit, Campaign, CreditLedger, GenerationJob, PlatformConnection, PostJob, Product, RssFeedDraft, ScheduledPost, StreakAd, User
 from app.schemas import (
     AdCreateIn, AdCreatedOut, AdListOut, AdOut, AdPatchIn, AdScheduledPostOut, AssistantHintOut,
     AssistantSettingsOut, AvailableModelOut, AvailableModelsOut, CameraStylePresetOut, MusicPresetOut,
@@ -1423,10 +1423,22 @@ async def delete_ad(ad_id: uuid.UUID, user: User = Depends(require_capability("c
         raise HTTPException(404, "Ad not found")
     # No ON DELETE CASCADE is configured on these foreign keys, so clean up
     # dependent rows first to avoid a foreign-key violation on delete.
+    # Clean up every table with a FK to ads.id — order matters for FKs
     await db.execute(delete(GenerationJob).where(GenerationJob.ad_id == ad.id))
     await db.execute(delete(PostJob).where(PostJob.ad_id == ad.id))
     await db.execute(delete(ScheduledPost).where(ScheduledPost.ad_id == ad.id))
     await db.execute(delete(RssFeedDraft).where(RssFeedDraft.ad_id == ad.id))
+    # Null out soft references rather than deleting parent rows
+    await db.execute(
+        __import__("sqlalchemy").update(AgentRecommendation)
+        .where(AgentRecommendation.created_ad_id == ad.id)
+        .values(created_ad_id=None)
+    )
+    await db.execute(
+        __import__("sqlalchemy").update(StreakAd)
+        .where(StreakAd.ad_id == ad.id)
+        .values(ad_id=None)
+    )
     await db.delete(ad)
     db.add(AuditLog(company_id=user.company_id, user_id=user.id, action="ad.deleted", detail={"ad_id": str(ad_id)}))
     await db.commit()

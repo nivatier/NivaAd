@@ -444,8 +444,8 @@ async def dismiss_draft(draft_id: str, user: User = Depends(get_current_user), d
     """Dismiss a pending draft without posting it.
     Also deletes the associated Ad so it doesn't linger in My Ads —
     keeping both views in sync regardless of which one the user acts from."""
-    from sqlalchemy import delete as _delete
-    from app.models import GenerationJob, PostJob, ScheduledPost
+    from sqlalchemy import delete as _delete, update as _update
+    from app.models import AgentRecommendation, GenerationJob, PostJob, ScheduledPost, StreakAd
     draft = await db.get(RssFeedDraft, uuid.UUID(draft_id))
     if draft is None or draft.company_id != user.company_id:
         raise HTTPException(404, "Draft not found.")
@@ -460,6 +460,8 @@ async def dismiss_draft(draft_id: str, user: User = Depends(get_current_user), d
             await db.execute(_delete(GenerationJob).where(GenerationJob.ad_id == ad_id))
             await db.execute(_delete(PostJob).where(PostJob.ad_id == ad_id))
             await db.execute(_delete(ScheduledPost).where(ScheduledPost.ad_id == ad_id))
+            await db.execute(_update(AgentRecommendation).where(AgentRecommendation.created_ad_id == ad_id).values(created_ad_id=None))
+            await db.execute(_update(StreakAd).where(StreakAd.ad_id == ad_id).values(ad_id=None))
             await db.delete(ad)
     await db.commit()
 
