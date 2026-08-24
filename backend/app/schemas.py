@@ -1519,6 +1519,10 @@ class RssFeedSubscriptionOut(BaseModel):
     frequency: str
     post_hour: int = 9
     post_minute: int = 0
+    generate_lead_minutes: int = 30
+    generate_hour: int = 8
+    generate_minute: int = 30
+    include_logo: bool = True
     day_of_week: int | None = None
     day_of_month: int | None = None
     posts_per_run: int
@@ -1546,8 +1550,10 @@ class RssFeedSubscriptionIn(BaseModel):
     platforms: list[str] = Field(default_factory=list)
     posting_mode: str = Field(default="manual", pattern="^(auto_post|manual)$")
     frequency: str = Field(default="daily", pattern="^(daily|weekly|monthly)$")
-    post_hour: int = Field(default=9, ge=0, le=23)    # UTC hour 0-23
-    post_minute: int = Field(default=0, ge=0, le=59)  # UTC minute 0-59
+    post_hour: int = Field(default=9, ge=0, le=23)              # UTC hour 0-23 — when to POST
+    post_minute: int = Field(default=0, ge=0, le=59)            # UTC minute 0-59
+    generate_lead_minutes: int = Field(default=30, ge=15, le=60) # lead time in minutes (15/30/45/60)
+    include_logo: bool = True  # composite brand logo on generated images
     day_of_week: int | None = Field(default=None, ge=0, le=6)
     day_of_month: int | None = Field(default=None, ge=1, le=31)
     posts_per_run: int = Field(default=1, ge=1, le=3)
@@ -1566,6 +1572,8 @@ class RssFeedSubscriptionPatchIn(BaseModel):
     frequency: str | None = Field(default=None, pattern="^(daily|weekly|monthly)$")
     post_hour: int | None = Field(default=None, ge=0, le=23)
     post_minute: int | None = Field(default=None, ge=0, le=59)
+    generate_lead_minutes: int | None = Field(default=None, ge=15, le=60)
+    include_logo: bool | None = None
     day_of_week: int | None = Field(default=None, ge=0, le=6)
     day_of_month: int | None = Field(default=None, ge=1, le=31)
     posts_per_run: int | None = Field(default=None, ge=1, le=3)

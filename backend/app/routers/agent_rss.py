@@ -54,11 +54,22 @@ async def _is_pro(db: AsyncSession, company_id: uuid.UUID) -> bool:
     return sub.tier == "pro"
 
 
+def _compute_generate_time(post_hour: int, post_minute: int, lead_minutes: int) -> tuple[int, int]:
+    """Compute generate_hour and generate_minute from post time minus lead minutes.
+    Returns (generate_hour, generate_minute) in UTC, wrapping midnight correctly."""
+    total_minutes = post_hour * 60 + post_minute - lead_minutes
+    # Wrap around midnight if needed (e.g. post=00:15, lead=30 → generate=23:45 previous day)
+    total_minutes = total_minutes % (24 * 60)
+    return total_minutes // 60, total_minutes % 60
+
+
 def _compute_next_run(sub: RssFeedSubscription) -> datetime:
-    """Calculate the next run datetime based on frequency settings."""
+    """Calculate the next generation datetime using stored generate_hour/minute.
+    These are pre-computed from post_time - lead_minutes and stored in the DB
+    so the beat query is a simple next_run_at <= now comparison."""
     now = datetime.utcnow()
-    h = sub.post_hour   if sub.post_hour   is not None else 9   # default 9 AM UTC
-    m = sub.post_minute if sub.post_minute is not None else 0   # default :00
+    h = sub.generate_hour   if sub.generate_hour   is not None else 8
+    m = sub.generate_minute if sub.generate_minute is not None else 30
     if sub.frequency == "daily":
         candidate = now.replace(hour=h, minute=m, second=0, microsecond=0)
         if candidate <= now:
@@ -102,6 +113,10 @@ def _sub_out(sub: RssFeedSubscription, feed: RssFeed | None = None) -> RssFeedSu
         frequency=sub.frequency,
         post_hour=sub.post_hour if sub.post_hour is not None else 9,
         post_minute=sub.post_minute if sub.post_minute is not None else 0,
+        generate_lead_minutes=sub.generate_lead_minutes if sub.generate_lead_minutes is not None else 30,
+        generate_hour=sub.generate_hour if sub.generate_hour is not None else 8,
+        generate_minute=sub.generate_minute if sub.generate_minute is not None else 30,
+        include_logo=sub.include_logo if sub.include_logo is not None else True,
         day_of_week=sub.day_of_week,
         day_of_month=sub.day_of_month,
         posts_per_run=sub.posts_per_run,
@@ -258,6 +273,10 @@ async def create_subscription(
         frequency=data.frequency,
         post_hour=data.post_hour,
         post_minute=data.post_minute,
+        generate_lead_minutes=data.generate_lead_minutes,
+        generate_hour=_compute_generate_time(data.post_hour, data.post_minute, data.generate_lead_minutes)[0],
+        generate_minute=_compute_generate_time(data.post_hour, data.post_minute, data.generate_lead_minutes)[1],
+        include_logo=data.include_logo,
         day_of_week=data.day_of_week,
         day_of_month=data.day_of_month,
         posts_per_run=data.posts_per_run,
@@ -306,13 +325,23 @@ async def update_subscription(
         sub.enabled = data.enabled
 
     # Re-schedule if frequency/day/hour/minute settings changed
-    freq_changed = any(v is not None for v in [data.frequency, data.day_of_week, data.day_of_month, data.post_hour, data.post_minute])
+    freq_changed = any(v is not None for v in [data.frequency, data.day_of_week, data.day_of_month, data.post_hour, data.post_minute, data.generate_lead_minutes])
     if data.frequency is not None:
         sub.frequency = data.frequency
     if data.post_hour is not None:
         sub.post_hour = data.post_hour
     if data.post_minute is not None:
         sub.post_minute = data.post_minute
+    if data.generate_lead_minutes is not None:
+        sub.generate_lead_minutes = data.generate_lead_minutes
+    if data.include_logo is not None:
+        sub.include_logo = data.include_logo
+    # Recompute generate_hour/minute whenever post time or lead changes
+    if any(v is not None for v in [data.post_hour, data.post_minute, data.generate_lead_minutes]):
+        ph = sub.post_hour if sub.post_hour is not None else 9
+        pm = sub.post_minute if sub.post_minute is not None else 0
+        lead = sub.generate_lead_minutes if sub.generate_lead_minutes is not None else 30
+        sub.generate_hour, sub.generate_minute = _compute_generate_time(ph, pm, lead)
     if data.day_of_week is not None:
         sub.day_of_week = data.day_of_week
     if data.day_of_month is not None:

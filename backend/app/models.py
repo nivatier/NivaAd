@@ -566,8 +566,11 @@ class RssFeedSubscription(Base):
     posting_mode: Mapped[str] = mapped_column(String(20), default="manual")  # "auto_post" | "manual"
     # Schedule
     frequency: Mapped[str] = mapped_column(String(20), default="daily")  # "daily" | "weekly" | "monthly"
-    post_hour: Mapped[int] = mapped_column(Integer, default=9)   # 0-23 UTC — hour of day to run (beat checks hourly)
-    post_minute: Mapped[int] = mapped_column(Integer, default=0) # 0-59 UTC — minute within the hour
+    post_hour: Mapped[int] = mapped_column(Integer, default=9)              # 0-23 UTC — when to POST the ad
+    post_minute: Mapped[int] = mapped_column(Integer, default=0)            # 0-59 UTC — minute of post time
+    generate_lead_minutes: Mapped[int] = mapped_column(Integer, default=30) # lead time in minutes (15/30/45/60) — UI control
+    generate_hour: Mapped[int] = mapped_column(Integer, default=8)          # 0-23 UTC — computed from post_time - lead_minutes, stored for fast beat query
+    generate_minute: Mapped[int] = mapped_column(Integer, default=30)       # 0-59 UTC — computed minute
     day_of_week: Mapped[int | None] = mapped_column(Integer, nullable=True)   # 0=Mon..6=Sun, used when frequency="weekly"
     day_of_month: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1-31, used when frequency="monthly"
     posts_per_run: Mapped[int] = mapped_column(Integer, default=1)  # 1 | 2 | 3
@@ -577,6 +580,7 @@ class RssFeedSubscription(Base):
     tone_style: Mapped[str] = mapped_column(String(30), default="curator")
     # thought_leader | promoter | curator | educator | conversational
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    include_logo: Mapped[bool] = mapped_column(Boolean, default=True)  # whether to composite brand logo on generated images
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

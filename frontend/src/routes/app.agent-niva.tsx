@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { NovaHint } from "@/components/nova-hint";
@@ -8,9 +8,15 @@ import { useConnectedPlatforms } from "@/hooks/use-connected-platforms";
 import { useAuth } from "@/hooks/use-auth";
 import { api, type ProductOut } from "@/lib/api";
 
+const VALID_TABS = ["streak", "quick-spark", "rss", "website-spark", "events"] as const;
+type Tab = typeof VALID_TABS[number];
+
 export const Route = createFileRoute("/app/agent-niva")({
   component: AgentNiva,
   head: () => ({ meta: [{ title: "Agent Niva — NivaSpark" }] }),
+  validateSearch: (search: Record<string, unknown>) => ({
+    tab: (VALID_TABS.includes(search.tab as Tab) ? search.tab : "quick-spark") as Tab,
+  }),
 });
 
 type ScrapeJob = { id: string; url: string; count: number; status: string; error: string | null; created_at: string };
@@ -18,7 +24,7 @@ type Recommendation = { id: string; source_url: string; status: string; title: s
 type AgentEvent = {
   id: string; name: string; month: number; day: number; lead_days: number; guidance: string; platforms: string[];
   product_id: string | null; enabled: boolean; approval_mode: string;
-  post_hour: number; post_minute: number;
+  post_hour: number; post_minute: number; generate_lead_minutes: number; generate_hour: number; generate_minute: number; include_logo: boolean;
   wish_tone: string; visual_style: string; reference_image_url: string | null;
   skipped_years: number[]; last_run_year: number | null; next_run_date: string | null;
 };
@@ -1723,7 +1729,7 @@ type SubFormState = {
   rss_feed_id: string; custom_url: string; label: string;
   content_type: string; image_model_id: string; video_model_id: string;
   platforms: string[]; posting_mode: string; frequency: string;
-  post_hour: number; post_minute: number; day_of_week: number; day_of_month: number; posts_per_run: number;
+  post_hour: number; post_minute: number; generate_lead_minutes: number; include_logo: boolean; day_of_week: number; day_of_month: number; posts_per_run: number;
   article_selection: string; tone_style: string; enabled: boolean;
 };
 
@@ -1732,7 +1738,7 @@ function defaultForm(feed_id = ""): SubFormState {
     rss_feed_id: feed_id, custom_url: "", label: "", content_type: "text",
     image_model_id: "", video_model_id: "",
     platforms: ["facebook", "instagram"], posting_mode: "manual",
-    frequency: "daily", post_hour: 9, post_minute: 0, day_of_week: 0, day_of_month: 1,
+    frequency: "daily", post_hour: 9, post_minute: 0, generate_lead_minutes: 30, include_logo: true, day_of_week: 0, day_of_month: 1,
     posts_per_run: 1, article_selection: "most_recent", tone_style: "curator", enabled: true,
   };
 }
@@ -1827,6 +1833,27 @@ function SubModal({
           <PlatformChips selected={form.platforms} onToggle={togglePlatform} platforms={availPlatforms} connectedPlatformIds={connectedPlatformIds} />
         </div>
 
+        {/* Include logo toggle — only relevant for image content */}
+        {form.content_type !== "text" && (
+          <div className="flex items-center justify-between rounded-lg border border-border bg-input/20 px-3 py-2.5">
+            <div>
+              <div className="text-xs font-medium text-foreground">Include brand logo on image</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">Composite your brand logo on generated images</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => set("include_logo", !(form.include_logo ?? true))}
+              className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                (form.include_logo ?? true) ? "bg-primary" : "bg-muted"
+              }`}
+            >
+              <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${
+                (form.include_logo ?? true) ? "translate-x-4" : "translate-x-0"
+              }`} />
+            </button>
+          </div>
+        )}
+
         {/* Posting mode */}
         <div>
           <label className="block text-xs font-medium text-foreground mb-1">Posting mode</label>
@@ -1864,67 +1891,81 @@ function SubModal({
           )}
         </div>
 
-        {/* Post time — local timezone with 15-min intervals, stored as UTC */}
+        {/* Post time + lead time pickers */}
         {(() => {
           const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
           const tzShort = (() => { try { return new Intl.DateTimeFormat("en-US", { timeZone: userTz, timeZoneName: "short" }).formatToParts(new Date()).find(p => p.type === "timeZoneName")?.value ?? userTz; } catch { return userTz; } })();
 
-          // Convert stored UTC hour+minute → local for display in the picker
           const toLocal = (utcH: number, utcM: number) => {
             const d = new Date(); d.setUTCHours(utcH, utcM, 0, 0);
             return { h: d.getHours(), m: d.getMinutes() };
           };
-          // Snap local minutes to nearest 15
           const snapTo15 = (m: number) => Math.round(m / 15) * 15 % 60;
-
-          const localVal = toLocal(form.post_hour, form.post_minute ?? 0);
-          const localH = localVal.h;
-          const localM = snapTo15(localVal.m);
-
-          const handleLocalChange = (newLocalH: number, newLocalM: number) => {
-            const d = new Date(); d.setHours(newLocalH, newLocalM, 0, 0);
-            set("post_hour", d.getUTCHours());
-            set("post_minute", d.getUTCMinutes());
-          };
-
           const fmt12 = (h: number, m: number) => {
             const period = h < 12 ? "AM" : "PM";
             const h12 = h % 12 === 0 ? 12 : h % 12;
             return `${h12}:${String(m).padStart(2, "0")} ${period}`;
           };
 
+          // Post time (local ↔ UTC)
+          const postLocal = toLocal(form.post_hour, form.post_minute ?? 0);
+          const postH = postLocal.h; const postM = snapTo15(postLocal.m);
+          const handlePostChange = (newH: number, newM: number) => {
+            const d = new Date(); d.setHours(newH, newM, 0, 0);
+            set("post_hour", d.getUTCHours());
+            set("post_minute", d.getUTCMinutes());
+          };
+
+          // Compute what the generate time will be (for display only)
+          const lead = form.generate_lead_minutes ?? 30;
+          const genUtcTotal = (form.post_hour * 60 + (form.post_minute ?? 0) - lead + 1440) % 1440;
+          const genLocal = toLocal(Math.floor(genUtcTotal / 60), genUtcTotal % 60);
+          const genDisplay = fmt12(genLocal.h, genLocal.m);
+
           return (
-            <div>
-              <label className="block text-xs font-medium text-foreground mb-1">
-                Post time <span className="text-muted-foreground font-normal">({tzShort})</span>
-              </label>
-              <div className="flex gap-2">
-                {/* Hour picker */}
-                <select
-                  value={localH}
-                  onChange={e => handleLocalChange(Number(e.target.value), localM)}
-                  className="flex-1 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
-                >
-                  {Array.from({ length: 24 }, (_, h) => (
-                    <option key={h} value={h}>
-                      {h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`}
-                    </option>
-                  ))}
-                </select>
-                {/* Minute picker — 15-min intervals */}
-                <select
-                  value={localM}
-                  onChange={e => handleLocalChange(localH, Number(e.target.value))}
-                  className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
-                >
-                  {[0, 15, 30, 45].map(m => (
-                    <option key={m} value={m}>{String(m).padStart(2, "0")}</option>
-                  ))}
-                </select>
+            <div className="space-y-3">
+              {/* Post time */}
+              <div>
+                <label className="block text-xs font-medium text-foreground mb-1">
+                  Post at <span className="text-muted-foreground font-normal">({tzShort})</span>
+                </label>
+                <div className="flex gap-2">
+                  <select value={postH} onChange={e => handlePostChange(Number(e.target.value), postM)}
+                    className="flex-1 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+                    {Array.from({ length: 24 }, (_, h) => (
+                      <option key={h} value={h}>{h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`}</option>
+                    ))}
+                  </select>
+                  <select value={postM} onChange={e => handlePostChange(postH, Number(e.target.value))}
+                    className="w-24 rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none">
+                    {[0, 15, 30, 45].map(m => <option key={m} value={m}>{String(m).padStart(2, "0")}</option>)}
+                  </select>
+                </div>
               </div>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Posts at {fmt12(localH, localM)} {tzShort} · saved as {String(form.post_hour).padStart(2,"0")}:{String(form.post_minute ?? 0).padStart(2,"0")} UTC
-              </p>
+
+              {/* Generate lead time */}
+              <div>
+                <label className="block text-xs font-medium text-foreground mb-1">
+                  Generate <span className="text-muted-foreground font-normal">(before post time)</span>
+                </label>
+                <select
+                  value={form.generate_lead_minutes ?? 30}
+                  onChange={e => set("generate_lead_minutes", Number(e.target.value))}
+                  className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                >
+                  {[15, 30, 45, 60].map(m => (
+                    <option key={m} value={m}>{m} min before — at {fmt12(
+                      toLocal(Math.floor(((form.post_hour * 60 + (form.post_minute ?? 0) - m + 1440) % 1440) / 60),
+                              ((form.post_hour * 60 + (form.post_minute ?? 0) - m + 1440) % 1440) % 60).h,
+                      toLocal(Math.floor(((form.post_hour * 60 + (form.post_minute ?? 0) - m + 1440) % 1440) / 60),
+                              ((form.post_hour * 60 + (form.post_minute ?? 0) - m + 1440) % 1440) % 60).m
+                    )} {tzShort}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Ad generates at {genDisplay} {tzShort} · posts at {fmt12(postH, postM)} {tzShort}
+                </p>
+              </div>
             </div>
           );
         })()}
@@ -2308,6 +2349,10 @@ function RssFeedsTab() {
       platforms: form.platforms, posting_mode: form.posting_mode, frequency: form.frequency,
       post_hour: form.post_hour,
       post_minute: form.post_minute ?? 0,
+      generate_lead_minutes: form.generate_lead_minutes ?? 30,
+      include_logo: form.include_logo ?? true,
+      generate_hour: form.generate_hour ?? 8,
+      generate_minute: form.generate_minute ?? 0,
       day_of_week: form.frequency === "weekly" ? form.day_of_week : undefined,
       day_of_month: form.frequency === "monthly" ? form.day_of_month : undefined,
       posts_per_run: form.posts_per_run, article_selection: form.article_selection,
@@ -2324,6 +2369,8 @@ function RssFeedsTab() {
       platforms: form.platforms, posting_mode: form.posting_mode, frequency: form.frequency,
       post_hour: form.post_hour,
       post_minute: form.post_minute ?? 0,
+      generate_lead_minutes: form.generate_lead_minutes ?? 30,
+      include_logo: form.include_logo ?? true,
       day_of_week: form.frequency === "weekly" ? form.day_of_week : undefined,
       day_of_month: form.frequency === "monthly" ? form.day_of_month : undefined,
       posts_per_run: form.posts_per_run, article_selection: form.article_selection,
@@ -2742,7 +2789,7 @@ function RssFeedsTab() {
             label: editModal.label, content_type: editModal.content_type,
             image_model_id: editModal.image_model_id || "", video_model_id: editModal.video_model_id || "",
             platforms: editModal.platforms || [], posting_mode: editModal.posting_mode,
-            frequency: editModal.frequency, post_hour: editModal.post_hour ?? 9, post_minute: editModal.post_minute ?? 0,
+            frequency: editModal.frequency, post_hour: editModal.post_hour ?? 9, post_minute: editModal.post_minute ?? 0, generate_lead_minutes: editModal.generate_lead_minutes ?? 30, include_logo: editModal.include_logo ?? true,
             day_of_week: editModal.day_of_week ?? 0,
             day_of_month: editModal.day_of_month ?? 1, posts_per_run: editModal.posts_per_run,
             article_selection: editModal.article_selection, tone_style: editModal.tone_style,
@@ -3588,7 +3635,11 @@ function BrandCampaignStreakTab() {
 // ── Root Component ─────────────────────────────────────────────────────
 
 function AgentNiva() {
-  const [tab, setTab] = useState<"streak" | "quick-spark" | "rss" | "website-spark" | "events">("quick-spark");
+  const navigate = useNavigate();
+  // Drive tab purely from URL search param — no local state needed.
+  // useSearch is reactive: whenever ?tab changes, component re-renders with new value.
+  const { tab } = Route.useSearch();
+  const setTab = (k: Tab) => navigate({ to: "/app/agent-niva", search: { tab: k } });
 
   return (
     <AppShell eyebrow="Library" title="Agent Niva">
@@ -3603,7 +3654,10 @@ function AgentNiva() {
           ["website-spark", "🌐 Website Spark", "page:quick-start"],
           ["events", "📅 Recurring Events", "page:recurring-events"],
         ] as const).map(([k, l, hk]) => (
-          <button key={k} onClick={() => setTab(k)}
+          <button key={k} onClick={() => {
+            setTab(k);
+            navigate({ to: "/app/agent-niva", search: { tab: k } });
+          }}
             className={`rounded-full border px-4 py-2 text-sm font-semibold transition-all ${tab === k ? "border-primary/50 bg-primary/10 text-primary shadow-[0_0_14px_-4px_oklch(0.78_0.12_85/0.3)]" : "border-white/10 text-muted-foreground hover:border-white/20 hover:text-foreground"}`}>
             {l} {hk && <NovaHint hintKey={hk as any} />}
           </button>

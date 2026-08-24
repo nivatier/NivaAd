@@ -1,8 +1,18 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+
+const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? "http://localhost:8000";
+
+// Match the token retrieval used by api.ts — tokens are in sessionStorage not localStorage
+function getAuthToken(): string {
+  try {
+    const raw = sessionStorage.getItem("nivaad_tokens");
+    return raw ? (JSON.parse(raw)?.access_token ?? "") : "";
+  } catch { return ""; }
+}
 import {
   BarChart3, Bell, Bot, CalendarDays, Crown, GalleryHorizontal, Images, Link2, Megaphone, Package, Palette,
-  Settings as SettingsIcon, ShieldCheck, Sparkles, User, type LucideIcon,
+  Settings as SettingsIcon, ShieldCheck, Sparkles, User, X, type LucideIcon,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { BuyCreditsModal } from "@/components/buy-credits-modal";
@@ -573,7 +583,7 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
     if (!isAuthed) return;
     async function fetchNotifs() {
       try {
-        const data = await fetch("/api/agent/notifications", { headers: { Authorization: `Bearer ${localStorage.getItem("token") || ""}` } });
+        const data = await fetch(`${API_BASE}/agent/notifications`, { headers: { Authorization: `Bearer ${getAuthToken()}` } });
         if (data.ok) setNotifications(await data.json());
       } catch { /* ignore */ }
     }
@@ -806,36 +816,68 @@ export function AppShell({ title, eyebrow, children, rightPanel }: { title: Reac
                     bg-gradient-to-b from-[oklch(from_var(--card)_l_c_h_/_0.92)] to-[oklch(from_var(--card)_l_c_h_/_0.80)]
                     backdrop-blur-2xl
                     shadow-[0_0_0_1px_oklch(1_0_0_/_0.08),0_16px_48px_-8px_oklch(0_0_0_/_0.6),0_32px_64px_-16px_oklch(0_0_0_/_0.4),inset_0_1px_0_oklch(1_0_0_/_0.14)]">
+                    {/* Header */}
                     <div className="border-b border-white/[0.07] px-4 py-3 flex items-center justify-between">
-                      <span className="text-xs font-semibold text-foreground">Notifications</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-foreground">Notifications</span>
+                        {notifications.length > 0 && (
+                          <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400">{notifications.length} new</span>
+                        )}
+                      </div>
                       {notifications.length > 0 && (
-                        <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400">{notifications.length} new</span>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                                const res = await fetch(`${API_BASE}/agent/notifications/dismiss-all`, { method: "POST", headers: { Authorization: `Bearer ${getAuthToken()}` } });
+                              if (res.ok) setNotifications(await res.json());
+                            } catch { /* ignore */ }
+                          }}
+                          className="text-[10px] text-muted-foreground hover:text-red-400 transition"
+                        >
+                          Clear all
+                        </button>
                       )}
                     </div>
+                    {/* List */}
                     <div className="max-h-80 overflow-y-auto divide-y divide-white/[0.05]">
                       {notifications.length === 0 ? (
                         <div className="px-4 py-8 text-center text-xs text-muted-foreground">No notifications</div>
                       ) : notifications.map((n) => (
-                        <div key={n.id} className="px-4 py-3 hover:bg-white/[0.03] transition">
-                          <div className="text-xs font-semibold text-foreground">{n.title}</div>
-                          {n.body && <div className="mt-0.5 text-[11px] text-muted-foreground leading-relaxed">{n.body}</div>}
+                        <div key={n.id}
+                          onClick={() => {
+                            if (n.action_url) {
+                              setShowNotifications(false);
+                              const [path, qs] = n.action_url.split("?");
+                              const search = qs ? Object.fromEntries(new URLSearchParams(qs)) : {};
+                              navigate({ to: path as any, search: (prev: any) => ({ ...prev, ...search }) });
+                            }
+                          }}
+                          className={`group relative px-4 py-3 transition ${n.action_url ? "cursor-pointer hover:bg-white/[0.05]" : "hover:bg-white/[0.03]"}`}
+                        >
+                          <div className="text-xs font-semibold text-foreground pr-6">{n.title}</div>
+                          {n.body && <div className="mt-0.5 text-[11px] text-muted-foreground leading-relaxed line-clamp-2">{n.body}</div>}
                           <div className="mt-2 flex items-center gap-2">
                             {n.action_url && (
-                              <a href={n.action_url} onClick={() => setShowNotifications(false)}
-                                className="rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">
+                              <span className="rounded-full bg-gold-gradient px-3 py-1 text-[10px] font-semibold text-background">
                                 Review →
-                              </a>
+                              </span>
                             )}
-                            <button onClick={async () => {
+                          </div>
+                          {/* Clear button — top right of each row */}
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
                               try {
-                                const token = localStorage.getItem("token") || "";
-                                const res = await fetch(`/api/agent/notifications/${n.id}/dismiss`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+                                const res = await fetch(`${API_BASE}/agent/notifications/${n.id}/dismiss`, { method: "POST", headers: { Authorization: `Bearer ${getAuthToken()}` } });
                                 if (res.ok) setNotifications(await res.json());
                               } catch { /* ignore */ }
-                            }} className="text-[10px] text-muted-foreground hover:text-foreground transition">
-                              Dismiss
-                            </button>
-                          </div>
+                            }}
+                            className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition text-muted-foreground hover:text-foreground"
+                            title="Clear"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
                         </div>
                       ))}
                     </div>

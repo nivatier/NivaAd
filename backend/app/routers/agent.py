@@ -560,6 +560,27 @@ async def dismiss_notification(notification_id: str, user: User = Depends(get_cu
     ]
 
 
+@router.post("/notifications/dismiss-all", response_model=list[NotificationOut])
+async def dismiss_all_notifications(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Dismisses all notifications for this user."""
+    rows = (await db.scalars(
+        select(Notification)
+        .where(Notification.company_id == user.company_id)
+        .order_by(Notification.created_at.desc())
+        .limit(50)
+    )).all()
+    user_id = str(user.id)
+    for n in rows:
+        if user_id not in (n.dismissed_by or []):
+            dismissed = list(n.dismissed_by or [])
+            dismissed.append(user_id)
+            n.dismissed_by = dismissed
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(n, "dismissed_by")
+    await db.commit()
+    return []
+
+
 # ── Scraped Sites ─────────────────────────────────────────────────────────────
 
 @router.get("/scraped-sites", response_model=list[ScrapedSiteOut])

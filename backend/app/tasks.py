@@ -1951,8 +1951,8 @@ def check_agent_events(self):
                     db.add(Notification(
                         company_id=ev.company_id, type="agent_draft_ready",
                         title=f"\U0001f4cb {ev.name} draft is ready to schedule",
-                        body=f"Agent Niva has prepared your {ev.name} draft ({event_date.strftime('%b %d')}). Open My Ads to review and schedule it yourself.",
-                        action_url="/app/my-ads", dismissed_by=[],
+                        body=f"Agent Niva has prepared your {ev.name} draft ({event_date.strftime('%b %d')}). Review and schedule it in Recurring Events.",
+                        action_url="/app/agent-niva?tab=events", dismissed_by=[],
                     ))
 
                 elif mode == "schedule_review":
@@ -2026,7 +2026,7 @@ def check_agent_events(self):
                         company_id=ev.company_id, type="agent_draft_ready",
                         title=f"\u270f\ufe0f {ev.name} draft ready — event in {ev.lead_days} days",
                         body=f"Agent Niva has created a draft ad for {ev.name} ({event_date.strftime('%b %d')}). {mode_msg}",
-                        action_url="/app/my-ads", dismissed_by=[],
+                        action_url="/app/agent-niva?tab=events", dismissed_by=[],
                     ))
                     db.commit()
                     fired += 1
@@ -2648,6 +2648,7 @@ def _on_rss_generate_done(sender=None, result=None, **kwargs):
                 return
 
             scheduled_at = datetime.strptime(sched_str, "%Y-%m-%dT%H:%M:%S")
+            # scheduled_at is the POST time (post_hour:post_minute), not generation time
 
             with _Session(sync_engine) as db:
                 ad = db.get(_Ad, _uuid.UUID(ad_id))
@@ -2710,16 +2711,14 @@ def _on_rss_generate_done(sender=None, result=None, **kwargs):
                 expires_at=now + _td(hours=24),
             )
             db.add(draft)
+            article_title = headers.get("rss_article_title", "")[:60]
+            feed_label = sub.label or "RSS Feed"
             db.add(_Notif(
                 company_id=sub.company_id,
                 type="agent_draft_ready",
-                title=f"📰 RSS draft ready: {headers.get('rss_article_title', '')[:80]}",
-                body=(
-                    f"Agent Niva generated a post from your RSS feed "
-                    f"({sub.label or 'RSS subscription'}). "
-                    f"Approve it in Agent Niva → RSS Feeds before it expires in 24 hours."
-                ),
-                action_url="/app/agent-niva",
+                title=f"📰 {feed_label} — draft ready",
+                body=article_title if article_title else "A post draft is ready for your approval. Expires in 24h.",
+                action_url="/app/agent-niva?tab=rss",
                 dismissed_by=[],
             ))
             db.commit()
@@ -2766,21 +2765,15 @@ def process_rss_feeds(self):
             logger.info("[rss] cleaned up %d expired drafts", len(expired))
 
         # ── Step 2: Find due subscriptions ──────────────────────────
-        # Window: past (overdue catch-up) → now + 12 hours (pre-generation).
-        # Pre-generating 12 hours ahead means:
-        #   • Auto-post: ad is ready and visible in My Ads well before it posts,
-        #     user can still edit or cancel if needed
-        #   • Manual approval: user gets notified ~12 hours before the post time,
-        #     giving them a comfortable window to review, edit, and approve —
-        #     e.g. a 9 AM post generates the evening before
-        #   • Overdue subscriptions are always caught up on the next 5-min run
-        # next_run_at is advanced BEFORE dispatching generation so the same
-        # subscription is never double-processed on the next 5-min beat run.
-        lookahead = now + timedelta(hours=12)
+        # Find subscriptions whose generation time has passed (or is overdue).
+        # next_run_at tracks the user-configured GENERATION time — the gap
+        # between generation and posting is now explicitly set by the user
+        # via generate_hour/minute vs post_hour/minute, so no lookahead needed.
+        # Overdue subscriptions (next_run_at in the past) are always caught up.
         due_subs = db.scalars(
             select(RssFeedSubscription).where(
                 RssFeedSubscription.enabled == True,  # noqa: E712
-                RssFeedSubscription.next_run_at <= lookahead,
+                RssFeedSubscription.next_run_at <= now,
             )
         ).all()
 
@@ -2833,8 +2826,9 @@ def process_rss_feeds(self):
 def _advance_next_run(sub: RssFeedSubscription, now: datetime) -> None:
     """Mutate sub.next_run_at to the next scheduled run time (in-place)."""
     from datetime import timedelta as _td
-    h = sub.post_hour   if sub.post_hour   is not None else 9  # default 9 AM UTC
-    m = sub.post_minute if sub.post_minute is not None else 0  # default :00
+    # next_run_at tracks the GENERATION time, not post time
+    h = sub.generate_hour   if sub.generate_hour   is not None else 8  # default 8 AM UTC
+    m = sub.generate_minute if sub.generate_minute is not None else 0  # default :00
     if sub.frequency == "daily":
         candidate = (now + _td(days=1)).replace(hour=h, minute=m, second=0, microsecond=0)
         sub.next_run_at = candidate
@@ -2967,7 +2961,9 @@ def _process_one_subscription(
 
     # ── Brand kit for logo compositing ───────────────────────────────
     brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == sub.company_id))
-    brand_logo_url = brand_kit.logo_url if brand_kit else None
+    # Respect the subscription-level include_logo toggle — pass None to skip compositing
+    _logo_enabled = sub.include_logo if sub.include_logo is not None else True
+    brand_logo_url = (brand_kit.logo_url if brand_kit else None) if _logo_enabled else None
     brand_logo_placement = brand_kit.logo_placement if brand_kit else "bottom-right"
     brand_logo_opacity = float(brand_kit.logo_opacity) if brand_kit and brand_kit.logo_opacity is not None else 1.0
 
@@ -3222,17 +3218,15 @@ def _generate_rss_article_post(
         # the subscription's configured post_hour:post_minute).
         db.commit()
 
-        # Compute the scheduled UTC posting datetime for today.
-        # next_run_at was already advanced by _advance_next_run before
-        # this function is called, so we use today's date + post_hour/minute.
-        post_h = sub.post_hour if sub.post_hour is not None else 13
+        # Compute scheduled UTC posting datetime — always same day as generation.
+        # User picks lead time in minutes (15/30/45/60) before post time,
+        # so generate and post are always on the same day. If post time has
+        # already passed (catch-up edge case), push to tomorrow.
+        post_h = sub.post_hour   if sub.post_hour   is not None else 13
         post_m = sub.post_minute if sub.post_minute is not None else 0
         scheduled_at_utc = now.replace(hour=post_h, minute=post_m, second=0, microsecond=0)
-        # If the scheduled posting time has already passed today (e.g. feed
-        # ran right at the post_hour and generation took a few seconds past it),
-        # push to the same time tomorrow so we don't post in the past.
         if scheduled_at_utc <= now:
-            scheduled_at_utc = scheduled_at_utc + timedelta(days=1)
+            scheduled_at_utc += timedelta(days=1)
 
         _app.send_task(
             "app.generate_ad",
