@@ -14,7 +14,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user, require_capability
-from app.models import Ad, AgentRecommendation, AuditLog, BrandKit, Campaign, CreditLedger, GenerationJob, PlatformConnection, PostJob, Product, RssFeedDraft, ScheduledPost, StreakAd, User
+from app.models import Ad, AgentRecommendation, AuditLog, BrandKit, Campaign, CreditLedger, GenerationJob, Notification, PlatformConnection, PostJob, Product, RssFeedDraft, ScheduledPost, StreakAd, User
 from app.schemas import (
     AdCreateIn, AdCreatedOut, AdListOut, AdOut, AdPatchIn, AdScheduledPostOut, AssistantHintOut,
     AssistantSettingsOut, AvailableModelOut, AvailableModelsOut, CameraStylePresetOut, MusicPresetOut,
@@ -1428,6 +1428,8 @@ async def delete_ad(ad_id: uuid.UUID, user: User = Depends(require_capability("c
     await db.execute(delete(PostJob).where(PostJob.ad_id == ad.id))
     await db.execute(delete(ScheduledPost).where(ScheduledPost.ad_id == ad.id))
     await db.execute(delete(RssFeedDraft).where(RssFeedDraft.ad_id == ad.id))
+    # Clear notifications linked to this ad via ref_id
+    await db.execute(delete(Notification).where(Notification.ref_id == ad.id))
     # Null out soft references rather than deleting parent rows
     await db.execute(
         __import__("sqlalchemy").update(AgentRecommendation)

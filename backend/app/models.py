@@ -394,6 +394,7 @@ class Notification(Base):
     title: Mapped[str] = mapped_column(String(200))
     body: Mapped[str] = mapped_column(Text, default="")
     action_url: Mapped[str | None] = mapped_column(String(500), nullable=True)  # e.g. "/app/calendar" or "/app/my-ads"
+    ref_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)  # entity this notification is about (e.g. ad_id for draft_ready)
     dismissed_by: Mapped[list] = mapped_column(JSON, default=list)  # list of user_id strings who dismissed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

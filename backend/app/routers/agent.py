@@ -520,8 +520,9 @@ async def list_notifications(user: User = Depends(get_current_user), db: AsyncSe
     user_id = str(user.id)
     return [
         NotificationOut(
-            id=str(n.id), type=n.type, title=n.title, body=n.body,
-            action_url=n.action_url, created_at=n.created_at,
+            id=str(n.id), type=n.type, title=n.title, body=n.body or "",
+            action_url=n.action_url, ref_id=str(n.ref_id) if n.ref_id else None,
+            created_at=n.created_at,
         )
         for n in rows
         if user_id not in (n.dismissed_by or [])
@@ -552,8 +553,9 @@ async def dismiss_notification(notification_id: str, user: User = Depends(get_cu
     )).all()
     return [
         NotificationOut(
-            id=str(r.id), type=r.type, title=r.title, body=r.body,
-            action_url=r.action_url, created_at=r.created_at,
+            id=str(r.id), type=r.type, title=r.title, body=r.body or "",
+            action_url=r.action_url, ref_id=str(r.ref_id) if r.ref_id else None,
+            created_at=r.created_at,
         )
         for r in rows
         if user_id not in (r.dismissed_by or [])

@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.deps import get_current_user, require_developer
-from app.models import Ad, PostJob, RssFeed, RssFeedDraft, RssFeedSubscription, Subscription, User
+from app.models import Ad, Notification, PostJob, RssFeed, RssFeedDraft, RssFeedSubscription, Subscription, User
 from app.schemas import (
     RssFeedDraftOut,
     RssFeedIn,
@@ -462,6 +462,7 @@ async def dismiss_draft(draft_id: str, user: User = Depends(get_current_user), d
             await db.execute(_delete(ScheduledPost).where(ScheduledPost.ad_id == ad_id))
             await db.execute(_update(AgentRecommendation).where(AgentRecommendation.created_ad_id == ad_id).values(created_ad_id=None))
             await db.execute(_update(StreakAd).where(StreakAd.ad_id == ad_id).values(ad_id=None))
+            await db.execute(_delete(Notification).where(Notification.ref_id == ad_id))
             await db.delete(ad)
     await db.commit()
 

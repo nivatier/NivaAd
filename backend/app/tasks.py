@@ -2719,6 +2719,7 @@ def _on_rss_generate_done(sender=None, result=None, **kwargs):
                 title=f"📰 {feed_label} — draft ready",
                 body=article_title if article_title else "A post draft is ready for your approval. Expires in 24h.",
                 action_url="/app/agent-niva?tab=rss",
+                ref_id=ad.id,  # link to ad so notification clears when ad/draft is deleted
                 dismissed_by=[],
             ))
             db.commit()
@@ -3538,14 +3539,18 @@ def post_due_streak_ads(self):
                     failed += 1
                     continue
 
-                # Check credits
-                company = db.get(Company, streak_ad.company_id)
-                if not company or (company.credits or 0) < 1:
+                # Check credits via CreditLedger sum (Company has no .credits column)
+                from sqlalchemy import func as _func
+                balance = db.scalar(
+                    select(_func.coalesce(_func.sum(CreditLedger.delta), 0))
+                    .where(CreditLedger.company_id == streak_ad.company_id)
+                ) or 0
+                if balance < 1:
                     streak_ad.status = "failed"
                     streak_ad.failure_reason = "Insufficient credits"
                     db.commit()
                     failed += 1
-                    logger.warning("[streak-post] streak_ad=%s insufficient credits", streak_ad.id)
+                    logger.warning("[streak-post] streak_ad=%s insufficient credits (balance=%.2f)", streak_ad.id, balance)
                     continue
 
                 # Create a PostJob row (same pattern as POST /ads/{id}/post in routers/ads.py)

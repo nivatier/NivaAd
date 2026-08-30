@@ -1451,6 +1451,7 @@ class NotificationOut(BaseModel):
     title: str
     body: str
     action_url: str | None = None
+    ref_id: str | None = None
     created_at: datetime
 
     class Config:
