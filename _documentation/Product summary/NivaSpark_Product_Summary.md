@@ -38,8 +38,6 @@ B2B SaaS platform by Nivatier (Expo City Dubai). AI-generated social media ads �
 
 Railway: 2 vCPU / 1 GB RAM per service. Hobby plan $5/month base. **Railway runs multiple API instances in parallel — race conditions that don't appear locally (single worker) can surface in production.**
 
-> **Note:** A docker-compose.yml update has been prepared to add a multi-worker profile (`--profile multi`, 4 workers, no hot-reload) for simulating Railway's concurrency locally. This has not been applied yet — upgrade the docker-compose.yml when ready.
-
 ---
 
 ### Production `.env` (Railway api service)
@@ -90,8 +88,13 @@ Docker Compose from: `F:\MY WORKS\00-NIVATIER\00-PRODUCTS\02-NivaAd\`
 Frontend runs outside Docker:
 ```bash
 cd frontend && npm run dev
-# http://localhost:3000 or :5173
+# http://localhost:5173
 # VITE_API_BASE_URL=http://localhost:8000
+```
+
+Worker start command (local + Railway):
+```
+celery -A app.worker.celery_app worker --loglevel=info --concurrency=4 --queues=generation,posting,default
 ```
 
 ### Local `.env`
@@ -110,164 +113,278 @@ MOCK_POSTING=true
 BACKEND_URL=http://localhost:8000
 VITE_API_BASE_URL=http://localhost:8000
 STRIPE_SECRET_KEY=sk_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...   # from stripe-cli logs, different from production
+STRIPE_WEBHOOK_SECRET=whsec_...
 ```
 
 ### Common commands
 ```bash
 docker compose up --build -d
-docker compose exec api alembic upgrade head
+docker compose exec api alembic upgrade heads    # "heads" not "head" — handles multiple branch tips
 docker compose logs -f api
 docker compose logs -f worker
 docker compose exec postgres psql -U nivaad -d nivaad
+# Inside Railway postgres: psql $DATABASE_URL
 ```
 
 ---
 
 ### Key Architecture Rules
 
-- **`ModelConfig` table** — always use `get_config_row(db, "topic")`, never `db.get(ModelConfig, 1)`. The function uses `INSERT ... ON CONFLICT (topic) DO NOTHING` + re-fetch to prevent race conditions across multiple Railway workers. If you add a new topic key, no migration needed — the row is created on first access.
-- **S3 URLs**: production R2 bucket NOT in path, local MinIO bucket IN path — `upload_bytes()` in `storage.py` handles both
+- **`ModelConfig` table** — always use `get_config_row(db, "topic")`, never `db.get(ModelConfig, 1)`
+- **S3 URLs**: production R2 bucket NOT in path, local MinIO bucket IN path — `upload_bytes()` handles both
 - **Celery `worker` and `beat`** are separate Railway services, same Dockerfile, different start commands
-- **Frontend uses TanStack Start with SSR** — never access `document`, `window` or `localStorage` without a `useState(false)` + `useEffect` guard (not `typeof document === "undefined"` — causes hydration mismatches in React 19)
+- **Frontend uses TanStack Start with SSR** — never access `document`, `window` or `localStorage` without a `useState(false)` + `useEffect` guard
 - **localStorage in SSR**: wrap reads in `useState` + `useEffect`. Never call `localStorage` at module level or in render functions.
+- **Notification fetch in `app-shell.tsx`**: tokens are stored in `sessionStorage` under key `nivaad_tokens` as JSON `{ access_token: "..." }` — NOT `localStorage.getItem("token")`. Use `getAuthToken()` helper in app-shell.
+- **API base URL in app-shell**: use `VITE_API_BASE_URL` env var (not `/api/...` relative URLs) — the frontend dev server doesn't proxy to the backend.
 - **Page wrapper** uses `overflowX: "clip"` not `overflow-x-hidden`
 - **All modals** use Radix Dialog (`@radix-ui/react-dialog`) — SSR-safe, no raw `createPortal`
 - **Glass UI pattern**: `background: oklch(1 0 0 / 0.05)`, `backdropFilter: blur(20px) saturate(1.5)`, `border: 1px solid oklch(1 0 0 / 0.12)`, inset top highlight `inset 0 1px 0 oklch(1 0 0 / 0.16)`
 - **Brand gold**: `oklch(0.85 0.18 52)` / hex `#E8B84B`
-- **SSR guard** for legal modals and any client-only state: always wrap in `<>...</>` fragment when modal is a sibling to main return div
-- **Prefilling Create Ad from external flows** (Agent Niva, RSS ideas): store a `nivaad_prefill_product` object in `sessionStorage` before navigating to `/app`. Fields: `name`, `description`, `audience`, `goal`, `tone`, `voice`, `copy_directions`, `source_url`, `image_scene`. The `image_scene` field pre-fills the Image description textarea — must be stored via `pendingImageSceneRef` (declared before the `refMode` clearing `useEffect`) and applied with `setTimeout(0)`, otherwise it gets wiped on mount.
-- **LLM responses that return JSON arrays**: never use `text_gen.generate_text()` — it calls `_extract_json()` which only finds `{...}` objects, not `[...]` arrays. Use `httpx.AsyncClient` directly and extract the array with `raw[raw.find("["):raw.rfind("]")+1]`.
-- **LLM responses that return plain text** (e.g. rewrite endpoints): never use `text_gen.generate_text()` — it crashes on non-JSON. Use `httpx.AsyncClient` directly and read `.get("content", "")` from the choices.
+- **Credits**: stored in `CreditLedger` table as ledger deltas — `Company` model has NO `.credits` field. Always query `SELECT SUM(delta) FROM credit_ledger WHERE company_id = ?` or use `credit_svc.balance()` (async) / raw sync sum for Celery tasks.
+- **LLM responses that return JSON arrays**: use `httpx.AsyncClient` directly, extract with `raw[raw.find("["):raw.rfind("]")+1]`
+- **LLM responses that return plain text**: use `httpx.AsyncClient` directly, read `.get("content", "")`
+
+---
+
+### Celery Queue Architecture
+
+Three queues — tasks routed in `worker.py`:
+
+| Queue | Tasks | Purpose |
+|---|---|---|
+| `generation` | `generate_ad`, `generate_campaign_ad_image`, `edit_ad_image` | AI text + image generation (20–90s each) |
+| `posting` | `post_ad_now` | Social platform API calls (2–10s) |
+| `default` | All beat orchestrators | Fast dispatchers — find due work, fan out, exit |
+
+**Beat schedule** (all in `worker.py`):
+- `fire_due_scheduled_posts` — every 5 min — finds `ScheduledPost` rows due and fans to `posting` queue
+- `post_due_streak_ads` — every 5 min — finds generated streak ads due and fans to `posting` queue
+- `process_rss_feeds` — every 5 min — finds RSS subscriptions due (by `next_run_at`) and fans to `generation` queue
+- `generate_due_streak_ads` — every hour at :10 — finds streak ads due in next 24h and fans to `generation` queue
+- `check_agent_events` — daily 5AM UTC — recurring events
+- `check_rss_feed_health` — daily 6AM UTC
+
+**Railway scaling recipe:**
+- Start: 1 worker `--queues=generation,posting,default --concurrency=4`
+- Growing: add replica in Railway → same command, Railway load-balances automatically
+- At scale: split workers by queue — dedicated `--queues=posting,default` + dedicated `--queues=generation`
+- Hobby plan: 1 replica only. Pro plan needed for multiple replicas.
+
+**Important**: always restart `beat` service after changing beat schedule — beat caches its schedule in `celerybeat-schedule`.
 
 ---
 
 ### Alembic Migration Chain (latest)
+
 ```
 4394d363aa27  initial schema
 ...
 v2w3x4y5z6a7  add developer_status to flagged_content
-w3x4y5z6a7b8  add rss feed tables (rss_feeds, rss_feed_subscriptions, rss_feed_seen_items, rss_feed_drafts)
-x4y5z6a7b8c9  add rss feed health check columns (last_checked_at, last_status, last_error, last_article_count)
+w3x4y5z6a7b8  add rss feed tables
+x4y5z6a7b8c9  add rss feed health check columns
 y5z6a7b8c9d0  add image_prompt to agent_recommendations
+z6a7b8c9d0e1  add post_hour to rss_feed_subscriptions
+a1b2c3d4e5f6  add website_streaks and streak_ads tables
+b2c3d4e5f6a7  add generation_error to website_streaks
+c3d4e5f6a7b8  add post_minute to rss_feed_subscriptions
+d4e5f6a7b8c9  add generate_lead_minutes + generate_hour + generate_minute to rss_feed_subscriptions
+e5f6a7b8c9d0  add include_logo to rss_feed_subscriptions
+e6f7a8b9c0d1  add ref_id to notifications
 ```
-Always run `alembic upgrade head` after deploying new migrations.
+
+Always run `alembic upgrade heads` (plural) after deploying — handles multiple branch tips gracefully.
 
 ---
 
-### Agent Niva — RSS Feed Feature
+### Agent Niva — 5 Tabs
 
-New section added to Agent Niva with full auto-posting from RSS feeds.
+Tab routing: `/app/agent-niva?tab=<key>`
 
-**Backend routes:**
-- `GET/POST/PATCH/DELETE /developer/rss/feeds` — developer feed catalogue management
-- `GET /developer/rss/settings` + `PUT /developer/rss/settings` — health check interval (default 7 days)
-- `POST /developer/rss/feeds/{id}/check` — manual health re-check
-- `GET /agent/rss/feeds/catalogue` — grouped feed catalogue for users
-- `GET/POST /agent/rss/subscriptions` + `PATCH/DELETE /agent/rss/subscriptions/{id}` — user subscriptions
-- `GET /agent/rss/drafts` + `POST /agent/rss/drafts/{id}/approve` + `DELETE /agent/rss/drafts/{id}` — manual approval drafts
-- `POST /agent/rss/get-ideas` — fetch live feed, AI picks best articles + generates image prompts
+| Tab key | Label |
+|---|---|
+| `quick-spark` | 💡 Quick Spark |
+| `rss` | 📰 RSS Feeds |
+| `streak` | 🚀 Brand Campaign Streak |
+| `website-spark` | 🌐 Website Spark |
+| `events` | 📅 Recurring Events |
 
-**Celery beat tasks:**
-- `process_rss_feeds` — runs hourly, processes due subscriptions
-- `check_rss_feed_health` — runs daily at 06:00 UTC, checks feeds older than `health_check_interval_days`
-
-**RSS feed bulk management (developer panel):**
-- Export all feeds as JSON — use on local, import on production
-- Import JSON file — sequential insert, 409 conflicts silently skipped
-
-**Tone/Voice system** (RSS + Agent Niva):
-- Options: `we` / `i` / `you` / `they` / `lets` — controls writing perspective
-- Maps to Create Ad `tone` chip + `voice` field + `copy_directions` instruction
-- Stored in `rss_feed_subscriptions.tone_style` — validated against `^(we|i|you|they|lets)$`
-
-**RSS Ideas panel:**
-- Ideas saved in `localStorage` key `nivaspark_rss_ideas` with 24h TTL
-- Auto-purged on load if older than 24h
-- Per-idea settings (voice, include link, image scene) editable inline and persisted immediately
+Route uses `validateSearch` to type and parse the `tab` param. Tab state is driven purely from `Route.useSearch()` — no local `useState` for tab.
 
 ---
 
-### Agent Niva — Website Spark Image Prompts
+### Agent Niva — RSS Feed Feature (detailed)
 
-The quick-start recommendations task (`generate_quick_start_recommendations`) now:
-- Uses system + user message split (not single user message)
-- Truncates site text to 6,000 chars before sending to LLM
-- Uses `max_tokens: 4000` for output
-- Returns `image_prompt` per idea — stored in `agent_recommendations.image_prompt`
-- `_rec_out()` serialises `image_prompt` to the API response
-- RecCard shows editable 🖼 Image prompt textarea with **✦ Generate · 0.25 cr** button (`POST /agent/recommendations/{id}/image-prompt`)
+**DB columns on `rss_feed_subscriptions`:**
+- `post_hour` / `post_minute` — UTC time to POST the ad
+- `generate_lead_minutes` — UI control: 15/30/45/60 min before post time (user-facing dropdown)
+- `generate_hour` / `generate_minute` — pre-computed UTC generate time (post_time − lead_minutes), stored for fast beat query
+- `include_logo` — bool, whether to composite brand logo on generated images (default true)
+- `next_run_at` — tracks the next GENERATION time (not post time)
+
+**Generation → Posting flow (auto-post mode):**
+1. Beat fires `process_rss_feeds` every 5 min → finds subscriptions where `next_run_at <= now`
+2. `next_run_at` advanced immediately at start of `_process_one_subscription` (prevents double-processing)
+3. `generate_ad` dispatched to `generation` queue with headers: `rss_auto_post=1`, `rss_company_id`, `rss_ad_id`, `rss_platforms`, `rss_scheduled_at`
+4. On completion, `_on_rss_generate_done` signal creates `ScheduledPost` rows at `post_hour:post_minute` (same day; if past, next day)
+5. `fire_due_scheduled_posts` (every 5 min) picks up the `ScheduledPost` and dispatches `post_ad_now` to `posting` queue
+
+**Generation → Draft flow (manual approval mode):**
+1. Same beat/generation path
+2. On completion, `_on_rss_generate_done` creates `RssFeedDraft` + `Notification` (type=`agent_draft_ready`, `ref_id=ad.id`, `action_url=/app/agent-niva?tab=rss`)
+3. User approves from RSS Feeds → Pending approvals panel
+4. Dismissing draft deletes the draft + ad + linked notification (via `ref_id`)
+
+**Notification ref_id cleanup:**
+- `Notification.ref_id` stores the `ad_id` for draft-ready notifications
+- Deleting ad (My Ads) or dismissing draft (RSS Feeds) also deletes notifications where `ref_id = ad.id`
+- Both directions stay in sync
+
+**RSS subscription API:**
+- `GET/POST /agent/rss/subscriptions` — list/create
+- `PATCH /agent/rss/subscriptions/{id}` — update (recomputes `generate_hour/minute` when post time or lead changes)
+- `DELETE /agent/rss/subscriptions/{id}` — delete
+- `GET /agent/rss/drafts` — pending manual approval drafts
+- `POST /agent/rss/drafts/{id}/approve` — approve + post
+- `DELETE /agent/rss/drafts/{id}` — dismiss (also deletes ad + notification)
+
+**`_compute_generate_time(post_hour, post_minute, lead_minutes) → (hour, minute)`** helper in `agent_rss.py` — wraps midnight correctly (e.g. post=00:15, lead=30 → generate=23:45).
+
+---
+
+### Agent Niva — Brand Campaign Streak
+
+**DB tables:** `website_streaks`, `streak_ads`
+
+**Streak statuses:** `generating → ideas_ready → active → completed / failed / cancelled`
+**Ad statuses:** `idea → scheduled → generating → generated → posted / failed / cancelled`
+
+**Generation flow:**
+- `generate_due_streak_ads` (hourly at :10) — finds `scheduled` streak ads whose local `scheduled_date/time - 24h` window has arrived
+- Dispatches `generate_ad` to `generation` queue with header `streak_ad_id`
+- `_on_generate_ad_success` signal flips `streak_ad.status = "generated"`
+- Image generation enabled for streak ads (same as regular ads)
+
+**Posting flow:**
+- `post_due_streak_ads` (every 5 min) — finds `generated` streak ads where `scheduled_date/time <= now` (local timezone)
+- Creates `PostJob` row, dispatches `post_ad_now` to `posting` queue
+- **Credits**: checked via `SELECT SUM(delta) FROM credit_ledger WHERE company_id = ?` — NOT `company.credits` (that field does not exist)
+
+---
+
+### Agent Niva — Recurring Events
+
+- `check_agent_events` runs daily 5AM UTC
+- Notifications use `action_url=/app/agent-niva?tab=events`
+- Posting goes through `ScheduledPost` rows → `fire_due_scheduled_posts` handles posting
+
+---
+
+### Notification System
+
+**Bell panel (`app-shell.tsx`):**
+- Polls `GET /agent/notifications` every 60s using `getAuthToken()` (reads `sessionStorage.nivaad_tokens.access_token`)
+- Per-notification Clear button (X) + "Clear all" header button
+- Clicking notification row navigates via TanStack Router: splits `action_url` on `?`, passes path + search params separately
+- Mobile and desktop panels both use `<button>` elements (not `onClick` on `div`) for reliable touch handling
+
+**Notification `action_url` routing:**
+| Type | action_url |
+|---|---|
+| RSS draft ready | `/app/agent-niva?tab=rss` |
+| Recurring event draft | `/app/agent-niva?tab=events` |
+| Recurring event scheduled | `/app/calendar` |
+| Auto-post warning | `/app/calendar` |
+
+**Dismiss-all endpoint:** `POST /agent/notifications/dismiss-all`
+
+---
+
+### Ad Deletion — Full FK Cleanup
+
+`DELETE /ads/{id}` cleans up in order:
+1. `GenerationJob` (hard delete)
+2. `PostJob` (hard delete)
+3. `ScheduledPost` (hard delete)
+4. `RssFeedDraft` (hard delete)
+5. `Notification` where `ref_id = ad.id` (hard delete)
+6. `AgentRecommendation.created_ad_id` → NULL
+7. `StreakAd.ad_id` → NULL
+8. `Ad` (hard delete)
+
+Same cleanup applies in `DELETE /agent/rss/drafts/{id}` (dismiss draft also deletes the ad).
+
+---
+
+### Left Sidebar Nav — Glass Effect
+
+`GlassNavItem` component in `app-shell.tsx`:
+- Single `<span class="gni-overlay">` per item (not 4 spans) — GPU efficient
+- Cursor position written as CSS custom props (`--gnx`, `--gny`) directly on DOM node via `ref.style.setProperty` — zero React re-renders on mousemove
+- No `backdrop-filter` — removed (was heaviest GPU cost)
+- Single `drop-shadow` filter on icons
+- `box-shadow` on the Link element for neon ring (not a child span)
+- Injected stylesheet uses `html.dark` / `html.light` selectors for theme-aware colours
+- Dark mode base: `oklch(0.88 0.03 280)`, opacity `0.85` at rest
 
 ---
 
 ### Platform Posting — Known Fixes
 
 **Instagram image posting (`app/services/meta.py`):**
-- `_post_image_instagram` must poll container status before publishing
-- Poll `GET /{creation_id}?fields=status_code` every 3s up to 45s until `status_code == "FINISHED"`
-- Without polling → error `2207027` "media not ready for publishing"
+- Must poll container status before publishing — `GET /{creation_id}?fields=status_code` every 3s up to 45s until `status_code == "FINISHED"`
 - Error subcode `2207027` excluded from `permanent_failures` in `tasks.py`
 
 **TikTok photo posting (`app/services/tiktok.py`):**
-- `photo_images` in `PULL_FROM_URL` mode must be a **plain list of URL strings**
-- NOT a list of `{"url": "..."}` objects — causes `invalid_params 400`
-- Correct: `"photo_images": ["https://...", "https://..."]`
+- `photo_images` must be a plain list of URL strings — NOT `[{"url": "..."}]`
 
-**`PlatformPreviewCard` post button (`src/components/create-ad-parts.tsx`):**
+**`PlatformPreviewCard` post button:**
 - `handlePost` must `await onPost()` — not fire-and-forget
-- `onPost` prop typed as `() => Promise<void> | void`
-- Without await: button spins for 0ms, `PostingProgressModal` never opens visibly
+
+**`fire_due_scheduled_posts`:**
+- Sets `ScheduledPost.status = "queued"` before dispatching — prevents double-dispatch on next 5-min run
+- `post_ad_now` resolves both `"pending"` and `"queued"` ScheduledPost rows on completion
 
 ---
 
 ### Auth & User Management
 
-- **Email verification required** — new users created as `status=pending`, activated via signed JWT link sent by SES. Login blocked until verified.
-- **Resend verification** — 60s cooldown enforced via Redis (`verify:cooldown:{email}`), max 5/hour (`verify:count:{email}`). No password required for resend.
-- **Token refresh mutex** — single `_refreshPromise` in `api.ts` prevents simultaneous 401s from each triggering independent refresh calls (race condition fix).
-- **Mascot reset on login** — `localStorage.removeItem("robotAwake")` called on logout and on user identity change so Nova always wakes fresh on next login.
+- **Email verification required** — new users `status=pending`, activated via signed JWT link via SES
+- **Resend verification** — 60s cooldown via Redis, max 5/hour
+- **Token refresh mutex** — single `_refreshPromise` in `api.ts` prevents race on simultaneous 401s
+- **Mascot reset on login** — `localStorage.removeItem("robotAwake")` on logout
 
 ---
 
 ### Billing & Credits
 
 - **Plans**: Free (3 cr/mo), Starter ($17/mo, 150 cr/mo), Pro ($29/mo, 290 cr/mo)
-- **Terms**: 1mo / 3mo (−5%) / 6mo (−10%) / 12mo (−12%)
-- **Credit value**: $0.10 per credit. Top-ups: min 50 credits ($5), max 300 ($30), never expire.
-- **Monthly reset**: use-it-or-lose-it. Plan credits expire each month; top-ups persist.
-- **Annual/multi-month plans**: Stripe fires `invoice.paid` once per term — monthly credit resets handled by daily Celery beat task at 00:30 UTC.
-- **Upgrade flow**: Free → paid = Stripe Checkout. Existing paid → upgrade = Stripe Customer Portal (shows proration).
-- **Downgrade rules (mid-cycle)**: any shorter term or lower tier is blocked. Allowed after period ends or cancel scheduled.
-- **Credit reset on tier upgrade**: `customer.subscription.updated` webhook expires old plan credits and grants new monthly allowance immediately.
+- **Credit value**: $0.10. Top-ups: min 50 ($5), max 300 ($30), never expire
+- **Credits stored in `CreditLedger` table** — Company model has NO `.credits` field — always query the ledger
+- **Monthly reset**: plan credits expire; top-ups persist
 - **Stripe webhook events**: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`
-- **Price IDs**: stored in Developer panel DB config (no redeploy needed). `.env` `STRIPE_PRICE_IDS` is fallback only.
-- **`current_period_end`**: saved from Stripe subscription object in `checkout.session.completed` — not populated by `invoice.paid` alone.
 
 ---
 
 ### App Features & Routes
 
 **Create**
-- `/app` — Create Ad: select product → brief → AI generates copy + image. Supports `nivaad_prefill_product` sessionStorage for pre-filling from Agent Niva/RSS flows.
-- `/app/campaigns` — Campaigns: one brief → teaser + launch + follow-up ads across all platforms
+- `/app` — Create Ad
+- `/app/campaigns` — Campaigns
 
 **Library**
-- `/app/my-ads` — My Ads: browse and manage all generated ads
-- `/app/products` — Products: save product details
-- `/app/themes-gallery` — Themes Gallery: visual themes for every platform ratio
-- `/app/calendar` — Calendar: scheduled post view
-- `/app/agent-niva` — Agent Niva: 4 tabs — Website Spark, Quick Spark, Recurring Events, RSS Feeds
+- `/app/my-ads` — My Ads
+- `/app/products` — Products
+- `/app/themes-gallery` — Themes Gallery
+- `/app/calendar` — Calendar (streak ads shown in gold/amber)
+- `/app/agent-niva` — Agent Niva (5 tabs, URL-driven via `?tab=`)
 
 **Setup**
-- `/app/brand-kit` — Brand Kit: logo, colours, tone of voice
-- `/app/connections` — Connections: Instagram, LinkedIn, TikTok, Facebook, X, Threads
-- `/app/moderation` — Moderation: content approval workflow
-- `/app/settings` — Plan & Billing
+- `/app/brand-kit`, `/app/connections`, `/app/moderation`, `/app/settings`
 
 **Insights**
-- `/app/analytics` — Analytics: post performance
-- `/app/admin` — Admin: platform administration
+- `/app/analytics`, `/app/admin`
 
 **Auth & Dev**
 - `/signup`, `/verify-email`, `/pricing`, `/developer-login`
-- Developer panel tabs: Launch, Billing, API Endpoints, Users, Retention, Web Scraper, Theme AI, Aspect Ratios, Railway, Legal, **RSS Feeds** (feed catalogue with bulk import/export JSON, health status dots, re-check button, category + status filters, bulk select/delete/recheck)
+- Developer panel tabs: Launch, Billing, API Endpoints, Users, Retention, Web Scraper, Theme AI, Aspect Ratios, Railway, Legal, RSS Feeds, Assistant

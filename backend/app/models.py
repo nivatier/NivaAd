@@ -231,6 +231,13 @@ class GenerationJob(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Stored prompts — written by the Celery task immediately before calling
+    # the LLM so users can review (and optionally edit + re-trigger) the
+    # exact prompt that produced this ad. Null for jobs created before this
+    # feature or for video-only ads (which use a separate video_prompt field).
+    text_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    video_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class PostJob(Base):
@@ -596,22 +603,6 @@ class RssFeedSeenItem(Base):
     seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
-class RssFeedDraft(Base):
-    """A pending AI-generated post from an RSS feed run, awaiting manual approval.
-    Expires 24 hours after creation if not approved; cleaned up by the hourly Celery task."""
-    __tablename__ = "rss_feed_drafts"
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uid)
-    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), index=True)
-    subscription_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rss_feed_subscriptions.id", ondelete="CASCADE"), index=True)
-    article_url: Mapped[str] = mapped_column(String(500))
-    article_title: Mapped[str] = mapped_column(String(500), default="")
-    article_summary: Mapped[str] = mapped_column(Text, default="")
-    ad_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ads.id"), nullable=True)  # the generated Ad row
-    status: Mapped[str] = mapped_column(String(20), default="pending")  # "pending" | "approved" | "dismissed"
-    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-
 class WebsiteStreak(Base):
     """A Brand Campaign Streak — a pre-planned content calendar generated from a single website scrape."""
     __tablename__ = "website_streaks"
@@ -627,6 +618,11 @@ class WebsiteStreak(Base):
     # "generating" | "ideas_ready" | "active" | "completed" | "cancelled" | "failed"
     generation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     scraped_content: Mapped[str | None] = mapped_column(Text, nullable=True)  # cached scrape
+    # Global defaults — applied to every StreakAd on creation, overridable per ad
+    posting_mode: Mapped[str] = mapped_column(String(20), default="auto_post")  # "auto_post" | "manual"
+    generate_lead_hours: Mapped[int] = mapped_column(Integer, default=24)  # 1|2|3|6|12|24 — hours before post time to trigger generation
+    content_type: Mapped[str] = mapped_column(String(20), default="text")  # "text" | "text_image"
+    image_model_id: Mapped[str | None] = mapped_column(String(120), nullable=True)  # model id for image generation
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     ads: Mapped[list["StreakAd"]] = relationship(
@@ -652,6 +648,11 @@ class StreakAd(Base):
     audience: Mapped[str] = mapped_column(String(200), default="")
     voice: Mapped[str] = mapped_column(String(30), default="we")    # we|i|you|they|lets
     platforms: Mapped[list] = mapped_column(JSON, default=list)
+    # Per-ad content settings (inherited from streak defaults, overridable)
+    content_type: Mapped[str] = mapped_column(String(20), default="text")  # "text" | "text_image"
+    image_model_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    posting_mode: Mapped[str] = mapped_column(String(20), default="auto_post")  # "auto_post" | "manual" — overridable per-ad
+    generate_lead_hours: Mapped[int] = mapped_column(Integer, default=24)  # hours before post time to trigger generation — only used in auto_post mode
     # Schedule
     scheduled_date: Mapped[str | None] = mapped_column(String(10), nullable=True)   # "YYYY-MM-DD" local date
     scheduled_time: Mapped[str | None] = mapped_column(String(5), nullable=True)    # "HH:MM" local time

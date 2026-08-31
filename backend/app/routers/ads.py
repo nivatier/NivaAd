@@ -14,10 +14,11 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user, require_capability
-from app.models import Ad, AgentRecommendation, AuditLog, BrandKit, Campaign, CreditLedger, GenerationJob, Notification, PlatformConnection, PostJob, Product, RssFeedDraft, ScheduledPost, StreakAd, User
+from app.models import Ad, AgentRecommendation, AuditLog, BrandKit, Campaign, CreditLedger, GenerationJob, Notification, PlatformConnection, PostJob, Product, ScheduledPost, StreakAd, User
 from app.schemas import (
     AdCreateIn, AdCreatedOut, AdListOut, AdOut, AdPatchIn, AdScheduledPostOut, AssistantHintOut,
     AssistantSettingsOut, AvailableModelOut, AvailableModelsOut, CameraStylePresetOut, MusicPresetOut,
+    GenerationPromptsOut, RegenerateIn,
     PostAdIn, PostJobOut, PreviewCostIn, PreviewCostOut, PromptPreviewIn, PromptPreviewOut, RawThemesOut, RefineIn,
     RetentionInfoOut, TextStylePresetOut, TextThemeSelectionOut, VideoReferencePromptDefaultOut,
     VideoThemeOut, VideoThemeShotOut,
@@ -1158,6 +1159,75 @@ async def get_post_status(
     )
 
 
+@router.get("/{ad_id}/prompts", response_model=GenerationPromptsOut)
+async def get_ad_prompts(ad_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Returns the text, image and video prompts that were sent to the AI
+    models for this ad's most recent completed generation job.
+    Returns 404 if no job with stored prompts exists (e.g. ad was created
+    before prompt storage was introduced, or is still generating)."""
+    ad = await db.get(Ad, ad_id)
+    if ad is None or ad.company_id != user.company_id:
+        raise HTTPException(404, "Ad not found")
+    job = await db.scalar(
+        select(GenerationJob)
+        .where(GenerationJob.ad_id == ad.id, GenerationJob.status == "done")
+        .order_by(GenerationJob.created_at.desc())
+    )
+    if job is None or (job.text_prompt is None and job.image_prompt is None and job.video_prompt is None):
+        raise HTTPException(404, "No stored prompts for this ad — it may have been generated before prompt storage was introduced.")
+    return GenerationPromptsOut(
+        job_id=job.id,
+        text_prompt=job.text_prompt,
+        image_prompt=job.image_prompt,
+        video_prompt=job.video_prompt,
+    )
+
+
+@router.post("/{ad_id}/regenerate", response_model=AdCreatedOut)
+async def regenerate_with_prompts(
+    ad_id: uuid.UUID,
+    data: RegenerateIn,
+    user: User = Depends(require_capability("create_ads")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-generates this ad in-place using caller-supplied prompt overrides.
+    The existing ad row is overwritten when the new generation completes —
+    same behaviour as a normal refine, just driven by an edited raw prompt
+    rather than natural-language feedback.
+    At least one prompt field must be provided."""
+    if not any([data.text_prompt, data.image_prompt, data.video_prompt]):
+        raise HTTPException(422, "At least one of text_prompt, image_prompt, or video_prompt must be provided.")
+    ad = await db.get(Ad, ad_id)
+    if ad is None or ad.company_id != user.company_id:
+        raise HTTPException(404, "Ad not found")
+    if ad.status == "generating":
+        raise HTTPException(409, "Ad is already generating — wait for it to finish before regenerating.")
+
+    # Inject the edited prompts into the brief as overrides — the Celery
+    # task already knows to prefer *_prompt_override fields over rebuilding
+    # from scratch, so no task changes are needed.
+    brief = dict(ad.brief)
+    if data.text_prompt is not None:
+        brief["text_prompt_override"] = data.text_prompt
+    if data.image_prompt is not None:
+        brief["image_prompt_override"] = data.image_prompt
+    if data.video_prompt is not None:
+        brief["video_prompt_override"] = data.video_prompt
+
+    ad.brief = brief
+    flag_modified(ad, "brief")
+    ad.status = "generating"
+
+    job = GenerationJob(company_id=user.company_id, ad_id=ad.id, kind="prompt_regen", credits_cost=0)
+    db.add(job)
+    await db.flush()
+    job_id = job.id
+    await db.commit()
+
+    celery_app.send_task("app.generate_ad", args=[str(job_id)])
+    return AdCreatedOut(ad_id=ad.id, job_id=job_id, credits_cost=0)
+
+
 @router.patch("/{ad_id}", response_model=AdOut)
 async def patch_ad(ad_id: uuid.UUID, data: AdPatchIn, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     ad = await db.get(Ad, ad_id)
@@ -1427,7 +1497,6 @@ async def delete_ad(ad_id: uuid.UUID, user: User = Depends(require_capability("c
     await db.execute(delete(GenerationJob).where(GenerationJob.ad_id == ad.id))
     await db.execute(delete(PostJob).where(PostJob.ad_id == ad.id))
     await db.execute(delete(ScheduledPost).where(ScheduledPost.ad_id == ad.id))
-    await db.execute(delete(RssFeedDraft).where(RssFeedDraft.ad_id == ad.id))
     # Clear notifications linked to this ad via ref_id
     await db.execute(delete(Notification).where(Notification.ref_id == ad.id))
     # Null out soft references rather than deleting parent rows

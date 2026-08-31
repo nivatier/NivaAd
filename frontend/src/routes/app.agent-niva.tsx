@@ -1654,16 +1654,9 @@ type RssFeedSub = {
   post_hour: number; post_minute: number;
   day_of_week: number | null; day_of_month: number | null; posts_per_run: number;
   article_selection: string; tone_style: string; enabled: boolean;
-  last_run_at: string | null; next_run_at: string | null; created_at: string;
+  last_run_at: string | null; next_run_at: string | null; next_post_at: string | null; created_at: string;
   feed_name: string | null; feed_category: string | null;
 };
-type RssDraft = {
-  id: string; subscription_id: string; article_url: string; article_title: string;
-  article_summary: string; ad_id: string | null; status: string;
-  expires_at: string; created_at: string;
-  subscription_label: string | null; feed_name: string | null;
-};
-
 const SELECTION_OPTIONS = [
   { value: "most_relevant",     label: "Most relevant to my business" },
   { value: "most_trending",     label: "Most trending / viral" },
@@ -2156,7 +2149,6 @@ function RssFeedsTab() {
 
   const [catalogue, setCatalogue] = useState<Record<string, RssFeed[]>>({});
   const [subs, setSubs] = useState<RssFeedSub[]>([]);
-  const [drafts, setDrafts] = useState<RssDraft[]>([]);
   const [availableModels, setAvailableModels] = useState<{ image: any[]; video: any[] }>({ image: [], video: [] });
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -2199,15 +2191,13 @@ function RssFeedsTab() {
   async function load() {
     setLoading(true); setErr("");
     try {
-      const [cat, s, d, models] = await Promise.all([
+      const [cat, s, models] = await Promise.all([
         api("/agent/rss/feeds/catalogue"),
         api("/agent/rss/subscriptions"),
-        api("/agent/rss/drafts"),
         api("/ads/available-models").catch(() => ({ image: [], video: [] })),
       ]);
       setCatalogue(cat);
       setSubs(s);
-      setDrafts(d);
       setAvailableModels({ image: models.image || [], video: models.video || [] });
     } catch (e: any) {
       setErr(e.message || "Could not load RSS feeds");
@@ -2391,9 +2381,6 @@ function RssFeedsTab() {
     load();
   }
 
-  async function handleApproveDraft(draft: RssDraft) { await api(`/agent/rss/drafts/${draft.id}/approve`, { method: "POST" }); load(); }
-  async function handleDismissDraft(draft: RssDraft) { await api(`/agent/rss/drafts/${draft.id}`, { method: "DELETE" }); load(); }
-
   // ── Computed ──────────────────────────────────────────────────────
   const subscribedFeedIds = new Set(subs.map(s => s.rss_feed_id).filter(Boolean) as string[]);
   const allFeeds: RssFeed[] = Object.entries(catalogue).flatMap(([, feeds]) => feeds);
@@ -2407,22 +2394,19 @@ function RssFeedsTab() {
   // interpretation before converting to the user's local timezone for display.
   const toLocalDate = (utcStr: string) => new Date(utcStr.endsWith("Z") ? utcStr : utcStr + "Z");
   const fmtNextRun = (s: RssFeedSub) => {
-    if (!s.next_run_at) return "—";
-    const d = toLocalDate(s.next_run_at);
+    // Use next_post_at (= next_run_at + lead minutes) so the card shows
+    // the actual post time, matching what the edit modal displays.
+    // Falls back to next_run_at for subscriptions created before next_post_at was added.
+    const raw = s.next_post_at ?? s.next_run_at;
+    if (!raw) return "—";
+    const d = toLocalDate(raw);
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   };
   const fmtLastRun = (s: RssFeedSub) => s.last_run_at ? toLocalDate(s.last_run_at).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Never";
-  const expiresInDraft = (d: RssDraft) => {
-    const ms = new Date(d.expires_at).getTime() - Date.now();
-    const h = Math.max(0, Math.floor(ms / 3600000));
-    const m = Math.max(0, Math.floor((ms % 3600000) / 60000));
-    return h > 0 ? `${h}h ${m}m` : `${m}m`;
-  };
 
   if (loading) return <div className="text-xs text-muted-foreground py-6">Loading…</div>;
   if (err) return <div className="text-xs text-destructive py-4">{err}</div>;
 
-  const hasDrafts = drafts.length > 0;
   const hasSubs = subs.length > 0;
   const hasCatalogue = Object.keys(catalogue).length > 0;
   const hasIdeas = savedIdeas.length > 0;
@@ -2455,38 +2439,6 @@ function RssFeedsTab() {
             )}
           </div>
         </div>
-      )}
-
-      {/* ── Pending Drafts ── */}
-      {hasDrafts && (
-        <section>
-          <h3 className="text-xs font-bold text-foreground mb-3 flex items-center gap-2">
-            📬 Pending approvals
-            <span className="rounded-full bg-amber-500/20 border border-amber-400/30 px-2 py-0.5 text-[11px] text-amber-300">{drafts.length}</span>
-          </h3>
-          <div className="space-y-2">
-            {drafts.map(draft => (
-              <div key={draft.id} className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3.5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-semibold text-foreground line-clamp-1">{draft.article_title || "Untitled article"}</div>
-                    {draft.article_summary && <p className="mt-0.5 text-[11px] text-muted-foreground line-clamp-2">{draft.article_summary}</p>}
-                    <div className="mt-1.5 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                      <span>{draft.feed_name || draft.subscription_label || "Feed"}</span>
-                      <span>·</span>
-                      <span className="text-amber-400">Expires in {expiresInDraft(draft)}</span>
-                      {draft.article_url && <a href={draft.article_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">View ↗</a>}
-                    </div>
-                  </div>
-                  <div className="flex gap-2 shrink-0">
-                    <button onClick={() => handleDismissDraft(draft)} className="rounded-full border border-border/50 px-3 py-1.5 text-[11px] text-muted-foreground hover:text-foreground hover:border-border transition-all">Dismiss</button>
-                    <button onClick={() => handleApproveDraft(draft)} className="rounded-full bg-gold-gradient px-3 py-1.5 text-[11px] font-semibold text-background shadow-[var(--shadow-gold)]">Approve & Post</button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
       )}
 
       {/* ── Main two-column layout ── */}
@@ -2669,7 +2621,7 @@ function RssFeedsTab() {
                           <span>{sub.posting_mode === "auto_post" ? "⚡ Auto-post" : "✋ Manual"}</span>
                           <span>{sub.frequency === "daily" ? "Daily" : sub.frequency === "weekly" ? `Weekly (${DAYS_OF_WEEK[sub.day_of_week ?? 0]})` : `Monthly (day ${sub.day_of_month ?? 1})`}{" · "}{sub.posts_per_run} post{sub.posts_per_run > 1 ? "s" : ""}/run</span>
                         </div>
-                        <div className="mt-0.5 text-[11px] text-muted-foreground/60">Last run: {fmtLastRun(sub)} · Next: {fmtNextRun(sub)}</div>
+                        <div className="mt-0.5 text-[11px] text-muted-foreground/60">Last run: {fmtLastRun(sub)} · Next post: {fmtNextRun(sub)}</div>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <button onClick={() => handleToggle(sub)} title={sub.enabled ? "Disable" : "Enable"}
@@ -2838,6 +2790,10 @@ interface ScheduledStreak {
   streak_type: string;
   total_ads: number;
   status: string;
+  posting_mode: string;
+  generate_lead_hours: number;
+  content_type: string;
+  image_model_id: string | null;
   created_at: string;
   ads: ScheduledAd[];
 }
@@ -2851,6 +2807,10 @@ interface ScheduledAd {
   scheduled_time: string | null;
   status: string;
   platforms: string[];
+  content_type: string;
+  image_model_id: string | null;
+  posting_mode: string;
+  generate_lead_hours: number;
   failure_reason?: string;
 }
 
@@ -2859,6 +2819,7 @@ const STATUS_COLORS: Record<string, string> = {
   scheduled: "text-blue-400",
   generating: "text-amber-400",
   generated: "text-emerald-400",
+  ready: "text-violet-400",
   posted: "text-green-400",
   failed: "text-red-400",
   cancelled: "text-muted-foreground/40",
@@ -2866,7 +2827,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 const STATUS_ICONS: Record<string, string> = {
   idea: "💡", scheduled: "📅", generating: "⚙️",
-  generated: "✅", posted: "🚀", failed: "❌", cancelled: "✕",
+  generated: "✅", ready: "✋", posted: "🚀", failed: "❌", cancelled: "✕",
 };
 
 function getBrowserTimezone(): string {
@@ -2882,6 +2843,13 @@ function BrandCampaignStreakTab() {
   const [streakType, setStreakType] = useState<StreakType>("one_month");
   const [customAds, setCustomAds] = useState(15);
   const [err, setErr] = useState("");
+  // Global defaults for all ads in the streak
+  const [contentType, setContentType] = useState<"text" | "text_image">("text");
+  const [imageModelId, setImageModelId] = useState<string>("");
+  const [globalPlatforms, setGlobalPlatforms] = useState<string[]>([]);
+  const [leadHours, setLeadHours] = useState<number>(24);
+  const [postingMode, setPostingMode] = useState<"auto_post" | "manual">("auto_post");
+  const [availableImageModels, setAvailableImageModels] = useState<{ id: string; label: string }[]>([]);
 
   // ── Active streak being reviewed (from DB) ───────────────────────────
   const [activeStreak, setActiveStreak] = useState<ScheduledStreak | null>(null);
@@ -2902,7 +2870,6 @@ function BrandCampaignStreakTab() {
 
   // ── Ideas editing state ───────────────────────────────────────────────
   const [expandedIdeas, setExpandedIdeas] = useState<Set<number>>(new Set());
-  const [globalPlatforms, setGlobalPlatforms] = useState<string[]>([]);
   const [scheduleErr, setScheduleErr] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -2912,8 +2879,11 @@ function BrandCampaignStreakTab() {
   // ── Load all streaks on mount ─────────────────────────────────────────
   useEffect(() => {
     loadAllStreaks();
-    // Resume polling if there's a generating streak
     resumePollingIfNeeded();
+    // Load available image models for the creation form
+    api("/ads/available-models").then((m: any) => {
+      setAvailableImageModels((m.image || []).map((x: any) => ({ id: x.id, label: x.label })));
+    }).catch(() => {});
     return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, []);
 
@@ -2978,17 +2948,26 @@ function BrandCampaignStreakTab() {
   // ── Generate ──────────────────────────────────────────────────────────
   async function handleGenerate() {
     if (!url.trim()) { setErr("Enter a website URL first."); return; }
+    if (globalPlatforms.length === 0) { setErr("Select at least one platform."); return; }
     setErr("");
     setScheduleErr("");
     setActiveStreak(null);
     setExpandedIdeas(new Set());
-    setGlobalPlatforms([]);
 
     try {
-      // API creates streak row + fires Celery task, returns immediately
       const data = await api("/agent/streak/generate-ideas", {
         method: "POST",
-        body: { url: url.trim(), streak_type: streakType, total_ads: totalAds, timezone: tz },
+        body: {
+          url: url.trim(),
+          streak_type: streakType,
+          total_ads: totalAds,
+          timezone: tz,
+          posting_mode: postingMode,
+          generate_lead_hours: leadHours,
+          content_type: contentType,
+          image_model_id: imageModelId || null,
+          platforms: globalPlatforms,
+        },
       });
       setActiveStreak(data);
       setRightTab("jobs");
@@ -3019,6 +2998,10 @@ function BrandCampaignStreakTab() {
           ad_copy: ad.ad_copy,
           image_prompt: (ad as any).image_prompt,
           platforms: ad.platforms,
+          content_type: ad.content_type,
+          image_model_id: ad.image_model_id || null,
+          posting_mode: ad.posting_mode,
+          generate_lead_hours: ad.generate_lead_hours,
           scheduled_date: ad.scheduled_date,
           scheduled_time: ad.scheduled_time,
         },
@@ -3156,10 +3139,87 @@ function BrandCampaignStreakTab() {
             )}
           </div>
 
+          {/* Platforms — apply to all */}
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-foreground mb-1.5">Platforms</label>
+            <div className="flex flex-wrap gap-1.5">
+              {availPlatforms.map(p => {
+                const isConn = connectedIds.has(p.id);
+                const isSel = globalPlatforms.includes(p.id);
+                return (
+                  <button key={p.id} type="button" disabled={!isConn}
+                    onClick={() => {
+                      if (!isConn) return;
+                      setGlobalPlatforms(prev => isSel ? prev.filter(x => x !== p.id) : [...prev, p.id]);
+                    }}
+                    className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all ${!isConn ? "border-border/20 text-muted-foreground/30 cursor-not-allowed opacity-40" : isSel ? "border-primary/60 bg-primary/15 text-primary" : "border-border/40 text-muted-foreground hover:border-primary/30"}`}>
+                    {p.label || p.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Content type */}
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-foreground mb-1.5">Content type</label>
+            <div className="flex gap-2">
+              {([["text", "✍️ Text only"], ["text_image", "🖼 Text + Image"]] as const).map(([v, l]) => (
+                <button key={v} type="button" onClick={() => setContentType(v)}
+                  className={`flex-1 rounded-lg border py-2 text-xs font-medium transition-all ${contentType === v ? "border-primary/60 bg-primary/10 text-primary" : "border-border/40 text-muted-foreground hover:border-primary/30"}`}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Image model — only shown for text_image */}
+          {contentType === "text_image" && availableImageModels.length > 0 && (
+            <div className="mb-4">
+              <label className="block text-xs font-medium text-foreground mb-1.5">Image model</label>
+              <select value={imageModelId} onChange={e => setImageModelId(e.target.value)}
+                className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none">
+                <option value="">System default</option>
+                {availableImageModels.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+            </div>
+          )}
+
+          {/* Posting mode */}
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-foreground mb-1.5">Posting mode</label>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setPostingMode("auto_post")}
+                className={`flex-1 rounded-lg border py-2 text-xs font-medium transition-all ${postingMode === "auto_post" ? "border-primary/60 bg-primary/10 text-primary" : "border-border/40 text-muted-foreground hover:border-primary/30"}`}>
+                ⚡ Auto-post
+              </button>
+              <button type="button" onClick={() => setPostingMode("manual")}
+                className={`flex-1 rounded-lg border py-2 text-xs font-medium transition-all ${postingMode === "manual" ? "border-primary/60 bg-primary/10 text-primary" : "border-border/40 text-muted-foreground hover:border-primary/30"}`}>
+                ✋ Manual approval
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {postingMode === "auto_post" ? "Posts go live automatically at the scheduled time." : "You'll get a notification to review each post in My Ads before it goes live."}
+            </p>
+          </div>
+
+          {/* Generate lead hours — only for auto-post mode */}
+          {postingMode === "auto_post" && (
+            <div className="mb-4">
+              <label className="block text-xs font-medium text-foreground mb-1.5">Generate before post time</label>
+              <select value={leadHours} onChange={e => setLeadHours(Number(e.target.value))}
+                className="w-full rounded-lg border border-border bg-input/40 px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none">
+                {[1, 2, 3, 6, 12, 24].map(h => (
+                  <option key={h} value={h}>{h} hour{h > 1 ? "s" : ""} before post time</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {err && <p className="mb-3 text-xs text-destructive">{err}</p>}
 
           <button onClick={handleGenerate}
-            disabled={!url.trim() || polling}
+            disabled={!url.trim() || polling || globalPlatforms.length === 0}
             className="w-full rounded-full bg-gold-gradient py-2.5 text-sm font-semibold text-background shadow-[var(--shadow-gold)] disabled:opacity-50">
             {polling ? "⚙️ Generating in background…" : `✦ Generate ${totalAds} Ideas`}
           </button>
@@ -3184,31 +3244,6 @@ function BrandCampaignStreakTab() {
 
             {scheduleErr && <p className="text-xs text-destructive">{scheduleErr}</p>}
 
-            {/* Global platform selector */}
-            <div className="rounded-xl border border-border/40 bg-background/20 p-3 space-y-2">
-              <div className="text-[11px] font-medium text-foreground">Apply platforms to all ideas</div>
-              <div className="flex flex-wrap gap-1.5">
-                {availPlatforms.map(p => {
-                  const isConn = connectedIds.has(p.id);
-                  const isSel = globalPlatforms.includes(p.id);
-                  return (
-                    <button key={p.id} type="button" disabled={!isConn}
-                      onClick={() => {
-                        if (!isConn) return;
-                        const next = isSel ? globalPlatforms.filter(x => x !== p.id) : [...globalPlatforms, p.id];
-                        setGlobalPlatforms(next);
-                        setActiveStreak(prev => prev ? {
-                          ...prev, ads: prev.ads.map(a => ({ ...a, platforms: next }))
-                        } : prev);
-                      }}
-                      className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all ${!isConn ? "border-border/20 text-muted-foreground/30 cursor-not-allowed opacity-40" : isSel ? "border-primary/60 bg-primary/15 text-primary" : "border-border/40 text-muted-foreground hover:border-primary/30"}`}>
-                      {p.label || p.name}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
             {/* Schedule All */}
             <button onClick={handleScheduleAll} disabled={saving}
               className="w-full rounded-full border border-primary/50 bg-primary/10 py-2 text-sm font-semibold text-primary hover:bg-primary/20 disabled:opacity-50">
@@ -3216,7 +3251,7 @@ function BrandCampaignStreakTab() {
             </button>
 
             {/* Ideas */}
-            {(activeStreak.ads || []).filter(a => a.status !== "cancelled").map(ad => {
+            {(activeStreak.ads || []).filter(a => ["idea", "scheduled", "generating", "generated"].includes(a.status)).map(ad => {
               const isExpanded = expandedIdeas.has(ad.sort_order);
               return (
                 <div key={ad.id} className={`rounded-xl border transition-all ${ad.status === "scheduled" ? "border-blue-500/30 bg-blue-500/5" : "border-border/50 bg-background/20"}`}>
@@ -3247,12 +3282,63 @@ function BrandCampaignStreakTab() {
                           onChange={e => updateIdea(ad.id, { ad_copy: e.target.value })}
                           className="w-full rounded-lg border border-border bg-input/40 p-2.5 text-xs text-foreground focus:border-primary focus:outline-none resize-none" />
                       </div>
+                      {/* Content type per-idea override */}
+                      <div>
+                        <label className="block text-[10px] font-medium text-muted-foreground mb-1">Content type</label>
+                        <div className="flex gap-2">
+                          {([["text", "✍️ Text only"], ["text_image", "🖼 Text + Image"]] as const).map(([v, l]) => (
+                            <button key={v} type="button" onClick={() => updateIdea(ad.id, { content_type: v })}
+                              className={`flex-1 rounded-lg border py-1.5 text-[10px] font-medium transition-all ${ad.content_type === v ? "border-primary/60 bg-primary/15 text-primary" : "border-border/40 text-muted-foreground hover:border-primary/30"}`}>
+                              {l}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       <div>
                         <label className="block text-[10px] font-medium text-muted-foreground mb-1">Image prompt (editable)</label>
                         <textarea rows={2} value={(ad as any).image_prompt || ""}
                           onChange={e => updateIdea(ad.id, { image_prompt: e.target.value } as any)}
                           className="w-full rounded-lg border border-border bg-input/40 p-2.5 text-xs text-foreground focus:border-primary focus:outline-none resize-none" />
                       </div>
+                      {/* Image model per-idea override */}
+                      {availableImageModels.length > 0 && ad.content_type === "text_image" && (
+                        <div>
+                          <label className="block text-[10px] font-medium text-muted-foreground mb-1">Image model</label>
+                          <select value={ad.image_model_id || ""}
+                            onChange={e => updateIdea(ad.id, { image_model_id: e.target.value || null })}
+                            className="w-full rounded-lg border border-border bg-input/40 px-2 py-1 text-[10px] text-foreground focus:border-primary focus:outline-none">
+                            <option value="">System default</option>
+                            {availableImageModels.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                          </select>
+                        </div>
+                      )}
+                      {/* Posting mode per-idea override */}
+                      <div>
+                        <label className="block text-[10px] font-medium text-muted-foreground mb-1">Posting mode</label>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => updateIdea(ad.id, { posting_mode: "auto_post" })}
+                            className={`flex-1 rounded-lg border py-1.5 text-[10px] font-medium transition-all ${ad.posting_mode === "auto_post" ? "border-primary/60 bg-primary/15 text-primary" : "border-border/40 text-muted-foreground hover:border-primary/30"}`}>
+                            ⚡ Auto-post
+                          </button>
+                          <button type="button" onClick={() => updateIdea(ad.id, { posting_mode: "manual" })}
+                            className={`flex-1 rounded-lg border py-1.5 text-[10px] font-medium transition-all ${ad.posting_mode === "manual" ? "border-primary/60 bg-primary/15 text-primary" : "border-border/40 text-muted-foreground hover:border-primary/30"}`}>
+                            ✋ Manual
+                          </button>
+                        </div>
+                      </div>
+                      {/* Generate lead hours — only for auto-post */}
+                      {ad.posting_mode === "auto_post" && (
+                        <div>
+                          <label className="block text-[10px] font-medium text-muted-foreground mb-1">Generate before post time</label>
+                          <select value={ad.generate_lead_hours || 24}
+                            onChange={e => updateIdea(ad.id, { generate_lead_hours: Number(e.target.value) })}
+                            className="w-full rounded-lg border border-border bg-input/40 px-2 py-1 text-[10px] text-foreground focus:border-primary focus:outline-none">
+                            {[1, 2, 3, 6, 12, 24].map(h => (
+                              <option key={h} value={h}>{h} hour{h > 1 ? "s" : ""} before post time</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="block text-[10px] font-medium text-muted-foreground mb-1">Scheduled date</label>
@@ -3343,7 +3429,13 @@ function BrandCampaignStreakTab() {
               const siteName = siteStreaks[0]?.site_name || siteUrl;
               const isCollapsed = collapsedSites.has(siteUrl);
               const totalSched = siteStreaks.reduce((n, s) =>
-                n + (s.ads || []).filter(a => ["scheduled","generated","posted"].includes(a.status)).length, 0);
+                n + (s.ads || []).filter(a => ["scheduled","generating","generated"].includes(a.status)).length, 0);
+              const totalIdea = siteStreaks.reduce((n, s) =>
+                n + (s.ads || []).filter(a => a.status === "idea").length, 0);
+
+              // Hide entire site group if nothing left to act on
+              if (totalSched + totalIdea === 0) return null;
+
               return (
                 <div key={siteUrl} className="rounded-xl border border-border/50 bg-background/20 overflow-hidden">
                   <button onClick={() => setCollapsedSites(prev => {
@@ -3351,7 +3443,7 @@ function BrandCampaignStreakTab() {
                   })} className="flex w-full items-center justify-between gap-3 p-3 text-left hover:bg-white/5">
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-semibold text-foreground truncate">🌐 {siteName}</div>
-                      <div className="text-[10px] text-muted-foreground truncate">{siteUrl} · {totalSched} ads scheduled</div>
+                      <div className="text-[10px] text-muted-foreground truncate">{siteUrl} · {totalIdea > 0 ? `${totalIdea} ideas · ` : ""}{totalSched} active</div>
                     </div>
                     <span className="text-muted-foreground text-xs">{isCollapsed ? "▼" : "▲"}</span>
                   </button>
@@ -3359,7 +3451,12 @@ function BrandCampaignStreakTab() {
                     <div className="border-t border-border/30 divide-y divide-border/20">
                       {siteStreaks.filter(s => s.status !== "generating").map(streak => {
                         const isExp = expandedStreaks.has(streak.id);
-                        const sched = (streak.ads || []).filter(a => a.status !== "cancelled" && a.status !== "idea");
+                const sched = (streak.ads || []).filter(a => ["scheduled", "generating", "generated"].includes(a.status));
+                const ideaCount = (streak.ads || []).filter(a => a.status === "idea").length;
+
+                        // Hide individual streak row if nothing left to act on
+                        if (sched.length + ideaCount === 0) return null;
+
                         return (
                           <div key={streak.id}>
                             <button onClick={() => setExpandedStreaks(prev => {
@@ -3377,7 +3474,7 @@ function BrandCampaignStreakTab() {
                             </button>
                             {isExp && (
                               <div className="px-4 pb-3 space-y-1.5">
-                                {(streak.ads || []).filter(a => a.status !== "cancelled").sort((a,b) => a.sort_order - b.sort_order).map(ad => {
+                                {(streak.ads || []).filter(a => ["idea", "scheduled", "generating", "generated"].includes(a.status)).sort((a,b) => a.sort_order - b.sort_order).map(ad => {
                                   const isAdExp = expandedScheduledAds.has(ad.id);
                                   return (
                                     <div key={ad.id} className="rounded-lg border border-border/30 bg-background/10">
@@ -3535,7 +3632,13 @@ function BrandCampaignStreakTab() {
             )}
 
             {/* Recent jobs from allStreaks */}
-            {allStreaks.filter(s => s.id !== activeStreak?.id && ["ideas_ready","failed","active"].includes(s.status)).slice(0, 5).map(s => (
+            {allStreaks.filter(s => {
+              if (s.id === activeStreak?.id) return false;
+              if (!["ideas_ready", "failed", "active"].includes(s.status)) return false;
+              // Hide if no active ads remaining
+              const hasActive = (s.ads || []).some(a => ["idea","scheduled","generating","generated"].includes(a.status));
+              return hasActive || s.status === "failed";
+            }).slice(0, 5).map(s => (
               <div key={s.id} className="rounded-lg border border-border/30 bg-background/10 px-3 py-2 flex items-center justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="text-[11px] text-foreground truncate">{s.site_name}</div>
@@ -3663,11 +3766,11 @@ function AgentNiva() {
           </button>
         ))}
       </div>
-      {tab === "streak" ? <BrandCampaignStreakTab />
-        : tab === "website-spark" ? <WebsiteSparkTab />
-        : tab === "quick-spark" ? <QuickSparkTab />
-        : tab === "events" ? <EventsTab />
-        : <RssFeedsTab />}
+      {tab === "streak" ? <BrandCampaignStreakTab key="streak" />
+        : tab === "website-spark" ? <WebsiteSparkTab key="website-spark" />
+        : tab === "quick-spark" ? <QuickSparkTab key="quick-spark" />
+        : tab === "events" ? <EventsTab key="events" />
+        : <RssFeedsTab key="rss" />}
     </AppShell>
   );
 }

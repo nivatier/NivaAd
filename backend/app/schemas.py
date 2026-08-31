@@ -949,6 +949,27 @@ class AdCreatedOut(BaseModel):
     credits_cost: float  # in 0.25 steps
 
 
+class GenerationPromptsOut(BaseModel):
+    """The prompts that were actually sent to the AI models for this ad.
+    Populated from the most recent GenerationJob — null fields mean that
+    content type wasn't generated (e.g. no image_prompt on a text-only ad),
+    or the ad was created before prompt storage was introduced."""
+    job_id: uuid.UUID
+    text_prompt: str | None = None
+    image_prompt: str | None = None
+    video_prompt: str | None = None
+
+
+class RegenerateIn(BaseModel):
+    """Caller supplies the edited prompts they want to use for re-generation.
+    Each field is optional — omitting one means 'keep the original brief
+    behaviour for that content type' (i.e. rebuild that prompt from the brief).
+    At least one must be provided."""
+    text_prompt: str | None = Field(default=None, max_length=20000)
+    image_prompt: str | None = Field(default=None, max_length=10000)
+    video_prompt: str | None = Field(default=None, max_length=10000)
+
+
 class PromptPreviewIn(BaseModel):
     product_name: str = ""
     description: str = ""
@@ -1532,6 +1553,7 @@ class RssFeedSubscriptionOut(BaseModel):
     enabled: bool
     last_run_at: datetime | None = None
     next_run_at: datetime | None = None
+    next_post_at: datetime | None = None  # next_run_at + generate_lead_minutes — the actual post time, for display on the subscription card
     created_at: datetime
     # Enriched fields from joined feed
     feed_name: str | None = None
@@ -1583,24 +1605,6 @@ class RssFeedSubscriptionPatchIn(BaseModel):
     enabled: bool | None = None
 
 
-class RssFeedDraftOut(BaseModel):
-    id: uuid.UUID
-    company_id: uuid.UUID
-    subscription_id: uuid.UUID
-    article_url: str
-    article_title: str
-    article_summary: str
-    ad_id: uuid.UUID | None = None
-    status: str
-    expires_at: datetime
-    created_at: datetime
-    # Enriched from joined subscription
-    subscription_label: str | None = None
-    feed_name: str | None = None
-
-    class Config:
-        from_attributes = True
-
 
 # ── Brand Campaign Streak schemas ─────────────────────────────────────────────
 
@@ -1616,6 +1620,10 @@ class StreakAdOut(BaseModel):
     audience: str
     voice: str
     platforms: list
+    content_type: str = "text"
+    image_model_id: str | None = None
+    posting_mode: str = "auto_post"
+    generate_lead_hours: int = 24
     scheduled_date: str | None = None
     scheduled_time: str | None = None
     timezone: str
@@ -1638,6 +1646,10 @@ class WebsiteStreakOut(BaseModel):
     total_ads: int
     status: str
     generation_error: str | None = None
+    posting_mode: str = "auto_post"
+    generate_lead_hours: int = 24
+    content_type: str = "text"
+    image_model_id: str | None = None
     created_at: datetime
     ads: list[StreakAdOut] = []
 
@@ -1651,6 +1663,11 @@ class StreakGenerateIn(BaseModel):
     streak_type: str = Field(..., pattern="^(one_month|two_months|three_months|custom)$")
     total_ads: int = Field(default=30, ge=1, le=48)
     timezone: str = Field(default="UTC", max_length=60)
+    posting_mode: str = Field(default="auto_post", pattern="^(auto_post|manual)$")
+    generate_lead_hours: int = Field(default=24, ge=1, le=24)
+    content_type: str = Field(default="text", pattern="^(text|text_image)$")
+    image_model_id: str | None = Field(default=None, max_length=120)
+    platforms: list[str] = Field(default_factory=list)
 
 
 class StreakAdPatchIn(BaseModel):
@@ -1659,6 +1676,10 @@ class StreakAdPatchIn(BaseModel):
     audience: str | None = None
     voice: str | None = Field(default=None, pattern="^(we|i|you|they|lets)$")
     platforms: list[str] | None = None
+    content_type: str | None = Field(default=None, pattern="^(text|text_image)$")
+    image_model_id: str | None = None
+    posting_mode: str | None = Field(default=None, pattern="^(auto_post|manual)$")
+    generate_lead_hours: int | None = Field(default=None, ge=1, le=24)
     scheduled_date: str | None = None
     scheduled_time: str | None = None
     timezone: str | None = None

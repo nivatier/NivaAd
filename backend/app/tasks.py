@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
-from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, BrandKit, BrandLogo, BrandVideoShot, CreditLedger, GenerationJob, Notification, PlatformConnection, PostJob, Product, RssFeed, RssFeedDraft, RssFeedSeenItem, RssFeedSubscription, ScheduledPost
+from app.models import Ad, AgentEvent, AgentRecommendation, AgentScrapeJob, BrandKit, BrandLogo, BrandVideoShot, CreditLedger, GenerationJob, Notification, PlatformConnection, PostJob, Product, RssFeed, RssFeedSeenItem, RssFeedSubscription, ScheduledPost
 from app.services import storage
 from app.services import linkedin
 from app.services.agent_scraper import scrape_company_website
@@ -647,13 +647,65 @@ def _on_generate_ad_success(sender=None, result=None, **kwargs):
         return
     try:
         from sqlalchemy.orm import Session as _Session
-        from app.models import StreakAd as _StreakAd
+        from app.models import StreakAd as _StreakAd, WebsiteStreak as _Streak, Notification as _Notif, Ad as _Ad
         with _Session(sync_engine) as db:
             sad = db.get(_StreakAd, streak_ad_id)
-            if sad and sad.status == "generating":
-                sad.status = "generated"
+            if not sad or sad.status != "generating":
+                return
+
+            # Check per-ad posting_mode (falls back to streak-level)
+            posting_mode = sad.posting_mode or "auto_post"
+
+            if posting_mode == "manual":
+                # Manual mode: ad is ready for user review in My Ads — notify immediately,
+                # don't wait for post_due_streak_ads at scheduled time.
+                sad.status = "ready"  # distinct from "posted" — user still needs to post manually
+                streak = db.get(_Streak, sad.streak_id)
+                streak_label = streak.site_name if streak else "Brand Campaign"
+                db.add(_Notif(
+                    company_id=sad.company_id,
+                    type="agent_draft_ready",
+                    title=f"🚀 {streak_label} — post ready to review",
+                    body=sad.title or "A Brand Campaign post has been generated and is ready in My Ads.",
+                    action_url="/app/my-ads",
+                    ref_id=sad.ad_id,
+                    dismissed_by=[],
+                ))
                 db.commit()
-                logger.info("[streak-gen] streak_ad=%s marked generated via success hook", streak_ad_id)
+                logger.info("[streak-gen] streak_ad=%s manual mode — ad ready, notification sent", streak_ad_id)
+            else:
+                # Auto-post mode: mark generated and create ScheduledPost rows
+                # so My Ads shows "scheduled" and fire_due_scheduled_posts / post_due_streak_ads
+                # can pick it up at the right time.
+                sad.status = "generated"
+                # Build the scheduled UTC datetime from the streak_ad's local date/time/timezone
+                try:
+                    from zoneinfo import ZoneInfo as _ZI
+                    tz = _ZI(sad.timezone or "UTC")
+                    sched_time = sad.scheduled_time or "09:00"
+                    local_dt = datetime.strptime(
+                        f"{sad.scheduled_date} {sched_time}", "%Y-%m-%d %H:%M"
+                    ).replace(tzinfo=tz)
+                    scheduled_at_utc = local_dt.astimezone(_ZI("UTC")).replace(tzinfo=None)
+                except Exception:
+                    scheduled_at_utc = datetime.utcnow()
+
+                from app.models import ScheduledPost as _SP, Ad as _Ad
+                import uuid as _uuid
+                ad = db.get(_Ad, sad.ad_id)
+                if ad:
+                    ad.status = "scheduled"
+                for platform in (sad.platforms or []):
+                    db.add(_SP(
+                        company_id=sad.company_id,
+                        ad_id=sad.ad_id,
+                        platform=platform,
+                        scheduled_at=scheduled_at_utc,
+                        status="pending",
+                    ))
+                db.commit()
+                logger.info("[streak-gen] streak_ad=%s auto-post — scheduled for %s UTC on platforms=%s",
+                            streak_ad_id, scheduled_at_utc.strftime("%Y-%m-%dT%H:%M:%S"), sad.platforms)
     except Exception as exc:  # noqa: BLE001
         logger.error("[streak-gen] success hook failed for streak_ad=%s: %s", streak_ad_id, exc)
 
@@ -695,6 +747,10 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                 logger.info("[text_prompt] job=%s USING OVERRIDE from confirmation popup", job_id)
             else:
                 prompt = _build_prompt(brief, _resolve_platforms(ad.platforms or []), ad.outputs, feedback)
+            # Persist the exact prompt used so users can review / re-trigger
+            # from My Ads without us having to reconstruct it from the brief.
+            job.text_prompt = prompt
+            db.commit()
             text_model = brief.get("text_model") or "google/gemini-2.5-flash"  # resolved once at ad-creation time (ads.py), not re-looked-up here — same pattern as image_model/video_model
             logger.info("[generate_ad] job=%s text_model=%s prompt_len=%d copy_directions_len=%d", job_id, text_model, len(prompt), len(brief.get("copy_directions") or ""))
             parsed = text_gen.generate_text(prompt, text_model)
@@ -702,6 +758,19 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
             for plat, pdata in (parsed.items() if isinstance(parsed, dict) else {}.items()):
                 if isinstance(pdata, dict) and "caption" in pdata:
                     logger.info("[generate_ad] job=%s platform=%s caption_len=%d caption_preview=%r", job_id, plat, len(pdata["caption"]), pdata["caption"][:120])
+
+            # RSS ads: deterministically append the article URL to every
+            # platform's caption — never trust the LLM to include it reliably.
+            # The URL is stored in the brief as rss_article_url (set by
+            # _generate_rss_article_post) and only present for RSS-sourced ads.
+            rss_article_url = brief.get("rss_article_url")
+            if rss_article_url and isinstance(parsed, dict):
+                for plat, pdata in parsed.items():
+                    if isinstance(pdata, dict) and "caption" in pdata:
+                        caption = pdata["caption"].strip()
+                        if rss_article_url not in caption:
+                            pdata["caption"] = caption + "\n\n" + rss_article_url
+                logger.info("[generate_ad] job=%s appended rss_article_url to captions", job_id)
             models_used = [text_model]  # text/copy generation always happens; image/video append below if used
 
             if feedback:
@@ -803,6 +872,9 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                             logger.info("[image_prompt] job=%s USING OVERRIDE from confirmation popup", job_id)
                         else:
                             img_prompt = _image_prompt(brief)
+                        # Persist image prompt alongside text prompt for user review
+                        job.image_prompt = img_prompt
+                        db.commit()
                         logger.info(
                             "[image_prompt] job=%s has_reference=%s\n----- PROMPT START -----\n%s\n----- PROMPT END -----",
                             job_id, bool(ref_urls), img_prompt,
@@ -968,6 +1040,9 @@ def generate_ad(self, job_id: str, feedback: str | None = None, variant: int = 0
                         video_prompt = _video_prompt(brief, shots[0].get("prompt"), shot=shots[0])
                     else:
                         video_prompt = _multi_shot_video_prompt(brief, shots)
+                    # Persist video prompt for user review
+                    job.video_prompt = video_prompt
+                    db.commit()
                     logger.info(
                         "[video_prompt] job=%s shots=%d total_duration=%ds\n----- PROMPT START -----\n%s\n----- PROMPT END -----",
                         job_id, len(shots), total_duration, video_prompt,
@@ -2584,23 +2659,26 @@ def _build_rss_post_prompt(
         f"## Company context\n{company_context}\n\n"
         f"## Article to share\n"
         f"Title: {article['title']}\n"
-        f"Summary: {article['summary']}\n"
-        f"URL: {article['url']}\n\n"
+        f"Summary: {article['summary']}\n\n"
         f"## Platform styles\n{_json.dumps(platform_styles)}\n\n"
         f"## Task\n"
         f"Write one engaging social media post per platform that shares this article with "
         f"the company's audience. Apply the voice instruction strictly. "
-        f"Include the article URL naturally at the end. "
+        f"Do NOT include any URLs in the caption — a URL will be appended automatically after. "
         f"Rate the copy 0-100 for predicted engagement and give one improvement tip.\n\n"
         f"## Output\nRespond with ONLY this raw JSON, no markdown fences, no prose:\n{shape}"
     )
 
 
 def _get_company_context_sync(db, company_id) -> str:
-    """Build a short company context string for AI prompts."""
+    """Build a short company context string for AI prompts.
+    Deliberately excludes the brand tagline — taglines are marketing slogans
+    that read awkwardly when the LLM weaves them into post copy verbatim
+    (e.g. 'companies like Test, powered by NivaSpark'). Only the company
+    name and products are included so the model has enough context without
+    producing branded noise in the output."""
     from app.models import BrandKit, Company, Product
     company = db.get(Company, company_id)
-    brand_kit = db.scalar(select(BrandKit).where(BrandKit.company_id == company_id))
     products = db.scalars(
         select(Product).where(Product.company_id == company_id).limit(3)
     ).all()
@@ -2608,8 +2686,6 @@ def _get_company_context_sync(db, company_id) -> str:
     ctx_parts = []
     if company:
         ctx_parts.append(f"Company: {company.name}")
-    if brand_kit and brand_kit.tagline:
-        ctx_parts.append(f"Tagline: {brand_kit.tagline}")
     if products:
         prod_names = ", ".join(p.name for p in products)
         ctx_parts.append(f"Products/services: {prod_names}")
@@ -2618,8 +2694,8 @@ def _get_company_context_sync(db, company_id) -> str:
 
 # ── RSS completion signals ───────────────────────────────────────────────────
 # When generate_ad completes for an RSS ad, these handlers either:
-#   a) dispatch post_ad_now to the posting queue (auto_post mode), or
-#   b) create the RssFeedDraft + Notification (manual approval mode)
+#   a) dispatch ScheduledPost rows (auto_post mode), or
+#   b) set ad.status = "ready" + notify user to review in My Ads (manual mode)
 # Both are driven by headers set on the generate_ad task by _generate_rss_article_post.
 
 @_task_success.connect(sender=None)
@@ -2648,7 +2724,6 @@ def _on_rss_generate_done(sender=None, result=None, **kwargs):
                 return
 
             scheduled_at = datetime.strptime(sched_str, "%Y-%m-%dT%H:%M:%S")
-            # scheduled_at is the POST time (post_hour:post_minute), not generation time
 
             with _Session(sync_engine) as db:
                 ad = db.get(_Ad, _uuid.UUID(ad_id))
@@ -2672,18 +2747,16 @@ def _on_rss_generate_done(sender=None, result=None, **kwargs):
             logger.error("[rss-signal] auto-post scheduling failed for ad=%s: %s", headers.get("rss_ad_id"), exc)
         return
 
-    # ── Manual approval path — create draft + notification ───────────────────
+    # ── Manual approval path — set ad ready, notify user to review in My Ads ──
     rss_sub_id = headers.get("rss_sub_id")
     if not rss_sub_id:
         return
     try:
         from sqlalchemy.orm import Session as _Session
-        from app.models import Ad as _Ad, RssFeedDraft as _Draft, Notification as _Notif, RssFeedSubscription as _Sub
-        from datetime import timedelta as _td
+        from app.models import Ad as _Ad, Notification as _Notif, RssFeedSubscription as _Sub
 
         with _Session(sync_engine) as db:
             import uuid as _uuid
-            # Prefer rss_ad_id header (set directly) — fall back to GenerationJob lookup
             rss_ad_id = headers.get("rss_ad_id")
             if rss_ad_id:
                 ad = db.get(_Ad, _uuid.UUID(rss_ad_id))
@@ -2699,38 +2772,28 @@ def _on_rss_generate_done(sender=None, result=None, **kwargs):
                 logger.error("[rss-signal] could not find ad or sub — ad_id=%s sub_id=%s", rss_ad_id, rss_sub_id)
                 return
 
-            now = datetime.utcnow()
-            draft = _Draft(
-                company_id=sub.company_id,
-                subscription_id=sub.id,
-                article_url=headers.get("rss_article_url", ""),
-                article_title=headers.get("rss_article_title", "")[:500],
-                article_summary=headers.get("rss_article_summary", "")[:2000],
-                ad_id=ad.id,
-                status="pending",
-                expires_at=now + _td(hours=24),
-            )
-            db.add(draft)
+            # Ad is already "ready" from generate_ad completing successfully.
+            # Just notify the user to review it in My Ads — no draft, no expiry.
             article_title = headers.get("rss_article_title", "")[:60]
             feed_label = sub.label or "RSS Feed"
             db.add(_Notif(
                 company_id=sub.company_id,
                 type="agent_draft_ready",
-                title=f"📰 {feed_label} — draft ready",
-                body=article_title if article_title else "A post draft is ready for your approval. Expires in 24h.",
-                action_url="/app/agent-niva?tab=rss",
-                ref_id=ad.id,  # link to ad so notification clears when ad/draft is deleted
+                title=f"📰 {feed_label} — post ready to review",
+                body=article_title if article_title else "A new RSS post has been generated and is ready in My Ads.",
+                action_url="/app/my-ads",
+                ref_id=ad.id,
                 dismissed_by=[],
             ))
             db.commit()
-            logger.info("[rss-signal] draft created for sub=%s ad=%s", sub.id, ad.id)
+            logger.info("[rss-signal] ad=%s ready, notification sent, user directed to My Ads", ad.id)
     except Exception as exc:
-        logger.error("[rss-signal] draft creation failed for sub=%s: %s", rss_sub_id, exc)
+        logger.error("[rss-signal] manual-ready notification failed for sub=%s: %s", rss_sub_id, exc)
 
 
 @celery_app.task(name="app.process_rss_feeds", bind=True, max_retries=0)
 def process_rss_feeds(self):
-    """Celery Beat, runs hourly.
+    """Celery Beat, runs every 5 minutes.
 
     For each enabled RssFeedSubscription that is due to run:
     1. Fetch RSS XML from the feed URL
@@ -2739,10 +2802,9 @@ def process_rss_feeds(self):
     4. For each picked article:
        a. Generate an Ad (text only, or text+image, or text+video)
        b. Deduct credits
-       c. Auto-post OR create a pending RssFeedDraft (manual approval)
+       c. Auto-post (create ScheduledPost) OR set ad ready + notify user to review in My Ads
        d. Mark the article URL as seen
     5. Update last_run_at / next_run_at on the subscription
-    6. Clean up expired drafts (>24 hours old, still pending)
     """
     from app.models import Company  # local import avoids top-level circular
 
@@ -2752,20 +2814,7 @@ def process_rss_feeds(self):
 
     with Session(sync_engine) as db:
 
-        # ── Step 1: Clean up expired drafts ──────────────────────────
-        expired = db.scalars(
-            select(RssFeedDraft).where(
-                RssFeedDraft.status == "pending",
-                RssFeedDraft.expires_at <= now,
-            )
-        ).all()
-        for draft in expired:
-            draft.status = "dismissed"
-        if expired:
-            db.commit()
-            logger.info("[rss] cleaned up %d expired drafts", len(expired))
-
-        # ── Step 2: Find due subscriptions ──────────────────────────
+        # ── Step 1: Find due subscriptions ──────────────────────────
         # Find subscriptions whose generation time has passed (or is overdue).
         # next_run_at tracks the user-configured GENERATION time — the gap
         # between generation and posting is now explicitly set by the user
@@ -3158,6 +3207,7 @@ def _generate_rss_article_post(
         "image_scene": image_scene,
         "copy_directions": copy_directions,
         "text_prompt_override": text_prompt,
+        "rss_article_url": article.get("url", ""),  # stored so generate_ad can append it deterministically post-generation
         "brand_logo_url": brand_logo_url,
         "brand_logo_placement": brand_logo_placement,
         "brand_logo_opacity": brand_logo_opacity,
@@ -3322,55 +3372,30 @@ def check_rss_feed_health(self):
 
 @celery_app.task(name="app.generate_due_streak_ads", bind=True, max_retries=0)
 def generate_due_streak_ads(self):
-    """Hourly task (:10 past every hour): generate ads for streak_ads whose
-    scheduled local time is within the next 24 hours.
-    Uses the stored ad_copy as text_prompt_override and image_prompt as image_scene.
-    Image generation runs synchronously inside the worker.
+    """Every 5 minutes: generate ads for scheduled streak_ads whose generation
+    window has arrived or passed.
 
-    Why hourly instead of a fixed daily window:
-      A fixed 02:00 UTC run only gives ~3 hours lead time for an ad
-      scheduled at 05:00 UTC (e.g. 9 AM Gulf time), and may miss ads
-      scheduled near midnight UTC entirely. Running hourly and checking
-      whether the ad's local scheduled time falls within the next 24 hours
-      means every ad gets generated exactly ~24 hours before it posts,
-      regardless of what timezone or time the user picked.
+    Generation window: scheduled_datetime - generate_lead_hours <= now
+    Catches both on-time and overdue ads — same logic as process_rss_feeds.
     """
-    from app.models import StreakAd, WebsiteStreak, Company, Ad
-    from app.services import credits as credit_svc
+    from app.models import StreakAd, WebsiteStreak, Ad
     from sqlalchemy.orm import Session
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-    from datetime import date, timedelta
-    import json as _json
+    from zoneinfo import ZoneInfo
+    from datetime import timedelta
 
     now_utc = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC"))
-    # Generation window: ads whose scheduled moment falls between now and 25 hours
-    # from now (25 not 24 so we don't miss ads right on the boundary when the
-    # beat fires a few minutes late).
-    window_start = now_utc
-    window_end   = now_utc + timedelta(hours=25)
-
     generated = 0
     failed = 0
 
     with Session(sync_engine) as db:
-        # Fetch all scheduled ads in roughly the right date range first
-        # (today + tomorrow) — then filter precisely by local scheduled
-        # datetime inside the loop where we have timezone info.
-        today    = date.today().isoformat()
-        tomorrow = (date.today() + timedelta(days=1)).isoformat()
-        day_after = (date.today() + timedelta(days=2)).isoformat()
-
         rows = db.execute(
-            select(StreakAd).where(
-                StreakAd.status == "scheduled",
-                StreakAd.scheduled_date.in_([today, tomorrow, day_after]),
-            )
+            select(StreakAd).where(StreakAd.status == "scheduled")
         ).scalars().all()
 
-        # Filter to only ads whose local scheduled datetime is within the window
         due_rows = []
         for streak_ad in rows:
+            if not streak_ad.scheduled_date:
+                continue
             try:
                 tz = ZoneInfo(streak_ad.timezone or "UTC")
             except Exception:
@@ -3383,41 +3408,61 @@ def generate_due_streak_ads(self):
                 sched_utc = local_dt.astimezone(ZoneInfo("UTC"))
             except Exception:
                 continue
-            if window_start <= sched_utc <= window_end:
-                due_rows.append(streak_ad)
+            streak = db.get(WebsiteStreak, streak_ad.streak_id)
+            lead_hours = streak_ad.generate_lead_hours or (streak.generate_lead_hours if streak and streak.generate_lead_hours else 24)
+            generation_trigger_utc = sched_utc - timedelta(hours=lead_hours)
+            if generation_trigger_utc <= now_utc:
+                due_rows.append((streak_ad, streak))
 
-        rows = due_rows
-
-        for streak_ad in rows:
+        for streak_ad, streak in due_rows:
             try:
                 streak_ad.status = "generating"
                 db.commit()
 
-                streak = db.get(WebsiteStreak, streak_ad.streak_id)
                 if not streak:
                     raise ValueError("Parent streak not found")
 
-                # Resolve text + image models using the same helper used by other agent tasks
                 all_models = get_available_models_sync(db)
                 text_models  = [m for m in all_models.get("text",  []) if m.get("enabled", True)]
                 image_models = [m for m in all_models.get("image", []) if m.get("enabled", True)]
-                text_model  = text_models[0]["model"]  if text_models  else "google/gemini-2.5-flash"
-                image_model = image_models[0]["model"] if image_models else "google/gemini-2.5-flash-image"
+                text_model = text_models[0]["model"] if text_models else "google/gemini-2.5-flash"
 
-                # Resolve the platform's preferred aspect ratio for image generation.
-                # Streak ads can target multiple platforms — use the first platform's ratio,
-                # falling back to square (1:1) if none is configured.
+                effective_image_model_id = streak_ad.image_model_id or streak.image_model_id
+                if effective_image_model_id:
+                    matched = next((m for m in image_models if m["id"] == effective_image_model_id), None)
+                    image_model = matched["model"] if matched else (image_models[0]["model"] if image_models else "google/gemini-2.5-flash-image")
+                else:
+                    image_model = image_models[0]["model"] if image_models else "google/gemini-2.5-flash-image"
+
+                effective_content_type = streak_ad.content_type or streak.content_type or "text"
+                has_image = "image" in effective_content_type
+
                 from app.services.platform_config import get_ad_targeting_ratios_sync
                 ratio_map = get_ad_targeting_ratios_sync(db)
                 first_platform = (streak_ad.platforms or ["instagram"])[0]
                 image_aspect_ratio = ratio_map.get(first_platform, "1:1")
 
-                # Build brief
                 voice_label = {
                     "we": "Company (We/Our)", "i": "Founder (I/My)",
                     "you": "Customer-facing (You/Your)", "they": "Third-person (They)",
                     "lets": "Inclusive (Let's/Together)",
                 }.get(streak_ad.voice, "Company (We/Our)")
+
+                # Build a prompt that asks the LLM to adapt the pre-written ad copy
+                # per platform and return the expected JSON structure.
+                # We cannot use the raw ad_copy as text_prompt_override directly —
+                # generate_ad expects the override to be a prompt that returns JSON,
+                # not finished copy text.
+                platforms_str = ", ".join(streak_ad.platforms or ["linkedin_personal"])
+                shape = _shape(_resolve_platforms(streak_ad.platforms or ["linkedin_personal"]))
+                streak_text_prompt = (
+                    f"You are a social media ad copywriter.\n\n"
+                    f"Adapt the following pre-written ad copy for each platform below, "
+                    f"keeping the core message but adjusting tone and style to fit each platform. "
+                    f"Platforms: {platforms_str}\n\n"
+                    f"## Pre-written ad copy\n{streak_ad.ad_copy}\n\n"
+                    f"## Output\nRespond with ONLY this raw JSON, no markdown fences, no prose:\n{shape}"
+                )
 
                 brief = {
                     "product_name": streak_ad.title,
@@ -3426,13 +3471,19 @@ def generate_due_streak_ads(self):
                     "goal": "Engagement",
                     "tone": voice_label,
                     "image_scene": streak_ad.image_prompt,
-                    "text_prompt_override": streak_ad.ad_copy,
+                    "text_prompt_override": streak_text_prompt,
                     "text_model": text_model,
                     "image_model": image_model,
                     "image_aspect_ratio": image_aspect_ratio,
                 }
 
-                outputs = {"text": True, "image": True, "video": False, "format": "single", "variations": 1}
+                outputs = {
+                    "text": True,
+                    "image": has_image,
+                    "video": False,
+                    "format": "single",
+                    "variations": 1,
+                }
 
                 ad = Ad(
                     company_id=streak_ad.company_id,
@@ -3445,34 +3496,35 @@ def generate_due_streak_ads(self):
                 )
                 db.add(ad)
                 db.flush()
-                ad_id_str = str(ad.id)
 
-                # Link the ad to the streak slot NOW (before dispatching) so
-                # post_due_streak_ads can find it even if generation is still
-                # running. Status stays "generating" until generate_ad finishes
-                # and flips it to "ready" — post_due_streak_ads already checks
-                # for "generated" on the streak_ad, which we only set in the
-                # on_success callback below.
+                # create GenerationJob — generate_ad expects a job_id, not an ad_id
+                job = GenerationJob(
+                    company_id=streak_ad.company_id,
+                    ad_id=ad.id,
+                    kind="ad",
+                    credits_cost=0,  # streak generation is not charged per-ad
+                )
+                db.add(job)
+                db.flush()
+                job_id_str = str(job.id)
+
                 streak_ad.ad_id = ad.id
                 db.commit()
 
-                # Dispatch to the generation queue — non-blocking.
-                # The streak_ad status is flipped to "generated" by a dedicated
-                # on_success Celery signal registered below rather than inline,
-                # so this loop moves on immediately and all due ads are queued
-                # in one fast pass instead of waiting 20-60s each.
                 from app.worker import celery_app as _app
                 _app.send_task(
                     "app.generate_ad",
-                    args=[ad_id_str],
+                    args=[job_id_str],
                     queue="generation",
                     kwargs={},
-                    # Pass streak_ad id via headers so the success hook can
-                    # flip streak_ad.status without a separate DB lookup
-                    headers={"streak_ad_id": str(streak_ad.id)},
+                    headers={
+                        "streak_ad_id": str(streak_ad.id),
+                        "streak_posting_mode": streak_ad.posting_mode or streak.posting_mode or "auto_post",
+                    },
                 )
                 generated += 1
-                logger.info("[streak-gen] streak_ad=%s ad=%s dispatched to generation queue", streak_ad.id, ad_id_str)
+                logger.info("[streak-gen] streak_ad=%s ad=%s job=%s dispatched (mode=%s lead=%dh)",
+                            streak_ad.id, str(ad.id), job_id_str, streak.posting_mode, lead_hours)
 
             except Exception as exc:  # noqa: BLE001
                 failed += 1
@@ -3482,115 +3534,79 @@ def generate_due_streak_ads(self):
                 logger.error("[streak-gen] streak_ad=%s failed: %s", streak_ad.id, exc)
 
     return f"generate_due_streak_ads: generated={generated} failed={failed}"
-
-
 @celery_app.task(name="app.post_due_streak_ads", bind=True, max_retries=0)
 def post_due_streak_ads(self):
-    """Hourly task: post streak_ads that are generated and due now (date+hour match)."""
-    from app.models import StreakAd, Ad, Company
-    from app.services import credits as credit_svc
+    """Every 5 minutes:
+    - Auto-post mode: syncs streak_ad.status to "posted" once fire_due_scheduled_posts
+      has handled all ScheduledPost rows for this ad. The actual posting is done by
+      fire_due_scheduled_posts — this just keeps the streak_ad status in sync.
+    - Manual mode: sends notification to My Ads (ad is already in ready state).
+      This path only runs if the ad somehow ended up in "generated" without being
+      caught by _on_generate_ad_success (e.g. older ads before the signal fix).
+    """
+    from app.models import StreakAd, WebsiteStreak, Ad, Notification as _Notif, ScheduledPost as _SP
     from sqlalchemy.orm import Session
-    from datetime import date
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
     now_utc = datetime.utcnow()
-    today = date.today().isoformat()
-    posted = 0
+    synced = 0
+    notified = 0
     failed = 0
-    skipped = 0
 
     with Session(sync_engine) as db:
         rows = db.execute(
-            select(StreakAd).where(
-                StreakAd.status == "generated",
-                StreakAd.scheduled_date == today,
-            )
+            select(StreakAd).where(StreakAd.status == "generated")
         ).scalars().all()
 
         for streak_ad in rows:
             try:
-                # Convert scheduled local time to UTC hour for comparison
-                tz_name = streak_ad.timezone or "UTC"
-                sched_time = streak_ad.scheduled_time or "09:00"
-                sched_hour_local = int(sched_time.split(":")[0])
+                streak = db.get(WebsiteStreak, streak_ad.streak_id)
+                posting_mode = streak_ad.posting_mode or (streak.posting_mode if streak else "auto_post")
 
-                try:
-                    tz = ZoneInfo(tz_name)
-                    local_dt = datetime.strptime(
-                        f"{streak_ad.scheduled_date} {sched_time}", "%Y-%m-%d %H:%M"
-                    ).replace(tzinfo=tz)
-                    utc_hour = local_dt.astimezone(ZoneInfo("UTC")).hour
-                except (ZoneInfoNotFoundError, Exception):
-                    utc_hour = sched_hour_local  # fallback if tz conversion fails
-
-                # Post if:
-                #  • current UTC hour matches the scheduled hour (normal case), OR
-                #  • the scheduled hour has already passed today (catch-up: covers
-                #    ads that became "generated" after their scheduled hour because
-                #    generate_due_streak_ads ran late or was catching up itself)
-                if now_utc.hour < utc_hour:
-                    skipped += 1
-                    continue
-
-                if not streak_ad.ad_id:
-                    streak_ad.status = "failed"
-                    streak_ad.failure_reason = "No generated ad linked"
+                if posting_mode == "manual":
+                    # Shouldn't normally reach here — _on_generate_ad_success handles it.
+                    # Safety fallback: notify and mark ready.
+                    streak_label = streak.site_name if streak else "Brand Campaign"
+                    db.add(_Notif(
+                        company_id=streak_ad.company_id,
+                        type="agent_draft_ready",
+                        title=f"🚀 {streak_label} — post ready to review",
+                        body=streak_ad.title or "A Brand Campaign post has been generated and is ready in My Ads.",
+                        action_url="/app/my-ads",
+                        ref_id=streak_ad.ad_id,
+                        dismissed_by=[],
+                    ))
+                    streak_ad.status = "ready"
                     db.commit()
-                    failed += 1
-                    continue
+                    notified += 1
+                    logger.info("[streak-post] streak_ad=%s manual fallback — notification sent", streak_ad.id)
 
-                # Check credits via CreditLedger sum (Company has no .credits column)
-                from sqlalchemy import func as _func
-                balance = db.scalar(
-                    select(_func.coalesce(_func.sum(CreditLedger.delta), 0))
-                    .where(CreditLedger.company_id == streak_ad.company_id)
-                ) or 0
-                if balance < 1:
-                    streak_ad.status = "failed"
-                    streak_ad.failure_reason = "Insufficient credits"
-                    db.commit()
-                    failed += 1
-                    logger.warning("[streak-post] streak_ad=%s insufficient credits (balance=%.2f)", streak_ad.id, balance)
-                    continue
-
-                # Create a PostJob row (same pattern as POST /ads/{id}/post in routers/ads.py)
-                # then dispatch post_ad_now to the posting queue — non-blocking.
-                # streak_ad.status is set to "posted" optimistically here; if the
-                # PostJob fails, the failure is recorded on PostJob.failed and visible
-                # in the ad's posting status UI — the streak_ad row itself is not
-                # rolled back since the attempt was genuine.
-                post_job = PostJob(
-                    company_id=streak_ad.company_id,
-                    ad_id=streak_ad.ad_id,
-                    platforms=streak_ad.platforms,
-                    status="queued",
-                    succeeded=[],
-                    failed={},
-                )
-                db.add(post_job)
-                db.flush()
-                post_job_id = str(post_job.id)
-
-                streak_ad.status = "posted"
-                db.commit()
-
-                from app.worker import celery_app as _app
-                _app.send_task("app.post_ad_now", args=[post_job_id], queue="posting")
-                posted += 1
-                logger.info("[streak-post] streak_ad=%s post_job=%s dispatched to posting queue", streak_ad.id, post_job_id)
+                else:
+                    # Auto-post: check if all ScheduledPost rows for this ad are done
+                    # (posted or failed) — if so, sync streak_ad.status to "posted"
+                    if not streak_ad.ad_id:
+                        continue
+                    sp_rows = db.execute(
+                        select(_SP).where(_SP.ad_id == streak_ad.ad_id)
+                    ).scalars().all()
+                    if not sp_rows:
+                        # No ScheduledPost rows yet — fire_due_scheduled_posts hasn't run
+                        continue
+                    all_done = all(sp.status in ("posted", "failed", "canceled") for sp in sp_rows)
+                    if all_done:
+                        streak_ad.status = "posted"
+                        db.commit()
+                        synced += 1
+                        logger.info("[streak-post] streak_ad=%s auto-post — status synced to posted", streak_ad.id)
 
             except Exception as exc:  # noqa: BLE001
                 failed += 1
-                streak_ad.status = "failed"
-                streak_ad.failure_reason = str(exc)[:500]
-                db.commit()
                 logger.error("[streak-post] streak_ad=%s failed: %s", streak_ad.id, exc)
 
-    return f"post_due_streak_ads: posted={posted} failed={failed} skipped={skipped}"
-
-
+    return f"post_due_streak_ads: synced={synced} notified={notified} failed={failed}"
 @celery_app.task(name="app.generate_streak_ideas_task", bind=True, max_retries=0)
-def generate_streak_ideas_task(self, streak_id: str, streak_type: str, total_ads: int, timezone: str = "UTC"):
+def generate_streak_ideas_task(self, streak_id: str, streak_type: str, total_ads: int, timezone: str = "UTC",
+                                content_type: str = "text", image_model_id: str | None = None, platforms: list | None = None):
     """Generate ideas for a WebsiteStreak in batches of 10.
     Saves StreakAd rows as each batch completes.
     Updates streak.status to 'ideas_ready' on success, 'failed' on error."""
@@ -3742,7 +3758,11 @@ def generate_streak_ideas_task(self, streak_id: str, streak_type: str, total_ads
                         image_prompt=idea.get("image_prompt", ""),
                         audience=idea.get("audience", "")[:200],
                         voice=idea.get("voice", "we") if idea.get("voice") in ("we","i","you","they","lets") else "we",
-                        platforms=[],
+                        platforms=platforms or [],
+                        content_type=content_type,
+                        image_model_id=image_model_id,
+                        posting_mode=streak.posting_mode or "auto_post",
+                        generate_lead_hours=streak.generate_lead_hours or 24,
                         scheduled_date=None,
                         scheduled_time="09:00",
                         timezone=timezone,

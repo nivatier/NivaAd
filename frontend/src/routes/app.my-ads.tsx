@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppShell, EmptyState, Input } from "@/components/app-shell";
 import { RepostModal } from "@/components/repost-modal";
 import { PLATFORMS, RetentionWarning } from "@/components/create-ad-parts";
@@ -145,6 +145,231 @@ function PostingStatusModal({ ad, onClose }: { ad: AdOut; onClose: () => void })
   );
 }
 
+// ── Prompt Preview Modal ──────────────────────────────────────────────────────
+type GenerationPrompts = {
+  job_id: string;
+  text_prompt: string | null;
+  image_prompt: string | null;
+  video_prompt: string | null;
+};
+
+function PromptModal({ ad, onClose, onRegenerated }: { ad: AdOut; onClose: () => void; onRegenerated: () => void }) {
+  const [prompts, setPrompts] = useState<GenerationPrompts | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState("");
+
+  const [textPrompt, setTextPrompt] = useState("");
+  const [imagePrompt, setImagePrompt] = useState("");
+  const [videoPrompt, setVideoPrompt] = useState("");
+
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenErr, setRegenErr] = useState("");
+  const [regenDone, setRegenDone] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Load prompts on mount
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      setLoadErr("");
+      try {
+        const data: GenerationPrompts = await api(`/ads/${ad.id}/prompts`);
+        setPrompts(data);
+        setTextPrompt(data.text_prompt ?? "");
+        setImagePrompt(data.image_prompt ?? "");
+        setVideoPrompt(data.video_prompt ?? "");
+      } catch (e: any) {
+        setLoadErr(e.message || "Could not load prompts.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [ad.id]);
+
+  async function handleRegenerate() {
+    setRegenerating(true);
+    setRegenErr("");
+    try {
+      const body: Record<string, string> = {};
+      if (textPrompt.trim()) body.text_prompt = textPrompt.trim();
+      if (imagePrompt.trim()) body.image_prompt = imagePrompt.trim();
+      if (videoPrompt.trim()) body.video_prompt = videoPrompt.trim();
+
+      await api(`/ads/${ad.id}/regenerate`, { method: "POST", body });
+
+      // Poll the ad until it's no longer "generating"
+      pollRef.current = setInterval(async () => {
+        try {
+          const updated = await api(`/ads/${ad.id}`);
+          if (updated.status !== "generating") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            setRegenerating(false);
+            setRegenDone(true);
+            onRegenerated();
+          }
+        } catch {
+          if (pollRef.current) clearInterval(pollRef.current);
+          setRegenerating(false);
+          setRegenErr("Lost track of regeneration — check My Ads to see the updated ad.");
+        }
+      }, 3000);
+    } catch (e: any) {
+      setRegenErr(e.message || "Regeneration failed.");
+      setRegenerating(false);
+    }
+  }
+
+  const hasImage = !!(prompts?.image_prompt);
+  const hasVideo = !!(prompts?.video_prompt);
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      onClick={() => !regenerating && onClose()}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl border border-border overflow-hidden"
+        style={{
+          background: "oklch(0.14 0.02 260 / 0.97)",
+          backdropFilter: "blur(20px) saturate(1.5)",
+          boxShadow: "0 0 0 1px oklch(1 0 0 / 0.08), 0 24px 64px oklch(0 0 0 / 0.6)",
+        }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border px-5 py-4 shrink-0">
+          <div>
+            <div className="text-sm font-semibold text-foreground">🔍 Generation Prompts</div>
+            <div className="mt-0.5 text-[11px] text-muted-foreground">
+              The exact prompts sent to the AI — edit and regenerate as needed.
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            disabled={regenerating}
+            className="text-lg leading-none text-muted-foreground hover:text-foreground disabled:opacity-40"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {loading && (
+            <div className="py-10 text-center text-sm text-muted-foreground animate-pulse">Loading prompts…</div>
+          )}
+
+          {loadErr && !loading && (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {loadErr}
+            </div>
+          )}
+
+          {!loading && !loadErr && prompts && (
+            <>
+              {regenDone && (
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">
+                  ✓ Regeneration complete — the ad has been updated.
+                </div>
+              )}
+
+              {/* Text prompt */}
+              {prompts.text_prompt !== null && (
+                <div>
+                  <label className="mb-1.5 flex items-center gap-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                    <span>✍️ Text / Copy Prompt</span>
+                  </label>
+                  <textarea
+                    value={textPrompt}
+                    onChange={(e) => setTextPrompt(e.target.value)}
+                    disabled={regenerating}
+                    rows={8}
+                    className="w-full rounded-xl border border-input bg-input/30 px-3.5 py-3 text-xs text-foreground leading-relaxed focus:border-primary focus:outline-none resize-y disabled:opacity-50"
+                    placeholder="Text/copy generation prompt…"
+                  />
+                </div>
+              )}
+
+              {/* Image prompt */}
+              {hasImage && (
+                <div>
+                  <label className="mb-1.5 flex items-center gap-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                    <span>🖼 Image Prompt</span>
+                  </label>
+                  <textarea
+                    value={imagePrompt}
+                    onChange={(e) => setImagePrompt(e.target.value)}
+                    disabled={regenerating}
+                    rows={5}
+                    className="w-full rounded-xl border border-input bg-input/30 px-3.5 py-3 text-xs text-foreground leading-relaxed focus:border-primary focus:outline-none resize-y disabled:opacity-50"
+                    placeholder="Image generation prompt…"
+                  />
+                </div>
+              )}
+
+              {/* Video prompt */}
+              {hasVideo && (
+                <div>
+                  <label className="mb-1.5 flex items-center gap-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                    <span>🎬 Video Prompt</span>
+                  </label>
+                  <textarea
+                    value={videoPrompt}
+                    onChange={(e) => setVideoPrompt(e.target.value)}
+                    disabled={regenerating}
+                    rows={5}
+                    className="w-full rounded-xl border border-input bg-input/30 px-3.5 py-3 text-xs text-foreground leading-relaxed focus:border-primary focus:outline-none resize-y disabled:opacity-50"
+                    placeholder="Video generation prompt…"
+                  />
+                </div>
+              )}
+
+              {regenErr && (
+                <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-xs text-destructive">
+                  {regenErr}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        {!loading && !loadErr && prompts && (
+          <div className="shrink-0 border-t border-border px-5 py-4 flex items-center justify-between gap-3">
+            <p className="text-[11px] text-muted-foreground">
+              {regenerating ? "⏳ Regenerating ad — this may take a minute…" : "Edit any prompt above, then regenerate."}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={onClose}
+                disabled={regenerating}
+                className="rounded-full border border-border px-4 py-2 text-xs text-muted-foreground hover:border-primary/40 disabled:opacity-40"
+              >
+                {regenDone ? "Close" : "Cancel"}
+              </button>
+              {!regenDone && (
+                <button
+                  onClick={handleRegenerate}
+                  disabled={regenerating}
+                  className="rounded-full border px-4 py-2 text-xs font-medium disabled:opacity-50"
+                  style={{
+                    background: "oklch(0.85 0.18 52 / 0.15)",
+                    borderColor: "oklch(0.85 0.18 52 / 0.5)",
+                    color: "oklch(0.85 0.18 52)",
+                  }}
+                >
+                  {regenerating ? "⏳ Regenerating…" : "✨ Regenerate with these prompts"}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MyAds() {
   const allowed = useRequireCapability("view_my_ads");
 
@@ -165,6 +390,7 @@ function MyAds() {
   const [repostAd, setRepostAd] = useState<AdOut | null>(null);
   const [postingStatusAd, setPostingStatusAd] = useState<AdOut | null>(null);
   const [confirmDeleteAd, setConfirmDeleteAd] = useState<AdOut | null>(null);
+  const [promptAd, setPromptAd] = useState<AdOut | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   async function loadProducts() {
@@ -367,10 +593,14 @@ function MyAds() {
                           <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] ${
                             ad.agent_source === "rss"
                               ? "border-amber-500/40 bg-amber-500/5 text-amber-400"
+                              : ad.agent_source === "streak"
+                              ? "border-violet-500/40 bg-violet-500/5 text-violet-400"
                               : "border-primary/40 bg-primary/5 text-primary"
                           }`}>
                             {ad.agent_source === "rss"
                               ? "📰 RSS Feed"
+                              : ad.agent_source === "streak"
+                              ? "🚀 Brand Campaign"
                               : ad.agent_source === "event"
                               ? "🤖 Agent Niva · event"
                               : "🤖 Agent Niva"}
@@ -409,6 +639,13 @@ function MyAds() {
                         👁 Preview / Repost
                       </button>
                     )}
+                    <button
+                      onClick={() => setPromptAd(ad)}
+                      title="View and edit the AI prompts used to generate this ad"
+                      className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:border-amber-500/40 hover:text-amber-400"
+                    >
+                      🔍 Preview Prompt
+                    </button>
                     <button onClick={() => setPostingStatusAd(ad)} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:border-secondary/40 hover:text-secondary">
                       📡 Posting Status
                     </button>
@@ -436,6 +673,14 @@ function MyAds() {
 
       {repostAd && (
         <RepostModal ad={repostAd} onClose={() => setRepostAd(null)} onUpdated={load} />
+      )}
+
+      {promptAd && (
+        <PromptModal
+          ad={promptAd}
+          onClose={() => setPromptAd(null)}
+          onRegenerated={() => { load(); }}
+        />
       )}
 
       {postingStatusAd && (

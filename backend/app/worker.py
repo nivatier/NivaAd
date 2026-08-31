@@ -121,7 +121,7 @@ celery_app.conf.update(
         },
         "generate-due-streak-ads": {
             "task": "app.generate_due_streak_ads",
-            "schedule": crontab(minute=10),  # :10 past every hour — picks up streak ads due in the next 24 hours
+            "schedule": schedule(run_every=300),  # every 5 minutes — matches RSS cadence; uses generate_lead_hours per streak to decide when each ad is due
         },
         "post-due-streak-ads": {
             "task": "app.post_due_streak_ads",

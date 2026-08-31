@@ -129,6 +129,10 @@ async def generate_streak_ideas(
         total_ads=body.total_ads,
         status="generating",
         scraped_content=scraped,
+        posting_mode=body.posting_mode,
+        generate_lead_hours=body.generate_lead_hours,
+        content_type=body.content_type,
+        image_model_id=body.image_model_id,
         created_at=datetime.utcnow(),
     )
     db.add(streak)
@@ -144,6 +148,9 @@ async def generate_streak_ideas(
             "streak_type": body.streak_type,
             "total_ads": body.total_ads,
             "timezone": body.timezone,
+            "content_type": body.content_type,
+            "image_model_id": body.image_model_id,
+            "platforms": body.platforms,
         },
     )
 

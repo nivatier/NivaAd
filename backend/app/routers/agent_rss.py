@@ -12,9 +12,10 @@ User router (prefix /agent/rss, get_current_user):
   POST   /agent/rss/subscriptions        — create subscription
   PATCH  /agent/rss/subscriptions/{id}   — update subscription settings
   DELETE /agent/rss/subscriptions/{id}   — delete subscription
-  GET    /agent/rss/drafts               — list pending drafts
-  POST   /agent/rss/drafts/{id}/approve  — approve draft and post the ad
-  DELETE /agent/rss/drafts/{id}          — dismiss draft
+
+  Manual-approval ads go directly to My Ads in 'ready' state.
+  Auto-post ads go to My Ads in 'scheduled' state.
+  Both modes send a notification pointing to /app/my-ads.
 """
 from datetime import datetime, timedelta
 import uuid
@@ -25,9 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.deps import get_current_user, require_developer
-from app.models import Ad, Notification, PostJob, RssFeed, RssFeedDraft, RssFeedSubscription, Subscription, User
+from app.models import Ad, Notification, PostJob, RssFeed, RssFeedSubscription, Subscription, User
 from app.schemas import (
-    RssFeedDraftOut,
     RssFeedIn,
     RssFeedOut,
     RssFeedSubscriptionIn,
@@ -99,6 +99,14 @@ def _compute_next_run(sub: RssFeedSubscription) -> datetime:
 
 
 def _sub_out(sub: RssFeedSubscription, feed: RssFeed | None = None) -> RssFeedSubscriptionOut:
+    # next_post_at = next_run_at (the generation trigger) + lead minutes
+    # This gives the actual post time so the card shows the same time
+    # the user sees in the edit modal, rather than the internal trigger time.
+    next_post_at = None
+    if sub.next_run_at is not None:
+        lead = sub.generate_lead_minutes if sub.generate_lead_minutes is not None else 30
+        next_post_at = sub.next_run_at + timedelta(minutes=lead)
+
     return RssFeedSubscriptionOut(
         id=sub.id,
         company_id=sub.company_id,
@@ -125,30 +133,16 @@ def _sub_out(sub: RssFeedSubscription, feed: RssFeed | None = None) -> RssFeedSu
         enabled=sub.enabled,
         last_run_at=sub.last_run_at,
         next_run_at=sub.next_run_at,
+        next_post_at=next_post_at,
         created_at=sub.created_at,
         feed_name=feed.name if feed else None,
         feed_category=feed.category if feed else None,
     )
 
 
-def _draft_out(draft: RssFeedDraft, sub: RssFeedSubscription | None = None, feed: RssFeed | None = None) -> RssFeedDraftOut:
-    return RssFeedDraftOut(
-        id=draft.id,
-        company_id=draft.company_id,
-        subscription_id=draft.subscription_id,
-        article_url=draft.article_url,
-        article_title=draft.article_title,
-        article_summary=draft.article_summary,
-        ad_id=draft.ad_id,
-        status=draft.status,
-        expires_at=draft.expires_at,
-        created_at=draft.created_at,
-        subscription_label=sub.label if sub else None,
-        feed_name=feed.name if feed else (sub.custom_url if sub else None),
-    )
 
 
-# ── Developer: Feed Management  (dev_router → /developer/rss/...) ────────────
+# ── Feed health probe (shared logic used by both the endpoint and the task) ──
 
 @dev_router.get("/feeds", response_model=list[RssFeedOut])
 async def list_feeds(_: str = Depends(require_developer), db: AsyncSession = Depends(get_db)):
@@ -367,107 +361,8 @@ async def delete_subscription(sub_id: str, user: User = Depends(get_current_user
     await db.commit()
 
 
-# ── User: Drafts (manual-approval mode) ─────────────────────────────────────
 
-@router.get("/drafts", response_model=list[RssFeedDraftOut])
-async def list_drafts(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """List all pending (non-expired) drafts for this company."""
-    now = datetime.utcnow()
-    drafts = (await db.scalars(
-        select(RssFeedDraft)
-        .where(
-            RssFeedDraft.company_id == user.company_id,
-            RssFeedDraft.status == "pending",
-            RssFeedDraft.expires_at > now,
-        )
-        .order_by(RssFeedDraft.created_at.desc())
-    )).all()
-    results = []
-    for draft in drafts:
-        sub = await db.get(RssFeedSubscription, draft.subscription_id)
-        feed = None
-        if sub and sub.rss_feed_id:
-            feed = await db.get(RssFeed, sub.rss_feed_id)
-        results.append(_draft_out(draft, sub, feed))
-    return results
-
-
-@router.post("/drafts/{draft_id}/approve", status_code=200)
-async def approve_draft(draft_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Approve a pending draft — this triggers posting the associated ad to all subscribed platforms."""
-    draft = await db.get(RssFeedDraft, uuid.UUID(draft_id))
-    if draft is None or draft.company_id != user.company_id:
-        raise HTTPException(404, "Draft not found.")
-    if draft.status != "pending":
-        raise HTTPException(409, f"Draft is already {draft.status}.")
-    if draft.expires_at < datetime.utcnow():
-        raise HTTPException(410, "This draft has expired. Run the feed again to generate a fresh one.")
-    if not draft.ad_id:
-        raise HTTPException(422, "No ad is linked to this draft — it may still be generating.")
-
-    # Get the subscription to know which platforms to post to
-    sub = await db.get(RssFeedSubscription, draft.subscription_id)
-    if not sub:
-        raise HTTPException(404, "Subscription not found.")
-
-    draft.status = "approved"
-    ad = await db.get(Ad, draft.ad_id)
-    if ad:
-        ad.status = "ready"
-
-    # Create a PostJob so post_ad_now can track per-platform results
-    platforms = sub.platforms or []
-    post_job_id: str | None = None
-    if platforms and draft.ad_id:
-        post_job = PostJob(
-            company_id=user.company_id,
-            ad_id=draft.ad_id,
-            platforms=platforms,
-            status="queued",
-            succeeded=[],
-            failed={},
-        )
-        db.add(post_job)
-        await db.flush()
-        post_job_id = str(post_job.id)
-
-    await db.commit()
-
-    if post_job_id:
-        celery_app.send_task("app.post_ad_now", args=[post_job_id])
-
-    return {"ok": True, "ad_id": str(draft.ad_id) if draft.ad_id else None}
-
-
-@router.delete("/drafts/{draft_id}", status_code=204)
-async def dismiss_draft(draft_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Dismiss a pending draft without posting it.
-    Also deletes the associated Ad so it doesn't linger in My Ads —
-    keeping both views in sync regardless of which one the user acts from."""
-    from sqlalchemy import delete as _delete, update as _update
-    from app.models import AgentRecommendation, GenerationJob, PostJob, ScheduledPost, StreakAd
-    draft = await db.get(RssFeedDraft, uuid.UUID(draft_id))
-    if draft is None or draft.company_id != user.company_id:
-        raise HTTPException(404, "Draft not found.")
-    ad_id = draft.ad_id
-    # Delete the draft first (FK constraint on ads)
-    await db.delete(draft)
-    await db.flush()
-    # Delete the associated ad and its dependents if it exists
-    if ad_id:
-        ad = await db.get(Ad, ad_id)
-        if ad and ad.company_id == user.company_id:
-            await db.execute(_delete(GenerationJob).where(GenerationJob.ad_id == ad_id))
-            await db.execute(_delete(PostJob).where(PostJob.ad_id == ad_id))
-            await db.execute(_delete(ScheduledPost).where(ScheduledPost.ad_id == ad_id))
-            await db.execute(_update(AgentRecommendation).where(AgentRecommendation.created_ad_id == ad_id).values(created_ad_id=None))
-            await db.execute(_update(StreakAd).where(StreakAd.ad_id == ad_id).values(ad_id=None))
-            await db.execute(_delete(Notification).where(Notification.ref_id == ad_id))
-            await db.delete(ad)
-    await db.commit()
-
-
-# ── Feed health probe (shared logic used by both the endpoint and the task) ──
+# ── Developer: Feed Management  (dev_router → /developer/rss/...) ────────────
 
 def _probe_feed(url: str) -> dict:
     """Synchronously fetch + parse an RSS/Atom feed and return a health result.
